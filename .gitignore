@@ -1,0 +1,55 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+dist/
+build/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# React
+.parcel-cache/
+.vite/
+
+# Docker
+*.log
+*.tmp
+*.swp
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Taskmaster & AI Agent Rules/Docs 
+.taskmaster/
+.clinerules/
+.cursor/
+.github/instructions/
+.trae/
+.windsurf/
+.roo/
+.roomodes
+AGENTS.md
+CLAUDE.md
+
+# IDE & Editor specific
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Repomix Output
+repomix-output.xml
+
+# Logs
+logs
+dev-debug.log

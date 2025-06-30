@@ -1,0 +1,227 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+:root {
+  font-family: 'Inter', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #1a1a2e; /* Dark blue background */
+  color: #e0e0e0; /* Light grey text */
+}
+
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+  width: 100%;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  width: 100%;
+}
+
+.app-header {
+  background-color: #2c2c4a; /* Slightly lighter blue */
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.app-header h1 {
+  font-size: 2.5em;
+  line-height: 1.1;
+  color: #007bff; /* Primary blue */
+  margin: 0;
+  font-weight: 700;
+}
+
+.app-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.input-section {
+  background-color: #2c2c4a;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.ticker-form {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  align-items: center;
+}
+
+.ticker-input {
+  padding: 0.8rem 1.2rem;
+  border: 2px solid #007bff;
+  border-radius: 8px;
+  background-color: #1a1a2e;
+  color: #e0e0e0;
+  font-size: 1.1em;
+  outline: none;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  width: 180px;
+}
+
+.ticker-input:focus {
+  border-color: #0056b3;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.5);
+}
+
+.analyze-button {
+  background-color: #007bff;
+  color: white;
+  padding: 0.8rem 1.5rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.1em;
+  font-weight: 600;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.analyze-button:hover:not(:disabled) {
+  background-color: #0056b3;
+  transform: translateY(-2px);
+}
+
+.analyze-button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
+}
+
+.error-message {
+  background-color: #dc3545;
+  color: white;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 1rem;
+  font-weight: 600;
+}
+
+.results-section {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+}
+
+@media (min-width: 768px) {
+  .results-section {
+    grid-template-columns: 1fr 2fr; /* Screening on left, chart on right */
+  }
+}
+
+.card {
+  background-color: #2c2c4a;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  text-align: left;
+}
+
+.card h2 {
+  color: #007bff;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.8em;
+  border-bottom: 2px solid #007bff;
+  padding-bottom: 0.5rem;
+}
+
+.screening-results p {
+  margin-bottom: 0.5rem;
+  font-size: 1.1em;
+}
+
+.screening-results strong {
+  color: #ffc107; /* Accent yellow */
+}
+
+.screening-results .pass {
+  color: #28a745; /* Green for pass */
+  font-weight: 700;
+}
+
+.screening-results .fail {
+  color: #dc3545; /* Red for fail */
+  font-weight: 700;
+}
+
+.chart-container {
+  width: 100%;
+  height: 400px;
+  background-color: #1a1a2e;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.chart-message {
+  font-style: italic;
+  color: #bbb;
+  margin-top: 1rem;
+}
+
+.app-footer {
+  margin-top: 2rem;
+  padding: 1rem;
+  background-color: #2c2c4a;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+  color: #aaa;
+  font-size: 0.9em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 767px) {
+  .app-header h1 {
+    font-size: 1.8em;
+  }
+
+  .ticker-form {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .ticker-input {
+    width: 100%;
+    max-width: 250px;
+  }
+
+  .analyze-button {
+    width: 100%;
+    max-width: 250px;
+  }
+
+  .card {
+    padding: 1rem;
+  }
+
+  .card h2 {
+    font-size: 1.5em;
+  }
+}

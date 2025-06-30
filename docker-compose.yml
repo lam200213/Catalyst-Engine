@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app-network
+
+  data-service:
+    build:
+      context: ./backend-services/data-service
+      dockerfile: Dockerfile
+    container_name: data-service
+    ports:
+      - "${DATA_SERVICE_PORT:-3001}:${DATA_SERVICE_PORT:-3001}"
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
+      PORT: ${DATA_SERVICE_PORT:-3001}
+    depends_on:
+      - mongodb
+    networks:
+      - app-network
+
+  screening-service:
+    build:
+      context: ./backend-services/screening-service
+    container_name: screening-service
+    ports:
+      - "${SCREENING_SERVICE_PORT:-3002}:${SCREENING_SERVICE_PORT:-3002}"
+    environment:
+      PORT: ${SCREENING_SERVICE_PORT:-3002}
+      # CORRECTED: Use Docker service name, not localhost
+      DATA_SERVICE_URL: http://data-service:3001
+    depends_on:
+      - data-service
+    networks:
+      - app-network
+
+  analysis-service:
+    build:
+      context: ./backend-services/analysis-service
+    container_name: analysis-service
+    ports:
+      - "${ANALYSIS_SERVICE_PORT:-3003}:${ANALYSIS_SERVICE_PORT:-3003}"
+    environment:
+      PORT: ${ANALYSIS_SERVICE_PORT:-3003}
+      # CORRECTED: Use Docker service name, not localhost
+      DATA_SERVICE_URL: http://data-service:3001
+    depends_on:
+      - data-service
+    networks:
+      - app-network
+
+  # NEW: API Gateway Service
+  api-gateway:
+    build:
+      context: ./backend-services/api-gateway
+    container_name: api-gateway
+    ports:
+      - "3000:3000" # Expose gateway to the host machine
+    environment:
+      PORT: 3000
+      SCREENING_SERVICE_URL: http://screening-service:3002
+      ANALYSIS_SERVICE_URL: http://analysis-service:3003
+    depends_on:
+      - screening-service
+      - analysis-service
+    networks:
+      - app-network
+
+  frontend-app:
+    build:
+      context: ./frontend-app
+    container_name: frontend-app
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    environment:
+      # CORRECTED: Frontend now talks ONLY to the API Gateway
+      VITE_API_BASE_URL: http://localhost:3000
+    depends_on:
+      - api-gateway
+    networks:
+      - app-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  app-network:
+    driver: bridge
+
+
