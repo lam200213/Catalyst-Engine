@@ -4,15 +4,16 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-06-30 15:03 HKT
-Updated documentation to reflect the latest project structure and API endpoints.
+2025-06-30 23:41 HKT
+Major architectural update: Refactored the entire backend to a consistent, all-Python stack for improved maintainability. Added a dedicated ticker-service.
 
 ## Key Features (Current MVP)
-- **Data Acquisition and Caching**: Retrieves and caches data from a live financial data API (Finnhub).
+* **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
+- **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from multiple sources (Finnhub, yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
-- **Microservices Architecture**: Managed through a central API Gateway.
+* **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
 
 ## Project Structure
@@ -21,10 +22,18 @@ The application follows a microservices architecture. The frontend communicates 
 ```
 /  
 ├── backend-services/  
-│   ├── api-gateway/  
-│   ├── data-service/  
-│   ├── screening-service/  
-│   └── analysis-service/  
+│   ├── api-gateway/         \# Python/Flask  
+│   ├── data-service/        \# Python/Flask (Facade for Data Providers)
+       ├── providers/
+       │   ├── __init__.py               # Makes 'providers' a Python package
+       │   ├── yfinance_provider.py      # Logic to fetch data from Yahoo Finance
+       │   └── finnhub_provider.py       # Logic to fetch data from Finnhub
+       ├── app.py                        # Main Flask application with data source routing
+       ├── Dockerfile
+       └── requirements.txt              # Python dependencies
+│   ├── screening-service/   \# Python/Flask  
+│   ├── analysis-service/    \# Python/Flask  
+│   └── ticker-service/      \# Python/Flask  
 ├── frontend-app/  
 ├── .env.example  
 ├── docker-compose.yml  
@@ -33,14 +42,15 @@ The application follows a microservices architecture. The frontend communicates 
 
 ## Technology Stack
 
-| Component            | Technology                            |
-|----------------------|---------------------------------------|
-| API Gateway          | Node.js, Express.js, http-proxy-middleware |
-| Data Service         | Node.js, Express.js, Finnhub API     |
-| Quantitative Services| Node.js, Express.js                  |
-| Data Caching         | MongoDB                              |
-| Frontend UI & Charting | React (Vite), TradingView Lightweight Charts |
-| Local Orchestration  | Docker, Docker Compose               |
+| Component | Technology |
+| :---- | :---- |
+| **API Gateway** | **Python, Flask, Requests** |
+| **Data Service** | **Python, Flask, PyMongo, Requests** |
+| **Quantitative Services** | **Python, Flask, NumPy** |
+| **Ticker Service** | **Python, Flask, Pandas** |
+| **Data Caching** | MongoDB |
+| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts |
+| **Local Orchestration** | Docker, Docker Compose |
 
 ## Getting Started
 
@@ -64,7 +74,7 @@ Follow these steps to set up and run the application locally:
    ```bash
    cp .env.example .env
    ```
-   Open `.env` and replace `YOUR_FINNHUB_API_KEY` with your actual key.
+   Open `.env` and replace `YOUR_MARKETAUX_API_KEY` with your actual key.
 
 3. **Run the application**:
    Build and start all services using Docker Compose.
@@ -79,6 +89,14 @@ Follow these steps to set up and run the application locally:
 
 ## API Gateway Endpoints
 The frontend communicates exclusively with the API Gateway, which proxies requests to the appropriate backend services.
+
+- **GET `/ticker`** 
+  - Retrieves a list of all US stock tickers from the ticker-service.  
+
+* **GET `/data/:ticker?source=<provider>`**
+    * Proxies to: `data-service`
+    * Retrieves historical price data for a ticker.
+    * `provider` can be `finnhub` (default) or `yfinance`.
 
 - **GET `/screen/:ticker`**  
   - Proxies to the Screening Service.  

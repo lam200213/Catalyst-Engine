@@ -1,0 +1,6 @@
+Flask
+requests
+pymongo
+yfinance
+finnhub-python
+python-dotenv

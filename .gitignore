@@ -53,3 +53,14 @@ repomix-output.xml
 # Logs
 logs
 dev-debug.log
+
+# Dependency directories
+# Environment variables
+# Editor directories and files
+.idea
+.vscode
+# OS specific
+
+# Task files
+# tasks.json
+# tasks/ 
