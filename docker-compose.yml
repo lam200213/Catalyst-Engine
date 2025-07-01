@@ -56,7 +56,7 @@ services:
     build: ./backend-services/ticker-service
     container_name: ticker-service
     ports:
-      - "5000:5000"
+      - "5001:5000"
     networks:
       - app-network
 
@@ -76,6 +76,8 @@ services:
       - ticker-service
     networks:
       - app-network
+    volumes:
+      - ./backend-services/api-gateway:/app # Mount local directory to container's /app
 
   frontend-app:
     build: ./frontend-app

@@ -22,7 +22,11 @@ The application follows a microservices architecture. The frontend communicates 
 ```
 /  
 ├── backend-services/  
-│   ├── api-gateway/         \# Python/Flask  
+│   ├── api-gateway/         \# Python/Flask
+│   │   ├── tests/                        # Integration tests for API Gateway
+│   │   │   ├── __init__.py
+│   │   │   └── test_gateway.py
+│   │   └── .dockerignore                 # Excludes tests from Docker image
 │   ├── data-service/        \# Python/Flask (Facade for Data Providers, with Caching)
        ├── providers/
        │   ├── __init__.py               # Makes 'providers' a Python package
@@ -36,9 +40,15 @@ The application follows a microservices architecture. The frontend communicates 
        ├── Dockerfile
        ├── requirements.txt              # Python dependencies
        └── .dockerignore                 # Excludes tests from Docker image
-│   ├── screening-service/   \# Python/Flask  
-│   ├── analysis-service/    \# Python/Flask  
-│   └── ticker-service/      \# Python/Flask  
+│   ├── screening-service/   \# Python/Flask
+│   │   └── tests/                        # Unit tests for screening-service
+│   │       └── __init__.py
+│   │   └── .dockerignore                 # Excludes tests from Docker image
+│   ├── analysis-service/    \# Python/Flask
+│   │   └── tests/                        # Unit tests for analysis-service
+│   │       └── __init__.py
+│   │   └── .dockerignore                 # Excludes tests from Docker image
+│   └── ticker-service/      \# Python/Flask
 ├── frontend-app/  
 ├── .env.example  
 ├── docker-compose.yml  
@@ -49,7 +59,7 @@ The application follows a microservices architecture. The frontend communicates 
 
 | Component | Technology |
 | :---- | :---- |
-| **API Gateway** | **Python, Flask, Requests** |
+| **API Gateway** | **Python, Flask, Requests, Pytest, Requests-Mock** |
 | **Data Service** | **Python, Flask, PyMongo, Requests** |
 | **Quantitative Services** | **Python, Flask, NumPy** |
 | **Ticker Service** | **Python, Flask, Pandas** |
@@ -80,6 +90,7 @@ Follow these steps to set up and run the application locally:
    cp .env.example .env
    ```
    Open `.env` and replace `YOUR_MARKETAUX_API_KEY` with your actual key.
+   Also, ensure `TICKER_SERVICE_PORT` is set to `5001` if you are running the application locally.
 
 3. **Run the application**:
    Build and start all services using Docker Compose.
