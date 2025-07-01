@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-06-30 23:41 HKT
-Major architectural update: Refactored the entire backend to a consistent, all-Python stack for improved maintainability. Added a dedicated ticker-service.
+2025-07-01 16:00 HKT
+Architectural Update: Implemented a modular Facade Pattern in the `data-service` to support multiple data providers (Finnhub, Yahoo Finance), enhancing flexibility and resilience.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
