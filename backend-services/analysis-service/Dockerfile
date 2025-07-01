@@ -1,19 +1,24 @@
-# Use this Dockerfile for api-gateway, data-service, screening-service, and analysis-service
-# It uses a multi-stage build for security and smaller image size.
+# Base image with better compatibility for scientific packages
+FROM python:3.11-slim
 
-# Stage 1: The Builder
-FROM python:3.11-slim AS builder
+# Set the working directory
 WORKDIR /app
+
+# Create a non-root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# Copy and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
 COPY . .
 
-# Stage 2: The Final Production Image
-FROM python:3.11-alpine
-WORKDIR /app
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /app .
+# Change ownership of the app directory
 RUN chown -R appuser:appgroup /app
+
+# Switch to the non-root user
 USER appuser
+
+# Command to run the application
 CMD ["python", "app.py"]
