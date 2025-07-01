@@ -80,7 +80,7 @@ Follow these steps to set up and run the application locally:
 3. **Run the application**:
    Build and start all services using Docker Compose.
    ```bash
-   docker-compose up --build
+   docker-compose up
    ```
    This command builds Docker images for each service and starts all containers.
 

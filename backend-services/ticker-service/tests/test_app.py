@@ -2,7 +2,8 @@ import unittest
 from unittest.mock import patch, Mock
 import json
 import pandas as pd
-from ..app import app
+from app import app
+import requests
 
 # This is a sample response mimicking the structure of the NASDAQ API
 MOCK_API_RESPONSE = {
