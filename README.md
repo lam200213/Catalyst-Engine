@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-01 16:00 HKT
-Architectural Update: Implemented a modular Facade Pattern in the `data-service` to support multiple data providers (Finnhub, Yahoo Finance), enhancing flexibility and resilience.
+2025-07-01 
+Architectural Update: Added a dedicated news fetching provider (MarketAux) to the `data-service`.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -26,8 +26,9 @@ The application follows a microservices architecture. The frontend communicates 
 │   ├── data-service/        \# Python/Flask (Facade for Data Providers)
        ├── providers/
        │   ├── __init__.py               # Makes 'providers' a Python package
-       │   ├── yfinance_provider.py      # Logic to fetch data from Yahoo Finance
-       │   └── finnhub_provider.py       # Logic to fetch data from Finnhub
+       │   ├── yfinance_provider.py      
+       │   └── finnhub_provider.py       
+       │   └── marketaux_provider.py     
        ├── app.py                        # Main Flask application with data source routing
        ├── Dockerfile
        └── requirements.txt              # Python dependencies
@@ -97,6 +98,10 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker.
     * `provider` can be `finnhub` (default) or `yfinance`.
+
+* **GET `/news/:ticker`**
+    * Proxies to: `data-service`
+    * Retrieves recent news articles for a ticker.
 
 - **GET `/screen/:ticker`**  
   - Proxies to the Screening Service.  
