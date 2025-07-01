@@ -23,6 +23,8 @@ services:
       - mongodb
     networks:
       - app-network
+    volumes:
+      - ./backend-services/data-service:/app # Mount local directory to container's /app
 
   screening-service:
     build: ./backend-services/screening-service

@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-01 
-Architectural Update: Added a dedicated news fetching provider (MarketAux) to the `data-service`.
+2025-07-02
+Architectural Update: Implemented robust caching for `data-service` using MongoDB TTL indexes.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -23,15 +23,19 @@ The application follows a microservices architecture. The frontend communicates 
 /  
 ├── backend-services/  
 │   ├── api-gateway/         \# Python/Flask  
-│   ├── data-service/        \# Python/Flask (Facade for Data Providers)
+│   ├── data-service/        \# Python/Flask (Facade for Data Providers, with Caching)
        ├── providers/
        │   ├── __init__.py               # Makes 'providers' a Python package
-       │   ├── yfinance_provider.py      
-       │   └── finnhub_provider.py       
-       │   └── marketaux_provider.py     
-       ├── app.py                        # Main Flask application with data source routing
+       │   ├── yfinance_provider.py
+       │   └── finnhub_provider.py
+       │   └── marketaux_provider.py
+       ├── tests/                        # Unit tests for data-service
+       │   ├── __init__.py
+       │   └── test_app.py
+       ├── app.py                        # Main Flask application with data source routing and caching
        ├── Dockerfile
-       └── requirements.txt              # Python dependencies
+       ├── requirements.txt              # Python dependencies
+       └── .dockerignore                 # Excludes tests from Docker image
 │   ├── screening-service/   \# Python/Flask  
 │   ├── analysis-service/    \# Python/Flask  
 │   └── ticker-service/      \# Python/Flask  
@@ -96,12 +100,12 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 * **GET `/data/:ticker?source=<provider>`**
     * Proxies to: `data-service`
-    * Retrieves historical price data for a ticker.
+    * Retrieves historical price data for a ticker, with caching.
     * `provider` can be `finnhub` (default) or `yfinance`.
 
 * **GET `/news/:ticker`**
     * Proxies to: `data-service`
-    * Retrieves recent news articles for a ticker.
+    * Retrieves recent news articles for a ticker, with caching.
 
 - **GET `/screen/:ticker`**  
   - Proxies to the Screening Service.  

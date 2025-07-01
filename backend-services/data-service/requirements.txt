@@ -4,3 +4,4 @@ pymongo
 yfinance
 finnhub-python
 python-dotenv
+pytest
