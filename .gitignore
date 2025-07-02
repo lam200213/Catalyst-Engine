@@ -46,6 +46,7 @@ CLAUDE.md
 *.njsproj
 *.sln
 *.sw?
+.postman-mcp-server/
 
 # Repomix Output
 repomix-output.xml
