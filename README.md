@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-02
-Architectural Update: Implemented robust caching for `data-service` using MongoDB TTL indexes.
+Feature Implementation: Deployed the screening-service with the core 7-point SEPA/Minervini quantitative logic and robust unit tests for validation.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -118,9 +118,33 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     * Proxies to: `data-service`
     * Retrieves recent news articles for a ticker, with caching.
 
-- **GET `/screen/:ticker`**  
-  - Proxies to the Screening Service.  
-  - Applies the 8 quantitative screening criteria to the specified ticker and returns a pass/fail result.
+- **GET `/screen/:ticker`**
+  - Proxies to the Screening Service.
+  - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
+  - **Example Response:**
+    ```json
+    {
+      "ticker": "AAPL",
+      "passes": true,
+      "details": {
+        "current_price_above_ma150_ma200": true,
+        "ma150_above_ma200": true,
+        "ma200_trending_up": true,
+        "ma50_above_ma150_ma200": true,
+        "current_price_above_ma50": true,
+        "price_30_percent_above_52_week_low": true,
+        "price_within_25_percent_of_52_week_high": true
+      },
+      "values": {
+        "current_price": 170.00,
+        "ma_50": 165.00,
+        "ma_150": 155.00,
+        "ma_200": 150.00,
+        "low_52_week": 120.00,
+        "high_52_week": 180.00
+      }
+    }
+    ```
 
 - **GET `/analyze/:ticker`**  
   - Proxies to the Analysis Service.  

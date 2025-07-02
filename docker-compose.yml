@@ -38,6 +38,8 @@ services:
       - data-service
     networks:
       - app-network
+    volumes:
+      - ./backend-services/screening-service:/app # Mount local directory to container's /app
 
   analysis-service:
     build: ./backend-services/analysis-service
