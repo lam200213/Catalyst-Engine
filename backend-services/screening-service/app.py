@@ -109,12 +109,13 @@ def apply_screening_criteria(ticker, historical_data):
         "values": values
     }
 
-@app.route('/screen/<ticker>')
+@app.route('/<ticker>')
 async def screen_ticker_endpoint(ticker):
+    
     try:
         ticker = ticker.upper()
         # Fetch historical price data from data-service
-        hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/historical-price/{ticker}")
+        hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/{ticker}")
         
         hist_resp.raise_for_status()
         

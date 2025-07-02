@@ -28,6 +28,7 @@ def get_stock_data(ticker: str) -> list | None:
 
         # Fetch candle data from Finnhub
         res = finnhub_client.stock_candles(ticker, 'D', start_ts, end_ts)
+        print(f"Finnhub API response for {ticker}: {res}")
 
         # Finnhub returns 'no_data' in the 's' field on failure.
         if res.get('s') == 'no_data' or 'c' not in res:

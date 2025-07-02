@@ -39,6 +39,7 @@ def init_db():
 @app.route('/data/<string:ticker>', methods=['GET'])
 def get_data(ticker: str):
     source = request.args.get('source', 'finnhub').lower()
+    print(f"Received request for ticker: {ticker}, source: {source}")
     
     # Check cache first
     cached_data = price_cache.find_one({"ticker": ticker, "source": source})
