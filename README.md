@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-02
-Feature Implementation: Deployed the screening-service with the core 7-point SEPA/Minervini quantitative logic and robust unit tests for validation.
+Feature Implementation: Ported Volatility Contraction Pattern (VCP) logic to the analysis-service, including comprehensive unit tests and refined data handling.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -45,8 +45,9 @@ The application follows a microservices architecture. The frontend communicates 
 │   │       └── __init__.py
 │   │   └── .dockerignore                 # Excludes tests from Docker image
 │   ├── analysis-service/    \# Python/Flask
-│   │   └── tests/                        # Unit tests for analysis-service
-│   │       └── __init__.py
+│   │   ├── tests/                        # Unit tests for analysis-service
+│   │   │   ├── __init__.py
+│   │   │   └── test_analysis_logic.py
 │   │   └── .dockerignore                 # Excludes tests from Docker image
 │   └── ticker-service/      \# Python/Flask
 ├── frontend-app/  

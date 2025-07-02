@@ -53,6 +53,8 @@ services:
       - data-service
     networks:
       - app-network
+    volumes:
+      - ./backend-services/analysis-service:/app # Mount local directory to container's /app
   
   ticker-service:
     build: ./backend-services/ticker-service
