@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { createChart, ColorType } from 'lightweight-charts';
-import './App.css';
+import './index.css';
 
 // The API_BASE_URL points to our API Gateway
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';

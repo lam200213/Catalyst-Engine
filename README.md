@@ -90,7 +90,7 @@ Follow these steps to set up and run the application locally:
    ```bash
    cp .env.example .env
    ```
-   Open `.env` and replace `YOUR_MARKETAUX_API_KEY` with your actual key.
+   Open `.env` and replace `YOUR_FINNHUB_API_KEY` and `YOUR_MARKETAUX_API_KEY` with your actual key.
    Also, ensure `TICKER_SERVICE_PORT` is set to `5001` if you are running the application locally.
 
 3. **Run the application**:
