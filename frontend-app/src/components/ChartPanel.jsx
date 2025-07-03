@@ -1,7 +1,6 @@
-// frontend-app/src/components/AnalysisChart.jsx
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
-import { Box, Text } from '@chakra-ui/react';
+import { Box, Text, Heading } from '@chakra-ui/react';
 
 const AnalysisChart = ({ analysisData }) => {
     const chartContainerRef = useRef();
@@ -46,7 +45,6 @@ const AnalysisChart = ({ analysisData }) => {
 
     useEffect(() => {
         if (!chartRef.current || !chartRef.current.series || !analysisData?.historicalData) {
-            // Clear series data if no analysis data
             if (chartRef.current?.series) {
                  Object.values(chartRef.current.series).forEach(series => series.setData([]));
             }
@@ -77,4 +75,13 @@ const AnalysisChart = ({ analysisData }) => {
     );
 };
 
-export default AnalysisChart;
+const ChartPanel = ({ analysisData }) => {
+    return (
+        <Box bg="gray.700" p={6} borderRadius="lg" boxShadow="xl">
+            <Heading as="h2" size="lg" mb={4} color="blue.400">VCP Analysis</Heading>
+            <AnalysisChart analysisData={analysisData} />
+        </Box>
+    );
+};
+
+export default ChartPanel;

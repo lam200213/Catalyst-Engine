@@ -1,4 +1,3 @@
-// frontend-app/src/components/ScreeningResult.jsx
 import React from 'react';
 import { Box, Heading, Text, SimpleGrid, Flex, Tag, Spinner } from '@chakra-ui/react';
 
@@ -33,4 +32,13 @@ const ScreeningResult = ({ result, loading }) => {
     );
 };
 
-export default ScreeningResult;
+const ScreeningPanel = ({ result, loading }) => {
+    return (
+        <Box bg="gray.700" p={6} borderRadius="lg" boxShadow="xl">
+            <Heading as="h2" size="lg" mb={4} color="blue.400">Screening Results</Heading>
+            <ScreeningResult result={result} loading={loading} />
+        </Box>
+    );
+};
+
+export default ScreeningPanel;
