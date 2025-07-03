@@ -1,3 +1,4 @@
+// frontend-app/src/services/api.test.js
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import axios from 'axios';
 import { fetchStockData } from './api';
@@ -60,20 +61,26 @@ describe('services/api', () => {
 
     // Test Case 4: Security/Consistency (No security implications found, checks for consistency)
     it('should use the VITE_API_BASE_URL environment variable if available', async () => {
-        // Arrange: Set the environment variable
-        const originalEnv = import.meta.env.VITE_API_BASE_URL;
-        import.meta.env.VITE_API_BASE_URL = 'https://api.example.com';
+        // 1. Arrange: Use vi.stubEnv to set the environment variable for this test
+        vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com');
 
+        // Use vi.resetModules to clear the module cache
+        vi.resetModules();
+
+        // Mock axios again because resetting modules clears mocks too
+        const axios = (await import('axios')).default;
+        vi.mock('axios');
         axios.get.mockResolvedValue({ data: {} });
 
-        // Act
+        // 2. Act: Dynamically import the module AFTER setting the env var
+        const { fetchStockData } = await import('./api');
         await fetchStockData('TEST');
 
-        // Assert
+        // 3. Assert: Check if the correct URL was used
         expect(axios.get).toHaveBeenCalledWith('https://api.example.com/screen/TEST');
         expect(axios.get).toHaveBeenCalledWith('https://api.example.com/analyze/TEST');
 
-        // Cleanup
-        import.meta.env.VITE_API_BASE_URL = originalEnv;
+        // 4. Cleanup: vi.stubEnv cleans up automatically
+        vi.unstubAllEnvs();
     });
 });
