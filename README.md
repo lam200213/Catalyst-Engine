@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-02
-Feature Implementation: Ported Volatility Contraction Pattern (VCP) logic to the analysis-service, including comprehensive unit tests and refined data handling.
+2025-07-03
+Execution of backend integration tests: Implemented comprehensive backend integration tests, updated error handling across API Gateway, screening, and analysis services to return 502 Bad Gateway for invalid tickers, and refined data-service caching logs.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -65,7 +65,7 @@ The application follows a microservices architecture. The frontend communicates 
 | **Quantitative Services** | **Python, Flask, NumPy** |
 | **Ticker Service** | **Python, Flask, Pandas** |
 | **Data Caching** | MongoDB |
-| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts |
+| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
 | **Local Orchestration** | Docker, Docker Compose |
 
 ## Getting Started
@@ -113,7 +113,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 * **GET `/data/:ticker?source=<provider>`**
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker, with caching.
-    * `provider` can be `finnhub` (default) or `yfinance`.
+    * `provider` can be `yfinance` (default) or `finnhub`.
 
 * **GET `/news/:ticker`**
     * Proxies to: `data-service`
@@ -122,7 +122,8 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **GET `/screen/:ticker`**
   - Proxies to the Screening Service.
   - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
-  - **Example Response:**
+  - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+  - **Example Success Response:**
     ```json
     {
       "ticker": "AAPL",
@@ -146,7 +147,15 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       }
     }
     ```
+  - **Example Error Response (for invalid ticker):**
+    ```json
+    {
+      "error": "Invalid or non-existent ticker: FAKETICKERXYZ",
+      "details": "Could not retrieve price data for FAKETICKERXYZ from yfinance."
+    }
+    ```
 
 - **GET `/analyze/:ticker`**  
   - Proxies to the Analysis Service.  
   - Performs VCP analysis on historical data and returns a standardized payload containing the analysis results and historical data used for charting.
+  - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
