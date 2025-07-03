@@ -143,7 +143,7 @@ def apply_screening_criteria(ticker, historical_data):
         "values": values
     }
 
-@app.route('/<ticker>')
+@app.route('/screen/<ticker>')
 def screen_ticker_endpoint(ticker): # Removed async
     try:
         ticker = ticker.upper()
@@ -152,13 +152,27 @@ def screen_ticker_endpoint(ticker): # Removed async
         hist_resp = requests.get(data_service_url)
 
         # Explicitly check for non-200 status codes from data-service
-        if hist_resp.status_code != 200:
-            error_details = hist_resp.json().get('error', hist_resp.text)
+        print(f"Data service response status code: {hist_resp.status_code}")
+        print(f"Data service response text: {hist_resp.text}")
+        if hist_resp.status_code == 404:
+            try:
+                error_details = hist_resp.json().get('error', hist_resp.text)
+            except requests.exceptions.JSONDecodeError:
+                error_details = hist_resp.text
+            return jsonify({
+                "error": "Invalid or non-existent ticker: " + ticker,
+                "details": error_details
+            }), 502 # Return 502 Bad Gateway for invalid tickers
+        elif hist_resp.status_code != 200:
+            try:
+                error_details = hist_resp.json().get('error', hist_resp.text)
+            except requests.exceptions.JSONDecodeError:
+                error_details = hist_resp.text
             return jsonify({
                 "error": "Failed to retrieve data from data-service.",
                 "dependency_status_code": hist_resp.status_code,
                 "dependency_error": error_details
-            }), 502 # 502 Bad Gateway is more appropriate for dependency failures
+            }), 502 # Return 502 Bad Gateway for other data-service errors
 
         try:
             historical_data = hist_resp.json()
@@ -177,9 +191,6 @@ def screen_ticker_endpoint(ticker): # Removed async
         return jsonify({"error": "Error connecting to the data-service.", "details": str(e)}), 503
     except Exception as e:
         # This catches other unexpected errors within the screening-service
-        print("--- TRACEBACK START ---")
-        print(traceback.format_exc())
-        print("--- TRACEBACK END ---")
         return jsonify({"error": "An internal error occurred in the screening-service.", "details": str(e)}), 500
 
 if __name__ == '__main__':

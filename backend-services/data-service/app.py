@@ -49,13 +49,13 @@ def get_data(ticker: str):
             cached_data['createdAt'] = cached_data['createdAt'].replace(tzinfo=timezone.utc)
         time_elapsed = (datetime.now(timezone.utc) - cached_data['createdAt']).total_seconds()
         if time_elapsed < PRICE_CACHE_TTL:
-            print(f"Cache HIT for price: {ticker} from {source}")
+            print(f"DATA-SERVICE: Cache HIT for price: {ticker} from {source}")
             return jsonify(cached_data['data'])
         else:
             print(f"Cache EXPIRED for price: {ticker} from {source}")
             price_cache.delete_one({"_id": cached_data["_id"]}) # Optionally delete expired entry immediately
     
-    print(f"Cache MISS for price: {ticker} from {source}")
+    print(f"DATA-SERVICE: Cache MISS for price: {ticker} from {source}")
 
     # If not in cache, fetch from provider
     data = None
@@ -74,7 +74,7 @@ def get_data(ticker: str):
             "data": data,
             "createdAt": datetime.now(timezone.utc)
         })
-        print(f"CACHE INSERT for price: {ticker} from {source}")
+        print(f"DATA-SERVICE: CACHE INSERT for price: {ticker} from {source}")
         return jsonify(data)
     else:
         return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
@@ -87,13 +87,13 @@ def get_news(ticker: str):
         # Check if cached news is still valid (not expired)
         time_elapsed = (datetime.now(timezone.utc) - cached_news['createdAt']).total_seconds()
         if time_elapsed < NEWS_CACHE_TTL:
-            print(f"Cache HIT for news: {ticker}")
+            print(f"DATA-SERVICE: Cache HIT for news: {ticker}")
             return jsonify(cached_news['data'])
         else:
             print(f"Cache EXPIRED for news: {ticker}")
             news_cache.delete_one({"_id": cached_news["_id"]}) # Optionally delete expired entry immediately
         
-    print(f"Cache MISS for news: {ticker}")
+    print(f"DATA-SERVICE: Cache MISS for news: {ticker}")
     
     # Fetch from provider
     try:
@@ -106,7 +106,7 @@ def get_news(ticker: str):
                 "data": news_data,
                 "createdAt": datetime.now(timezone.utc)
             })
-            print(f"CACHE INSERT for news: {ticker}")
+            print(f"DATA-SERVICE: CACHE INSERT for news: {ticker}")
             return jsonify(news_data)
         else:
             return jsonify({"error": f"Could not retrieve news for {ticker}."}), 404

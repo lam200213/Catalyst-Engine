@@ -23,20 +23,33 @@ def gateway(service, path=""):
         return jsonify({"error": "Service not found"}), 404
 
     # Construct the full URL for the target service
-    target_url = f"{SERVICES[service]}/{path}"
+    # Construct the full URL for the target service
+    # For 'analyze' and 'screen' services, the service name is part of the path on the target service
+    if service in ["analyze", "screen"]:
+        target_url = f"{SERVICES[service]}/{service}/{path}"
+    else:
+        target_url = f"{SERVICES[service]}/{path}"
     
     try:
         # Forward the request
         resp = requests.get(target_url, params=request.args, timeout=20)
-        resp.raise_for_status() # Raise an exception for bad status codes
-        
-        # Return the response from the target service
+        # Return the response from the target service, regardless of status code
+        # The client can then handle different status codes (e.g., 404, 500)
         return jsonify(resp.json()), resp.status_code
 
+    except requests.exceptions.Timeout:
+        print(f"Timeout connecting to {service}")
+        return jsonify({"error": f"Timeout connecting to {service}"}), 504 # Gateway Timeout
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error to {service}: {e}")
+        return jsonify({"error": f"Service unavailable: {service}", "details": str(e)}), 503 # Service Unavailable
     except requests.exceptions.RequestException as e:
+        # Catch any other request-related errors
         print(f"Error forwarding request to {service}: {e}")
-        return jsonify({"error": f"Error connecting to {service}", "details": str(e)}), 502 # Bad Gateway
+        return jsonify({"error": f"Error in {service} communication", "details": str(e)}), 502 # Bad Gateway
     except Exception as e:
+        # Catch any other unexpected errors in the gateway itself
+        print(f"An unexpected internal error occurred in the gateway: {e}")
         return jsonify({"error": "An internal error occurred in the gateway", "details": str(e)}), 500
 
 if __name__ == '__main__':

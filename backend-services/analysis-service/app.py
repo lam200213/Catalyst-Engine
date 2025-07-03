@@ -142,13 +142,38 @@ def find_volatility_contraction_pattern(prices):
             start_index += 1
     return contractions
 
+@app.route('/')
+def index():
+    return "Analysis Service is running."
+
 @app.route('/analyze/<ticker>')
-async def analyze_ticker_endpoint(ticker):
+def analyze_ticker_endpoint(ticker):
+    print(f"Received analysis request for ticker: {ticker}")
     try:
         ticker = ticker.upper()
         # Fetch historical data from data-service
         hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/{ticker}")
-        hist_resp.raise_for_status()
+        
+        if hist_resp.status_code == 404:
+            try:
+                error_details = hist_resp.json().get('error', hist_resp.text)
+            except requests.exceptions.JSONDecodeError:
+                error_details = hist_resp.text
+            return jsonify({
+                "error": "Invalid or non-existent ticker: " + ticker,
+                "details": error_details
+            }), 502 # Return 502 Bad Gateway for invalid tickers
+        elif hist_resp.status_code != 200:
+            try:
+                error_details = hist_resp.json().get('error', hist_resp.text)
+            except requests.exceptions.JSONDecodeError:
+                error_details = hist_resp.text
+            return jsonify({
+                "error": "Failed to retrieve data from data-service.",
+                "dependency_status_code": hist_resp.status_code,
+                "dependency_error": error_details
+            }), 502 # Return 502 Bad Gateway for other data-service errors
+
         raw_historical_data = hist_resp.json()
 
         prices, dates, historical_data_sorted = prepare_historical_data(raw_historical_data)
@@ -185,4 +210,5 @@ async def analyze_ticker_endpoint(ticker):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    print("Analysis Service started.")
     app.run(host='0.0.0.0', port=PORT)
