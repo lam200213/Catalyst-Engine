@@ -38,13 +38,15 @@ def init_db():
 
 @app.route('/data/<string:ticker>', methods=['GET'])
 def get_data(ticker: str):
-    source = request.args.get('source', 'finnhub').lower()
+    source = request.args.get('source', 'yfinance').lower()
     print(f"Received request for ticker: {ticker}, source: {source}")
     
     # Check cache first
     cached_data = price_cache.find_one({"ticker": ticker, "source": source})
     if cached_data:
-        # Check if cached data is still valid (not expired)
+        # Ensure cached_data['createdAt'] is timezone-aware for comparison
+        if cached_data['createdAt'].tzinfo is None:
+            cached_data['createdAt'] = cached_data['createdAt'].replace(tzinfo=timezone.utc)
         time_elapsed = (datetime.now(timezone.utc) - cached_data['createdAt']).total_seconds()
         if time_elapsed < PRICE_CACHE_TTL:
             print(f"Cache HIT for price: {ticker} from {source}")

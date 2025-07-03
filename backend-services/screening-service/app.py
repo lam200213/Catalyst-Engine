@@ -3,19 +3,53 @@ import os
 from flask import Flask, jsonify
 import requests
 import numpy as np
+import json
+from flask.json.provider import JSONProvider
 
 app = Flask(__name__)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 3002))
 
+# This class teaches Flask's JSON encoder how to handle NumPy's specific data types.
+class NumpyJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NumpyJSONEncoder, self).default(obj)
+
+# This class applies our custom encoder to the Flask app.
+class CustomJSONProvider(JSONProvider):
+    def dumps(self, obj, **kwargs):
+        return json.dumps(obj, **kwargs, cls=NumpyJSONEncoder)
+    def loads(self, s, **kwargs):
+        return json.loads(s, **kwargs)
+
+# Register the custom JSON provider with our Flask app instance.
+app.json = CustomJSONProvider(app)
+
 def extract_close_prices(historical_data):
     """
-    Extracts a simple list of closing prices from the data-service's format.
-    Handles cases where 'c' key might be missing or data is None.
+    Extracts a list of closing prices, handling both Finnhub's dictionary-of-lists
+    format and yfinance's list-of-dictionaries format.
     """
-    if historical_data and 'c' in historical_data and historical_data['c'] is not None:
+    if not historical_data:
+        return []
+    
+    # Handle yfinance format (list of dicts)
+    if isinstance(historical_data, list):
+        return [item['close'] for item in historical_data if 'close' in item and item['close'] is not None]
+        
+    # Handle Finnhub format (dict of lists)
+    if isinstance(historical_data, dict) and 'c' in historical_data and historical_data['c'] is not None:
         return [price for price in historical_data['c'] if price is not None]
+        
     return []
 
 def calculate_sma(prices, period):
@@ -110,25 +144,44 @@ def apply_screening_criteria(ticker, historical_data):
     }
 
 @app.route('/<ticker>')
-async def screen_ticker_endpoint(ticker):
-    
+def screen_ticker_endpoint(ticker): # Removed async
     try:
         ticker = ticker.upper()
         # Fetch historical price data from data-service
-        hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/{ticker}")
-        
-        hist_resp.raise_for_status()
-        
-        historical_data = hist_resp.json()
-        
+        data_service_url = f"{DATA_SERVICE_URL}/data/{ticker}"
+        hist_resp = requests.get(data_service_url)
+
+        # Explicitly check for non-200 status codes from data-service
+        if hist_resp.status_code != 200:
+            error_details = hist_resp.json().get('error', hist_resp.text)
+            return jsonify({
+                "error": "Failed to retrieve data from data-service.",
+                "dependency_status_code": hist_resp.status_code,
+                "dependency_error": error_details
+            }), 502 # 502 Bad Gateway is more appropriate for dependency failures
+
+        try:
+            historical_data = hist_resp.json()
+        except requests.exceptions.JSONDecodeError:
+            return jsonify({
+                "error": "Invalid JSON response from data-service.",
+                "dependency_status_code": hist_resp.status_code,
+                "dependency_response": hist_resp.text
+            }), 502
+
         result = apply_screening_criteria(ticker, historical_data)
-        
         return jsonify({"ticker": ticker, **result})
 
     except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"Error fetching data from data-service: {e}"}), 500
+        # This catches network errors connecting to data-service
+        return jsonify({"error": "Error connecting to the data-service.", "details": str(e)}), 503
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # This catches other unexpected errors within the screening-service
+        print("--- TRACEBACK START ---")
+        print(traceback.format_exc())
+        print("--- TRACEBACK END ---")
+        return jsonify({"error": "An internal error occurred in the screening-service.", "details": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=PORT)
+    is_debug = os.environ.get('FLASK_DEBUG', '0').lower() in ['true', '1', 't']
+    app.run(host='0.0.0.0', port=PORT, debug=is_debug)

@@ -32,6 +32,7 @@ services:
     ports:
       - "3002:3002"
     environment:
+      FLASK_DEBUG: '1'
       PORT: 3002
       DATA_SERVICE_URL: http://data-service:3001
     depends_on:
