@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-03
-implementation of Screening and Ticker Input UI with Chakra UI
+Established a Scalable Frontend Structure
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -51,6 +51,12 @@ The application follows a microservices architecture. The frontend communicates 
 │   │   └── .dockerignore                 # Excludes tests from Docker image
 │   └── ticker-service/      \# Python/Flask
 ├── frontend-app/  
+│   └── src/
+│       ├── components/      # Reusable React components (e.g., Chart, Results)
+│       ├── hooks/           # Custom React hooks (e.g., for data fetching state)
+│       ├── services/        # API communication logic (e.g., api.js)
+│       ├── App.jsx          # Main application orchestrator
+│       └── main.jsx         # Application entry point
 ├── .env.example  
 ├── docker-compose.yml  
 └── README.md
@@ -110,10 +116,10 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **GET `/ticker`** 
   - Retrieves a list of all US stock tickers from the ticker-service.  
 
-* **GET `/data/:ticker?source=<provider>`**
+* **GET `/data/:ticker`**
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker, with caching.
-    * `provider` can be `yfinance` (default) or `finnhub`.
+    * **Note:** The `source` parameter is handled by the `data-service` directly, not the gateway.
 
 * **GET `/news/:ticker`**
     * Proxies to: `data-service`

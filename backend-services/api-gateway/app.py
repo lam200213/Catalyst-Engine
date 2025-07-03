@@ -8,9 +8,11 @@ app = Flask(__name__)
 # Service URLs are now managed via environment variables
 # These point to the internal Docker service names
 SERVICES = {
+    "data": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
+    "news": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "screen": os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002"),
     "analyze": os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003"),
-    "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5000")
+    "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5000"),
 }
 
 @app.route('/<service>/<path:path>', methods=['GET'])
@@ -23,11 +25,11 @@ def gateway(service, path=""):
         return jsonify({"error": "Service not found"}), 404
 
     # Construct the full URL for the target service
-    # Construct the full URL for the target service
-    # For 'analyze' and 'screen' services, the service name is part of the path on the target service
-    if service in ["analyze", "screen"]:
-        target_url = f"{SERVICES[service]}/{service}/{path}"
-    else:
+    # The target service already knows its endpoint structure (e.g., /data/, /news/, /screen/)
+    target_url = f"{SERVICES[service]}/{service}/{path}"
+    
+    # Special cases for services that have a root endpoint or handle their own path prefix
+    if service == 'tickers': # Only tickers has a root endpoint
         target_url = f"{SERVICES[service]}/{path}"
     
     try:

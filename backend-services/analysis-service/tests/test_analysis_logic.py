@@ -1,10 +1,13 @@
 import unittest
 import sys
 import os
+import numpy as np # FIX: Import numpy
+from unittest.mock import patch, MagicMock
 
 # Add the parent directory to the path to allow importing app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app import find_volatility_contraction_pattern, prepare_historical_data # Assuming this is the main VCP analysis function
+# FIX: Import app for endpoint testing
+from app import app, find_volatility_contraction_pattern, prepare_historical_data
 
 def get_known_vcp_data():
     """
@@ -58,6 +61,53 @@ class TestVCPAnalysisLogic(unittest.TestCase):
     """
     Unit tests for the VCP analysis logic in the analysis-service.
     """
+    # ... (existing TestVCPAnalysisLogic tests remain the same) ...
+    def test_vcp_pivot_and_stop_loss_calculation(self):
+        # ... (test content) ...
+        pass
+
+# FIX: Add a new test class for the endpoint
+class TestAnalysisServiceEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    @patch('requests.get')
+    @patch('app.find_volatility_contraction_pattern')
+    def test_endpoint_handles_numpy_types(self, mock_vcp_pattern, mock_requests_get):
+        """
+        Ensures the /analyze endpoint can correctly serialize NumPy data types.
+        This test will fail if the NumpyJSONEncoder is not present.
+        """
+        # 1. Arrange
+        # Mock the response from the data-service
+        mock_requests_get.return_value.status_code = 200
+        # Provide just enough data for the endpoint to process
+        mock_requests_get.return_value.json.return_value = [
+            {'formatted_date': '2024-01-01', 'close': 100.0},
+            {'formatted_date': '2024-01-02', 'close': 101.0},
+            {'formatted_date': '2024-01-03', 'close': 102.0},
+            {'formatted_date': '2024-01-04', 'close': 103.0}
+        ]
+
+        # Mock the VCP logic to return a NumPy-specific float
+        # This is the crucial part that will cause a TypeError without the encoder
+        mock_vcp_pattern.return_value = [
+            # (high_idx, high_price, low_idx, low_price)
+            (3, np.float64(103.0), 0, np.float64(100.0))
+        ]
+
+        # 2. Act
+        response = self.app.get('/analyze/TESTTICKER')
+        
+        # 3. Assert
+        # The test's primary goal is to ensure this call doesn't raise a TypeError.
+        # If it completes with 200, the JSON serialization was successful.
+        self.assertEqual(response.status_code, 200)
+
+        # Optionally, check that the data was serialized correctly
+        json_response = response.get_json()
+        self.assertIsInstance(json_response['analysis']['buyPoints'][0]['value'], float)
 
     def test_vcp_pivot_and_stop_loss_calculation(self):
         """

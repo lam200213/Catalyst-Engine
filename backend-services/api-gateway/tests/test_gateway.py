@@ -2,12 +2,13 @@ import unittest
 import os
 from flask import Flask, jsonify
 from unittest.mock import patch
-from unittest.mock import patch # Import patch from unittest.mock
+from unittest.mock import patch
 
 # Set environment variables before importing the app
 os.environ['SCREENING_SERVICE_URL'] = 'http://screening-service:3002'
 os.environ['ANALYSIS_SERVICE_URL'] = 'http://analysis-service:3003'
 os.environ['TICKER_SERVICE_URL'] = 'http://ticker-service:5000'
+os.environ['DATA_SERVICE_URL'] = 'http://data-service:3001'
 
 from app import app
 
@@ -31,7 +32,7 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "AAPL", "passes": True})
         # Verify that requests.get was called with the correct URL
-        mock_get.assert_called_once_with('http://screening-service:3002/AAPL', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://screening-service:3002/screen/AAPL', params={}, timeout=20)
 
     @patch('requests.get')
     def test_routes_to_analysis_service(self, mock_get):
@@ -43,7 +44,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "MSFT", "analysis": "VCP detected"})
-        mock_get.assert_called_once_with('http://analysis-service:3003/MSFT', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://analysis-service:3003/analyze/MSFT', params={}, timeout=20)
 
     @patch('requests.get')
     def test_routes_to_ticker_service(self, mock_get):
@@ -57,6 +58,20 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.json, ["AAPL", "GOOG", "TSLA"])
         # The path for ticker-service is empty in the gateway logic, so it calls the base URL + path
         mock_get.assert_called_once_with('http://ticker-service:5000/', params={}, timeout=20)
+
+    # FIX: Add a new test case for the data-service route
+    @patch('requests.get')
+    def test_routes_to_data_service(self, mock_get):
+        """Verify that a request to /data/* is routed to the data-service."""
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"price": 150.0}
+        
+        # Note: The gateway logic forwards the path, so '/data/AAPL' is sent to the data service
+        response = self.app.get('/data/AAPL')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"price": 150.0})
+        mock_get.assert_called_once_with('http://data-service:3001/data/AAPL', params={}, timeout=20)
 
     def test_invalid_service_route(self):
         """Verify that a request to an unknown service returns a 404 error."""

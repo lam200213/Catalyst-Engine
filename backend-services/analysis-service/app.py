@@ -1,8 +1,11 @@
 # backend-services/analysis-service/app.py
 import os
+import json
 from flask import Flask, jsonify
+from flask.json.provider import JSONProvider
 import requests
 import numpy as np
+
 
 app = Flask(__name__)
 
@@ -13,6 +16,27 @@ PORT = int(os.getenv("PORT", 3003))
 COUNTER_THRESHOLD = 5 # Used for finding local highs/lows (5 consecutive non-new highs/lows)
 PIVOT_PRICE_PERC = 0.2 # For is_pivot_good, max correction percentage
 PRICE_POSITION_LOW = 0.66 # For price_strategy, current price position relative to 1-year low/high
+
+# Add the custom JSON provider to handle NumPy types
+class NumpyJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NumpyJSONEncoder, self).default(obj)
+
+class CustomJSONProvider(JSONProvider):
+    def dumps(self, obj, **kwargs):
+        return json.dumps(obj, **kwargs, cls=NumpyJSONEncoder)
+    def loads(self, s, **kwargs):
+        return json.loads(s, **kwargs)
+
+app.json = CustomJSONProvider(app)
 
 def prepare_historical_data(historical_data):
     """
