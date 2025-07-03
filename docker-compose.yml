@@ -95,6 +95,8 @@ services:
       - api-gateway
     networks:
       - app-network
+    volumes: # Add this volume mount
+      - ./frontend-app:/app
 
 volumes:
   mongodb_data:
