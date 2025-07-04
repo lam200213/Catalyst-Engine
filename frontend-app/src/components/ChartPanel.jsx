@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
-import { Box, Text, Heading } from '@chakra-ui/react';
+import { Box, Text, Heading, Flex, Spinner } from '@chakra-ui/react';
 
 const AnalysisChart = ({ analysisData }) => {
     const chartContainerRef = useRef();
@@ -24,8 +24,11 @@ const AnalysisChart = ({ analysisData }) => {
         });
 
         const volumeSeries = chart.addHistogramSeries({
-            color: '#4A5568', priceFormat: { type: 'volume' },
-            overlay: true, scaleMargins: { top: 0.8, bottom: 0 },
+            color: '#4A5568',
+            priceFormat: { type: 'volume' },
+            // overlay: true is removed to place volume in a separate panel
+            // scaleMargins can be adjusted or removed for default behavior
+            scaleMargins: { top: 0.85, bottom: 0 }, // Adjust top margin to give it more space
         });
 
         const vcpLineSeries = chart.addLineSeries({
@@ -75,11 +78,18 @@ const AnalysisChart = ({ analysisData }) => {
     );
 };
 
-const ChartPanel = ({ analysisData }) => {
+const ChartPanel = ({ analysisData, loading }) => {
+    // Add conditional rendering logic inside the return statement
     return (
         <Box bg="gray.700" p={6} borderRadius="lg" boxShadow="xl">
             <Heading as="h2" size="lg" mb={4} color="blue.400">VCP Analysis</Heading>
-            <AnalysisChart analysisData={analysisData} />
+            {loading ? (
+                <Flex justify="center" align="center" h="400px">
+                    <Spinner color="blue.300" />
+                </Flex>
+            ) : (
+                <AnalysisChart analysisData={analysisData} />
+            )}
         </Box>
     );
 };

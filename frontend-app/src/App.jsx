@@ -45,7 +45,7 @@ function App() {
 
         <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={8}>
           <ScreeningPanel result={data.screening} loading={loading && !data.screening} />
-          <ChartPanel analysisData={data.analysis} />
+          <ChartPanel analysisData={data.analysis} loading={loading && !data.analysis} />
         </SimpleGrid>
 
         <Box as="footer" textAlign="center" py={4} color="gray.500">

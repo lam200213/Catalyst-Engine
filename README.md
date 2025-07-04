@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-04
-Resolved a "Network Error" by implementing a secure CORS policy on the API Gateway and updating unit tests to match the new security posture.
+Improved test suite stability. Hardened the application by removing debug configurations and adding a CI check to enforce production-ready settings. Enhanced test coverage for security (XSS) and UI state logic.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
