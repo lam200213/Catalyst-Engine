@@ -1,9 +1,14 @@
 # backend-services/api-gateway/app.py
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS 
 import requests
 
 app = Flask(__name__)
+
+# Secure CORS Configuration: Only allow requests from the frontend's origin
+# This replaces the overly permissive CORS(app)
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
 # Service URLs are now managed via environment variables
 # These point to the internal Docker service names

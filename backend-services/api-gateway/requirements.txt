@@ -2,3 +2,4 @@ Flask
 requests
 pytest
 requests-mock
+Flask-Cors

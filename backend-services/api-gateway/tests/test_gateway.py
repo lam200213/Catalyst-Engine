@@ -59,7 +59,7 @@ class TestGateway(unittest.TestCase):
         # The path for ticker-service is empty in the gateway logic, so it calls the base URL + path
         mock_get.assert_called_once_with('http://ticker-service:5000/', params={}, timeout=20)
 
-    # FIX: Add a new test case for the data-service route
+    # Test case for the data-service route
     @patch('requests.get')
     def test_routes_to_data_service(self, mock_get):
         """Verify that a request to /data/* is routed to the data-service."""
@@ -79,6 +79,21 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json, {"error": "Service not found"})
 
+    @patch('requests.get')
+    def test_cors_headers_are_present(self, mock_get):
+        """Verify that CORS headers are added to the response."""
+        # Arrange: Mock a successful downstream response
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"ticker": "CORS", "passes": True}
+        
+        # Act: Make a request with an Origin header, like a browser would
+        headers = {'Origin': 'http://localhost:5173'}
+        response = self.app.get('/screen/CORS', headers=headers)
+
+        # Assert: Check for the Access-Control-Allow-Origin header
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Access-Control-Allow-Origin', response.headers)
+        self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'http://localhost:5173')
 
 if __name__ == '__main__':
     unittest.main()

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-04
-Ran Unit Tests for Connecting Frontend State to Backend APIs
+Resolved a "Network Error" by implementing a secure CORS policy on the API Gateway and updating unit tests to match the new security posture.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -165,3 +165,27 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Proxies to the Analysis Service.  
   - Performs VCP analysis on historical data and returns a standardized payload containing the analysis results and historical data used for charting.
   - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+
+  ## **Common Errors & Troubleshooting**
+
+### **Container Name Conflict**
+
+**Error:** You might see an error like this when running docker-compose up:
+
+Error response from daemon: Conflict. The container name "/some-service" is already in use by container...
+
+**Cause:** This happens when a previous Docker session was stopped improperly (e.g., by closing the terminal) without using docker-compose down. This leaves behind *stopped* containers that still occupy their names, preventing new ones from starting. This will also make the application unreachable in your browser, causing an ERR\_CONNECTION\_REFUSED error.
+
+**Solution:**
+
+1. **Stop and Remove the Application Stack:** The standard command to fix this is docker-compose down. This gracefully stops and removes all containers and networks for the project.  
+   Bash  
+   docker-compose down
+
+2. **Forceful Cleanup (If Needed):** For stubborn cases or to perform a general cleanup, you can use docker container prune to remove all stopped containers on your system.  
+   Bash  
+   docker container prune
+
+3. **Relaunch:** You can now start the application again.  
+   Bash  
+   docker-compose up \--build  
