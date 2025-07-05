@@ -1,12 +1,14 @@
 // frontend-app/src/components/ChartPanel.jsx
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { Box, Text, Heading, Flex, Spinner } from '@chakra-ui/react';
+import ChartLegend from './ChartLegend';
 
 const AnalysisChart = ({ analysisData }) => {
     const chartContainerRef = useRef();
     const chartRef = useRef(null);
     const seriesRef = useRef({}); // To hold all series and price lines
+    const [legendData, setLegendData] = useState(null);
 
     // Effect for chart initialization
     useEffect(() => {
@@ -37,37 +39,67 @@ const AnalysisChart = ({ analysisData }) => {
         chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
         seriesRef.current.vcpLineSeries = chart.addLineSeries({ color: '#ef5350', lineWidth: 2 });
-        seriesRef.current.ma50Series = chart.addLineSeries({ color: 'orange', lineWidth: 1, crosshairMarkerVisible: false });
-        seriesRef.current.ma150Series = chart.addLineSeries({ color: 'pink', lineWidth: 1, crosshairMarkerVisible: false });
-        seriesRef.current.ma200Series = chart.addLineSeries({ color: 'lightblue', lineWidth: 1, crosshairMarkerVisible: false });
+        seriesRef.current.ma20Series = chart.addLineSeries({ color: 'pink', lineWidth: 1 });
+        seriesRef.current.ma50Series = chart.addLineSeries({ color: 'red', lineWidth: 1 });
+        seriesRef.current.ma150Series = chart.addLineSeries({ color: 'orange', lineWidth: 1 });
+        seriesRef.current.ma200Series = chart.addLineSeries({ color: 'green', lineWidth: 1 });
+
+        // Event handling logic for legend
+        const handleCrosshairMove = (param) => {
+            if (!param.time || !param.seriesData.size) {
+                setLegendData(null);
+                return;
+            }
+            const ohlcv = param.seriesData.get(seriesRef.current.candlestickSeries);
+            const volume = param.seriesData.get(seriesRef.current.volumeSeries);
+            
+            setLegendData({
+                ticker: analysisData?.ticker,
+                ohlcv: { ...ohlcv, time: param.time, volume: volume?.value },
+                mas: [
+                    { name: 'MA 20', value: param.seriesData.get(seriesRef.current.ma20Series)?.value, color: 'pink' },
+                    { name: 'MA 50', value: param.seriesData.get(seriesRef.current.ma50Series)?.value, color: 'red' },
+                    { name: 'MA 150', value: param.seriesData.get(seriesRef.current.ma150Series)?.value, color: 'orange' },
+                    { name: 'MA 200', value: param.seriesData.get(seriesRef.current.ma200Series)?.value, color: 'green' },
+                ],
+            });
+        };
+
+        chart.subscribeCrosshairMove(handleCrosshairMove);
 
         const handleResize = () => chart.applyOptions({ width: chartContainerRef.current.clientWidth });
         window.addEventListener('resize', handleResize);
 
         return () => {
             window.removeEventListener('resize', handleResize);
+            chart.unsubscribeCrosshairMove(handleCrosshairMove);
             chart.remove();
         };
-    }, []);
+    }, [analysisData?.ticker]); // Add ticker to dependency array to update legend
+
 
     // Effect for data updates
     useEffect(() => {
         if (!chartRef.current || !seriesRef.current.candlestickSeries) return;
 
-        // Clear existing data and price lines before adding new ones
+        // --- Clear data for all series ---
         Object.values(seriesRef.current).forEach(series => {
-             if (series.setData) series.setData([]); // For series objects
-             if (series.remove) series.remove(); // For price line objects
+            if (series && typeof series.setData === 'function') {
+                series.setData([]);
+            }
         });
-        seriesRef.current.buyPivotLine = null;
-        seriesRef.current.stopLossLine = null;
+        if (seriesRef.current.candlestickSeries && seriesRef.current.candlestickSeries.priceLines) {
+            seriesRef.current.candlestickSeries.priceLines().forEach(line => seriesRef.current.candlestickSeries.removePriceLine(line));
+        }
 
         if (!analysisData?.historicalData || !analysisData?.analysis) {
+            // Clear markers if there is no data
+            seriesRef.current.candlestickSeries.setMarkers([]);
             return;
         }
 
         const { historicalData, analysis } = analysisData;
-        const { candlestickSeries, volumeSeries, vcpLineSeries, ma50Series, ma150Series, ma200Series } = seriesRef.current;
+        const { candlestickSeries, volumeSeries, vcpLineSeries, ma20Series, ma50Series, ma150Series, ma200Series } = seriesRef.current;
 
         // --- Set data for all series ---
         const candlestickData = historicalData.map(d => ({ time: d.formatted_date, open: d.open, high: d.high, low: d.low, close: d.close }));
@@ -76,9 +108,29 @@ const AnalysisChart = ({ analysisData }) => {
         candlestickSeries.setData(candlestickData);
         volumeSeries.setData(volumeData);
         vcpLineSeries.setData(analysis.vcpLines || []);
+        ma20Series.setData(analysis.ma20 || []);
         ma50Series.setData(analysis.ma50 || []);
         ma150Series.setData(analysis.ma150 || []);
         ma200Series.setData(analysis.ma200 || []);
+
+        // Start of Marker Logic
+        // Always clear existing markers before adding new ones to prevent duplicates.
+        candlestickSeries.setMarkers([]);
+
+        // Check if the lowVolumePivotDate exists in the analysis data.
+        if (analysis.lowVolumePivotDate) {
+            // Create the marker object with the specified properties.
+            const pivotMarker = {
+                time: analysis.lowVolumePivotDate,
+                position: 'belowBar',
+                color: '#FFD700', // A distinct yellow color
+                shape: 'arrowUp',
+                text: 'Low Vol Pivot'
+            };
+            // Set the marker on the candlestick series. setMarkers expects an array.
+            candlestickSeries.setMarkers([pivotMarker]);
+        }
+        // End of Marker Logic
 
         // --- Create Price Lines for Buy/Sell Points ---
         if (analysis.buyPoints && analysis.buyPoints.length > 0) {
@@ -108,7 +160,9 @@ const AnalysisChart = ({ analysisData }) => {
     }, [analysisData]);
 
     return (
-        <Box>
+        // Add position relative to contain the absolutely positioned legend
+        <Box position="relative">
+            <ChartLegend ticker={analysisData?.ticker} legendData={legendData} />
             <Box ref={chartContainerRef} w="100%" h="500px" />
             {analysisData?.analysis && (
                 <Text mt={2} fontStyle="italic" color="gray.400">
