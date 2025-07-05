@@ -10,14 +10,16 @@ import * as api from './services/api';
 // Mock the lightweight-charts library
 vi.mock('lightweight-charts', () => ({
     createChart: vi.fn(() => ({
-        addCandlestickSeries: vi.fn(() => ({ setData: vi.fn() })),
+        addCandlestickSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn() })),
         addHistogramSeries: vi.fn(() => ({ setData: vi.fn() })),
         addLineSeries: vi.fn(() => ({ setData: vi.fn() })),
         remove: vi.fn(),
         timeScale: () => ({ fitContent: vi.fn() }),
+        priceScale: () => ({ applyOptions: vi.fn() }), // This was the missing function
         applyOptions: vi.fn(),
     })),
     ColorType: { Solid: 'solid' },
+    LineStyle: { Dashed: 1 }, // This was also missing
 }));
 
 // Mock the api service module
