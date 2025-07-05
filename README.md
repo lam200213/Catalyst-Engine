@@ -47,7 +47,8 @@ The application follows a microservices architecture. The frontend communicates 
 │   ├── analysis-service/    \# Python/Flask
 │   │   ├── tests/                        # Unit tests for analysis-service
 │   │   │   ├── __init__.py
-│   │   │   └── test_analysis_logic.py
+│   │   │   ├── test_unit.py
+│   │   │   └── test_integration.py
 │   │   └── .dockerignore                 # Excludes tests from Docker image
 │   └── ticker-service/      \# Python/Flask
 ├── frontend-app/  
