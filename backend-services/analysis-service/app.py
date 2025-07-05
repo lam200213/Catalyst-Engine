@@ -226,6 +226,9 @@ def analyze_ticker_endpoint(ticker):
         if not prices:
             return jsonify({"error": f"No price data available for {ticker} to analyze."}), 404
 
+        # Extract volumes for pivot calculation
+        volumes = [item.get('volume', 0) for item in historical_data_sorted]
+
         vcp_results = find_volatility_contraction_pattern(prices)
 
         # Calculate moving averages
@@ -236,6 +239,8 @@ def analyze_ticker_endpoint(ticker):
 
         # Format the JSON Response (Step 4)
         vcp_lines, buy_points, sell_points = [], [], []
+        low_volume_pivot_date = None
+
         if vcp_results:
             last_high_price = vcp_results[-1][1]
             last_low_price = vcp_results[-1][3]
@@ -243,6 +248,16 @@ def analyze_ticker_endpoint(ticker):
                 vcp_lines.extend([{"time": dates[high_idx], "value": high_price}, {"time": dates[low_idx], "value": low_price}])
             buy_points.append({"value": last_high_price * 1.01})
             sell_points.append({"value": last_low_price * 0.99})
+
+            # Find the low volume pivot date
+            last_contraction_high_idx, _, last_contraction_low_idx, _ = vcp_results[-1]
+            if last_contraction_high_idx < len(volumes) and last_contraction_low_idx < len(volumes):
+                contraction_volumes = volumes[last_contraction_high_idx : last_contraction_low_idx + 1]
+                if contraction_volumes:
+                    min_volume_local_idx = np.argmin(contraction_volumes)
+                    min_volume_global_idx = last_contraction_high_idx + min_volume_local_idx
+                    low_volume_pivot_date = dates[min_volume_global_idx]
+            
 
         return jsonify({
             "ticker": ticker,
@@ -255,7 +270,8 @@ def analyze_ticker_endpoint(ticker):
                 "ma20": ma_20_series,
                 "ma50": ma_50_series,
                 "ma150": ma_150_series,
-                "ma200": ma_200_series
+                "ma200": ma_200_series,
+                "lowVolumePivotDate": low_volume_pivot_date
             },
             "historicalData": historical_data_sorted
         })
