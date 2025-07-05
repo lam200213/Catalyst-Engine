@@ -48,10 +48,8 @@ def prepare_historical_data(historical_data):
 
     # Sort data by date to ensure chronological order
     sorted_data = sorted(historical_data, key=lambda x: x['formatted_date'])
-
     prices = [item['close'] for item in sorted_data]
     dates = [item['formatted_date'] for item in sorted_data]
-    
     return prices, dates, sorted_data # Return original sorted data for historicalData
 
 def find_one_contraction(prices, start_index):
@@ -110,12 +108,10 @@ def find_one_contraction(prices, start_index):
     # A trough is found when 5 consecutive 5-day windows do not produce a new low
     for j in range(local_highest_idx, len(prices)):
         window_end = min(j + 5, len(prices))
-        if j >= window_end:
-            break
+        if j >= window_end: break
 
         window_prices = prices[j : window_end]
-        if not window_prices:
-            continue
+        if not window_prices: continue
 
         current_window_low = min(window_prices)
         # Get the relative index of the lowest price within this window, then convert to global index
@@ -166,6 +162,30 @@ def find_volatility_contraction_pattern(prices):
             start_index += 1
     return contractions
 
+# Helper function to calculate a moving average series
+def calculate_sma_series(prices, dates, period):
+    """
+    Calculates a continuous Simple Moving Average series.
+    Returns a list of dictionaries formatted for lightweight-charts.
+    """
+    if len(prices) < period:
+        return []
+    
+    sma_values = []
+    # Use a rolling window to calculate SMA for each point where possible
+    rolling_sma = np.convolve(prices, np.ones(period), 'valid') / period
+    
+    # The result of 'valid' convolution is shorter, so we align it with the original dates
+    # SMA values start from the 'period-1'-th index of the original data
+    for i in range(len(rolling_sma)):
+        date_index = period - 1 + i
+        sma_values.append({
+            "time": dates[date_index],
+            "value": rolling_sma[i]
+        })
+        
+    return sma_values
+
 @app.route('/')
 def index():
     return "Analysis Service is running."
@@ -201,23 +221,28 @@ def analyze_ticker_endpoint(ticker):
         raw_historical_data = hist_resp.json()
 
         prices, dates, historical_data_sorted = prepare_historical_data(raw_historical_data)
-        
+
+        # Handle empty price data gracefully
+        if not prices:
+            return jsonify({"error": f"No price data available for {ticker} to analyze."}), 404
+
         vcp_results = find_volatility_contraction_pattern(prices)
 
+        # Calculate moving averages
+        ma_20_series = calculate_sma_series(prices, dates, 20)
+        ma_50_series = calculate_sma_series(prices, dates, 50)
+        ma_150_series = calculate_sma_series(prices, dates, 150)
+        ma_200_series = calculate_sma_series(prices, dates, 200)
+
         # Format the JSON Response (Step 4)
-        vcp_lines = []
+        vcp_lines, buy_points, sell_points = [], [], []
         if vcp_results:
+            last_high_price = vcp_results[-1][1]
+            last_low_price = vcp_results[-1][3]
             for high_idx, high_price, low_idx, low_price in vcp_results:
-                vcp_lines.append({"time": dates[high_idx], "value": high_price})
-                vcp_lines.append({"time": dates[low_idx], "value": low_price})
-            
-            # Calculate buy/sell points based on the last contraction
-            last_high_idx, last_high_price, last_low_idx, last_low_price = vcp_results[-1]
-            buy_points = [{"time": dates[last_high_idx], "value": last_high_price * 1.01}] # Slightly above high
-            sell_points = [{"time": dates[last_low_idx], "value": last_low_price * 0.99}] # Slightly below low
-        else:
-            buy_points = []
-            sell_points = []
+                vcp_lines.extend([{"time": dates[high_idx], "value": high_price}, {"time": dates[low_idx], "value": low_price}])
+            buy_points.append({"value": last_high_price * 1.01})
+            sell_points.append({"value": last_low_price * 0.99})
 
         return jsonify({
             "ticker": ticker,
@@ -226,12 +251,20 @@ def analyze_ticker_endpoint(ticker):
                 "message": "VCP analysis complete." if vcp_results else "No VCP detected.",
                 "vcpLines": vcp_lines,
                 "buyPoints": buy_points,
-                "sellPoints": sell_points
+                "sellPoints": sell_points,
+                "ma20": ma_20_series,
+                "ma50": ma_50_series,
+                "ma150": ma_150_series,
+                "ma200": ma_200_series
             },
             "historicalData": historical_data_sorted
         })
+    except requests.exceptions.RequestException as e:
+        print(f"Connection error to data-service: {e}")
+        return jsonify({"error": "Service unavailable: data-service", "details": str(e)}), 503
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Unhandled exception in analyze_ticker_endpoint: {e}")
+        return jsonify({"error": "An internal error occurred in the analysis service."}), 500
 
 if __name__ == '__main__':
     print("Analysis Service started.")

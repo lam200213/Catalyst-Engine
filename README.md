@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-04
-Improved test suite stability. Hardened the application by removing debug configurations and adding a CI check to enforce production-ready settings. Enhanced test coverage for security (XSS) and UI state logic.
+2025-07-05
+Enhanced the stability and reliability of the application by implementing a comprehensive test suite for the frontend chart and screening components, as well as the backend analysis service. Hardened the analysis service's error handling for dependency failures. Corrected multiple bugs in the test suites to ensure accurate validation of component logic.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -164,7 +164,28 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **GET `/analyze/:ticker`**  
   - Proxies to the Analysis Service.  
   - Performs VCP analysis on historical data and returns a standardized payload containing the analysis results and historical data used for charting.
-  - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+  - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
+  - **Example Success Response:**
+    ```json
+    {
+      "ticker": "AAPL",
+      "analysis": {
+        "detected": true,
+        "message": "VCP analysis complete.",
+        "vcpLines": [{"time": "2024-06-10", "value": 195.0}, ...],
+        "buyPoints": [{"value": 196.95}],
+        "sellPoints": [{"value": 188.10}],
+        "ma20": [{"time": "2024-07-01", "value": 192.5}, ...],
+        "ma50": [{"time": "2024-07-01", "value": 190.0}, ...],
+        "ma150": [{"time": "2024-07-01", "value": 185.0}, ...],
+        "ma200": [{"time": "2024-07-01", "value": 180.0}, ...]
+      },
+      "historicalData": [
+        {"formatted_date": "2024-01-01", "open": 170.0, "high": 172.0, "low": 169.0, "close": 171.5, "volume": 5000000},
+        ...
+      ]
+    }
+    ```
 
   ## **Common Errors & Troubleshooting**
 

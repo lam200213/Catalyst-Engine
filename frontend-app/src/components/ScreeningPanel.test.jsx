@@ -44,8 +44,6 @@ describe('components/ScreeningPanel', () => {
     // Test Case 1: Business Logic (Loading state)
     it('should display a loading spinner when loading is true', () => {
         renderWithProvider(<ScreeningPanel result={null} loading={true} />);
-        
-        // Corrected selector: Find the spinner by its visible text content
         expect(screen.getByText('Loading...')).toBeInTheDocument();
     });
 
@@ -67,5 +65,32 @@ describe('components/ScreeningPanel', () => {
     it('should display a default message when props are null', () => {
         renderWithProvider(<ScreeningPanel result={null} loading={false} />);
         expect(screen.getByText('Results will appear here.')).toBeInTheDocument();
+    });
+
+    // Test Case 5: Edge Case (Malicious data)
+    it('should render potentially malicious text as plain text', () => {
+        const maliciousData = {
+            ticker: '<script>alert("XSS")</script>',
+            passes: false,
+            reason: 'Malicious reason',
+            details: {}
+        };
+        renderWithProvider(<ScreeningPanel result={maliciousData} loading={false} />);
+        // Find the parent element and assert its text content to handle cases where text is broken up by other elements or spacing.
+        const parentElement = screen.getByText(/Overall Result for/i);
+        expect(parentElement.textContent).toContain(maliciousData.ticker);
+    });
+
+    // Test Case 6: Edge Case (Incomplete data)
+    it('should render without crashing if details are missing', () => {
+        const incompleteData = {
+            ticker: 'NODETAILS',
+            passes: true,
+            details: null // Details are missing
+        };
+        renderWithProvider(<ScreeningPanel result={incompleteData} loading={false} />);
+        // The component should still render the overall result.
+        expect(screen.getByText('PASS')).toBeInTheDocument();
+        expect(screen.getByText(/Overall Result for NODETAILS/i)).toBeInTheDocument();
     });
 });
