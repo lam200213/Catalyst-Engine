@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-06
-Enhanced the chart visualization by adding a dynamic, cursor-aware legend, a marker for low-volume pivot points, and a trend line for volume during contractions. Refactored the entire chart's color scheme into a centralized theme file for improved maintainability.
+Implemented robust caching strategies. Added browser-level cache-busting for frontend assets via Nginx configuration. Implemented backend data caching with a manual `/cache/clear` endpoint to prevent stale data during development.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -190,6 +190,24 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
         {"formatted_date": "2024-01-01", "open": 170.0, "high": 172.0, "low": 169.0, "close": 171.5, "volume": 5000000},
         ...
       ]
+    }
+    ```
+
+ - **POST `/cache/clear`**  
+- Proxies to: data-service
+- Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
+
+- **Example Usage:**
+    ```Bash
+    {
+      curl -X POST http://localhost:3000/cache/clear
+    }
+    ```
+
+- **Example Success Response:**
+    ```JSON
+    {
+      "message": "All data service caches have been cleared."
     }
     ```
 

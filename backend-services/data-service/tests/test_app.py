@@ -209,5 +209,62 @@ class DataServiceCacheTest(unittest.TestCase):
         mock_marketaux.assert_called_once_with(ticker)
         self.mock_news_cache.insert_one.assert_called_once() # New data inserted
 
+# Latest Add: New test class for the cache clearing endpoint.
+class DataServiceCacheClearTest(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.app = app.test_client()
+
+        # We need to patch the global variables `price_cache` and `news_cache`
+        # that are used by the `clear_cache` endpoint.
+        self.price_cache_patcher = patch('app.price_cache', MagicMock())
+        self.news_cache_patcher = patch('app.news_cache', MagicMock())
+        self.init_db_patcher = patch('app.init_db', MagicMock())
+
+        self.mock_price_cache = self.price_cache_patcher.start()
+        self.mock_news_cache = self.news_cache_patcher.start()
+        self.mock_init_db = self.init_db_patcher.start()
+
+    def tearDown(self):
+        self.price_cache_patcher.stop()
+        self.news_cache_patcher.stop()
+        self.init_db_patcher.stop()
+
+    def test_clear_cache_success(self):
+        """Tests successful cache clearing."""
+        # Act
+        response = self.app.post('/cache/clear')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"message": "All data service caches have been cleared."})
+        
+        # Verify that the drop method was called on each mock collection
+        self.mock_price_cache.drop.assert_called_once()
+        self.mock_news_cache.drop.assert_called_once()
+        
+        # Verify that the database is re-initialized after dropping
+        self.mock_init_db.assert_called_once()
+
+    def test_clear_cache_failure(self):
+        """Tests failure during cache clearing."""
+        # Arrange: Configure one of the mock drop methods to raise an exception
+        self.mock_price_cache.drop.side_effect = Exception("Database connection failed")
+
+        # Act
+        response = self.app.post('/cache/clear')
+
+        # Assert
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("error", response.json)
+        self.assertEqual(response.json["error"], "Failed to clear caches.")
+        
+        # Even though it failed, the drop method was still called
+        self.mock_price_cache.drop.assert_called_once()
+        
+        # In this failure path, the second drop is not called, and init_db is not called
+        self.mock_news_cache.drop.assert_not_called()
+        self.mock_init_db.assert_not_called()
+
 if __name__ == '__main__':
     unittest.main()

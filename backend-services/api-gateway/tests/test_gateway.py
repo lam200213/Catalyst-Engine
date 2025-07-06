@@ -1,5 +1,6 @@
 import unittest
 import os
+import json
 from flask import Flask, jsonify
 from unittest.mock import patch
 from unittest.mock import patch
@@ -72,6 +73,21 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"price": 150.0})
         mock_get.assert_called_once_with('http://data-service:3001/data/AAPL', params={}, timeout=20)
+
+    # Test for the new POST route to clear the cache.
+    @patch('requests.post')
+    def test_routes_post_to_cache_clear_endpoint(self, mock_post):
+        """Verify that a POST to /cache/clear is routed to the data-service."""
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {"message": "All data service caches have been cleared."}
+        response = self.app.post(
+            '/cache/clear',
+            data=json.dumps({}),
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"message": "All data service caches have been cleared."})
+        mock_post.assert_called_once_with('http://data-service:3001/cache/clear', json={}, timeout=20)
 
     def test_invalid_service_route(self):
         """Verify that a request to an unknown service returns a 404 error."""

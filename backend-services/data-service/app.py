@@ -114,6 +114,30 @@ def get_news(ticker: str):
     except Exception as e:
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
+# Latest Add: New endpoint to manually clear the cache
+@app.route('/cache/clear', methods=['POST'])
+def clear_cache():
+    """
+    Manually drops the price and news cache collections from MongoDB.
+    This is useful for forcing a data refresh after deploying application updates.
+    """
+    try:
+        if price_cache is not None:
+            price_cache.drop()
+            print("DATA-SERVICE: Dropped price_cache collection.")
+        if news_cache is not None:
+            news_cache.drop()
+            print("DATA-SERVICE: Dropped news_cache collection.")
+        
+        # Re-initialize the collections and their TTL indexes
+        init_db()
+        
+        return jsonify({"message": "All data service caches have been cleared."}), 200
+
+    except Exception as e:
+        print(f"Error clearing cache: {e}")
+        return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
+
 if __name__ == '__main__':
     init_db() # Initialize the database connection
     port = int(os.environ.get('PORT', 3001))
