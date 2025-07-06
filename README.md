@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-06
-Implemented robust caching strategies. Added browser-level cache-busting for frontend assets via Nginx configuration. Implemented backend data caching with a manual `/cache/clear` endpoint to prevent stale data during development.
+2025-07-07
+Bug Fixing and UI/UX Refinement
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -233,4 +233,4 @@ Error response from daemon: Conflict. The container name "/some-service" is alre
 
 3. **Relaunch:** You can now start the application again.  
    Bash  
-   docker-compose up \--build  
+   docker-compose up --build -d

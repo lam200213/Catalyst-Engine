@@ -86,19 +86,38 @@ services:
     volumes:
       - ./backend-services/api-gateway:/app # Mount local directory to container's /app
 
+  # for production build with static Nginx server
+  # frontend-app:
+  #   build: ./frontend-app
+  #   container_name: frontend-app
+  #   ports:
+  #     - "5173:80"
+  #   environment:
+  #     VITE_API_BASE_URL: http://localhost:3000
+  #   depends_on:
+  #     - api-gateway
+  #   networks:
+  #     - app-network
+  #   volumes: 
+  #     - ./frontend-app:/app
+
+  # for development
   frontend-app:
-    build: ./frontend-app
+    build:
+      context: ./frontend-app
+      dockerfile: Dockerfile.dev
     container_name: frontend-app
     ports:
-      - "5173:80"
+      - "5173:5173" # Vite dev server runs on 5173
     environment:
-      VITE_API_BASE_URL: http://localhost:3000
+      - VITE_API_BASE_URL=http://localhost:3000
     depends_on:
       - api-gateway
     networks:
       - app-network
-    volumes: 
+    volumes:
       - ./frontend-app:/app
+      - /app/node_modules # Prevents local node_modules from overwriting container's
 
 volumes:
   mongodb_data:

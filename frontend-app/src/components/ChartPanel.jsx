@@ -31,14 +31,22 @@ const AnalysisChart = ({ analysisData }) => {
 
         // --- Create all series upfront ---
         seriesRef.current.candlestickSeries = chart.addCandlestickSeries({
-            upColor: chartColors.candlestick.up, downColor: chartColors.candlestick.down, borderDownColor: chartColors.candlestick.down,
-            borderUpColor: chartColors.candlestick.up, wickDownColor: chartColors.candlestick.down, wickUpColor: chartColors.candlestick.up,
+            upColor: chartColors.candlestick.up, 
+            downColor: chartColors.candlestick.down, 
+            borderDownColor: chartColors.candlestick.down,
+            borderUpColor: chartColors.candlestick.up, 
+            wickDownColor: chartColors.candlestick.down, 
+            wickUpColor: chartColors.candlestick.up,
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
 
         seriesRef.current.volumeSeries = chart.addHistogramSeries({
             color: chartColors.volume.base,
             priceFormat: { type: 'volume' },
             priceScaleId: '', // This forces the series to the bottom pane
+            lastValueVisible: false,
+            priceLineVisible: false,
         });
         // Set pane size for volume
         chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
@@ -92,7 +100,7 @@ const AnalysisChart = ({ analysisData }) => {
     }, [analysisData?.ticker]); // Add ticker to dependency array to update legend
 
 
-    // Effect for data updates
+// Effect for data updates
     useEffect(() => {
         if (!chartRef.current || !seriesRef.current.candlestickSeries) return;
 
@@ -102,13 +110,18 @@ const AnalysisChart = ({ analysisData }) => {
                 series.setData([]);
             }
         });
+        // This line is safer for cleanup
         if (seriesRef.current.candlestickSeries && seriesRef.current.candlestickSeries.priceLines) {
-            seriesRef.current.candlestickSeries.priceLines().forEach(line => seriesRef.current.candlestickSeries.removePriceLine(line));
+             seriesRef.current.candlestickSeries.priceLines().forEach(line => seriesRef.current.candlestickSeries.removePriceLine(line));
+        }
+        if (seriesRef.current.volumeSeries && seriesRef.current.volumeSeries.priceLines) {
+            seriesRef.current.volumeSeries.priceLines().forEach(line => seriesRef.current.volumeSeries.removePriceLine(line));
         }
 
         if (!analysisData?.historicalData || !analysisData?.analysis) {
-            // Clear markers if there is no data
-            seriesRef.current.candlestickSeries.setMarkers([]);
+            if(seriesRef.current.candlestickSeries) {
+                seriesRef.current.candlestickSeries.setMarkers([]);
+            }
             return;
         }
 
@@ -119,9 +132,21 @@ const AnalysisChart = ({ analysisData }) => {
         const candlestickData = historicalData.map(d => ({ time: d.formatted_date, open: d.open, high: d.high, low: d.low, close: d.close }));
         const volumeData = historicalData.map(d => ({ time: d.formatted_date, value: d.volume, color: d.close >= d.open ? chartColors.volume.up : chartColors.volume.down }));
         
+        const vcpData = analysis.vcpLines || [];
+        if (vcpData.length > 0) {
+            const coloredVcpData = [...vcpData];
+            const lastPointIndex = coloredVcpData.length - 1;
+            coloredVcpData[lastPointIndex] = {
+                ...coloredVcpData[lastPointIndex],
+                color: chartColors.vcp.endPoint,
+            };
+            vcpLineSeries.setData(coloredVcpData);
+        } else {
+            vcpLineSeries.setData([]);
+        }
+        
         candlestickSeries.setData(candlestickData);
         volumeSeries.setData(volumeData);
-        vcpLineSeries.setData(analysis.vcpLines || []);
         ma20Series.setData(analysis.ma20 || []);
         ma50Series.setData(analysis.ma50 || []);
         ma150Series.setData(analysis.ma150 || []);
@@ -129,12 +154,8 @@ const AnalysisChart = ({ analysisData }) => {
         volumeTrendLine.setData(analysis.volumeTrendLine || []);
 
         // Start of Marker Logic
-        // Always clear existing markers before adding new ones to prevent duplicates.
         candlestickSeries.setMarkers([]);
-
-        // Check if the lowVolumePivotDate exists in the analysis data.
         if (analysis.lowVolumePivotDate) {
-            // Create the marker object with the specified properties.
             const pivotMarker = {
                 time: analysis.lowVolumePivotDate,
                 position: 'belowBar',
@@ -142,10 +163,8 @@ const AnalysisChart = ({ analysisData }) => {
                 shape: 'arrowUp',
                 text: 'Low Vol Pivot'
             };
-            // Set the marker on the candlestick series. setMarkers expects an array.
             candlestickSeries.setMarkers([pivotMarker]);
         }
-        // End of Marker Logic
 
         // --- Create Price Lines for Buy/Sell Points ---
         if (analysis.buyPoints && analysis.buyPoints.length > 0) {
@@ -169,6 +188,30 @@ const AnalysisChart = ({ analysisData }) => {
                 title: 'Stop Loss',  
             });
         }
+        
+    if (historicalData && historicalData.length > 0) {
+        const lastDataPoint = historicalData[historicalData.length - 1];
+        
+        // Add marker for the latest closing price
+        candlestickSeries.createPriceLine({
+            price: lastDataPoint.close,
+            color: chartColors.textColor,
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: 'Last Close',
+        });
+        
+        // --- Latest Add: Add marker for the latest volume ---
+        volumeSeries.createPriceLine({
+            price: lastDataPoint.volume,
+            color: chartColors.textColor,
+            lineWidth: 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: 'Last Vol',
+        });
+    }
         
         chartRef.current.timeScale().fitContent();
 

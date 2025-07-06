@@ -10,16 +10,19 @@ import * as api from './services/api';
 // Mock the lightweight-charts library
 vi.mock('lightweight-charts', () => ({
     createChart: vi.fn(() => ({
-        addCandlestickSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn() })),
-        addHistogramSeries: vi.fn(() => ({ setData: vi.fn() })),
+        addCandlestickSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn(), setMarkers: vi.fn() })),
+        addHistogramSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn() })),
         addLineSeries: vi.fn(() => ({ setData: vi.fn() })),
+        // Latest Add: Add missing mock functions to prevent component crash
+        subscribeCrosshairMove: vi.fn(),
+        unsubscribeCrosshairMove: vi.fn(),
         remove: vi.fn(),
         timeScale: () => ({ fitContent: vi.fn() }),
-        priceScale: () => ({ applyOptions: vi.fn() }), // This was the missing function
+        priceScale: () => ({ applyOptions: vi.fn() }),
         applyOptions: vi.fn(),
     })),
     ColorType: { Solid: 'solid' },
-    LineStyle: { Dashed: 1 }, // This was also missing
+    LineStyle: { Dashed: 1, Dotted: 2 },
 }));
 
 // Mock the api service module
@@ -53,14 +56,10 @@ describe('App Component Integration Test', () => {
     });
 
     // Integration test for the main application view (success case)
-    it('should render data on successful form submission', async () => {
-        // Arrange: Mock a successful API response
-        const mockSuccessData = {
-            screening: { ticker: 'AAPL', passes: true, details: { current_price_above_ma50: true } },
-            analysis: { analysis: { message: 'VCP analysis complete.' } }
-        };
-        api.fetchStockData.mockResolvedValue(mockSuccessData);
-        
+    // Ttest dedicated to verifying the loading state.
+    it('should display loading indicators while fetching data', async () => {
+        // Arrange: Use a mock promise that never resolves to freeze the app in a loading state.
+        api.fetchStockData.mockReturnValue(new Promise(() => {}));
         const user = userEvent.setup();
         renderApp();
         
@@ -71,53 +70,96 @@ describe('App Component Integration Test', () => {
         await user.type(input, 'AAPL');
         await user.click(button);
 
-        // FIX: The check for the "Analyzing..." button is removed to avoid a race condition
-        // where the mocked API resolves too quickly for the loading state to be caught.
+        // Assert: The app is now permanently in a loading state for this test.
+        // We can now reliably check for the loading indicators.
+        expect(screen.getByText(/Analyzing.../i)).toBeInTheDocument();
+        // The accessible name for Chakra's Spinner is "Loading..."
+        expect(screen.getAllByText('Loading...').length).toBeGreaterThan(0);
+        expect(button).toBeDisabled(); // The button should be disabled while loading.
+    });
+
+    //  A focused test for the successful outcome.
+    it('should render data after a successful form submission', async () => {
+        // Arrange: Mock a successful API response.
+        const mockSuccessData = {
+            screening: { ticker: 'AAPL', passes: true, details: { current_price_above_ma50: true } },
+            analysis: { analysis: { message: 'VCP analysis complete.' } }
+        };
+        api.fetchStockData.mockResolvedValue(mockSuccessData);
         
-        // Assert: Wait for the final data to appear
+        const user = userEvent.setup();
+        renderApp();
+        
+        // Act
+        const input = screen.getByPlaceholderText(/Enter Ticker/i);
+        const button = screen.getByRole('button', { name: /Analyze Stock/i });
+        await user.clear(input);
+        await user.type(input, 'AAPL');
+        await user.click(button);
+
+        // Assert: Wait only for the final data to appear.
         await waitFor(() => {
-            // Assert that the results are displayed
             expect(screen.getByText('PASS')).toBeInTheDocument();
             expect(screen.getByText('VCP analysis complete.')).toBeInTheDocument();
         });
         
-        // Assert loading state is gone
+        // Final sanity check that the loading state is gone.
         expect(screen.queryByText(/Analyzing.../i)).not.toBeInTheDocument();
         expect(api.fetchStockData).toHaveBeenCalledWith('AAPL');
     });
 
     // Integration test for API failure
-    it('should display an error message on API failure', async () => {
-        // Arrange: Mock a failed API response
-        const errorMessage = 'Invalid Ticker Provided';
+    // Specific test for a "Not Found" or "Bad Gateway" error
+    it('should display a specific error for an invalid ticker', async () => {
+        // Arrange
+        const errorMessage = 'Invalid or non-existent ticker: FAKETICKER';
         api.fetchStockData.mockRejectedValue(new Error(errorMessage));
-
         const user = userEvent.setup();
         renderApp();
-        
+
         // Act: Simulate user input and form submission
         const input = screen.getByPlaceholderText(/Enter Ticker/i);
         const button = screen.getByRole('button', { name: /Analyze Stock/i });
         await user.clear(input);
-        await user.type(input, 'FAIL');
+        await user.type(input, 'FAKETICKER');
         await user.click(button);
         
-        // ENHANCED TEST: Check loading state during the request
+        // Check loading state during the request
         // Assert: Wait for the error message to appear
         await waitFor(() => {
             const errorAlert = screen.getByRole('alert');
             expect(errorAlert).toHaveTextContent(errorMessage);
         });
-
-        // Assert that loading state is gone
-        expect(screen.queryByText(/Analyzing.../i)).not.toBeInTheDocument();
-        expect(api.fetchStockData).toHaveBeenCalledWith('FAIL');
+        expect(api.fetchStockData).toHaveBeenCalledWith('FAKETICKER');
     });
 
-    // ENHANCED TEST: Security test for XSS
+    // Specific test for a generic server or connection error
+    it('should display a generic error for a server failure', async () => {
+        // Arrange
+        const errorMessage = 'Service unavailable: data-service';
+        api.fetchStockData.mockRejectedValue(new Error(errorMessage));
+        const user = userEvent.setup();
+        renderApp();
+
+        // Act
+        const input = screen.getByPlaceholderText(/Enter Ticker/i);
+        const button = screen.getByRole('button', { name: /Analyze Stock/i });
+        await user.clear(input);
+        await user.type(input, 'ANY');
+        await user.click(button);
+
+        // Assert
+        await waitFor(() => {
+            const errorAlert = screen.getByRole('alert');
+            expect(errorAlert).toHaveTextContent(errorMessage);
+        });
+        expect(api.fetchStockData).toHaveBeenCalledWith('ANY');
+    });
+
+    // TEST: Security test for XSS
     it('should correctly handle and escape malicious script input', async () => {
         const maliciousInput = '<script>alert("XSS")</script>';
-        // FIX: The expected string is corrected to what React actually renders (escaped HTML).
+        // The expected string is corrected to what React actually renders (escaped HTML).
         const escapedHtml = '&lt;script&gt;alert("XSS")&lt;/script&gt;';
         const errorMessage = `Invalid Ticker: ${maliciousInput}`;
         
