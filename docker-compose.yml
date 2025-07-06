@@ -97,7 +97,7 @@ services:
       - api-gateway
     networks:
       - app-network
-    volumes: # Add this volume mount
+    volumes: 
       - ./frontend-app:/app
 
 volumes:

@@ -11,7 +11,8 @@ const mockLegendData = {
         open: 150.25,
         high: 155.75,
         low: 149.50,
-        close: 155.00
+        close: 155.00,
+        volume: 1534000
     },
     mas: [
         { name: 'MA 50', value: 152.50, color: 'orange' },
@@ -39,7 +40,26 @@ describe('components/ChartLegend', () => {
         // Assert that valid MAs are displayed
         expect(screen.getByText('MA 50:')).toBeInTheDocument();
         expect(screen.getByText('152.50')).toBeInTheDocument();
+
+        // Assert that volume is displayed and correctly formatted
+        expect(screen.getByText('Volume:')).toBeInTheDocument();
+        expect(screen.getByText('1.53M')).toBeInTheDocument();
     });
+
+    // Test for zero/null volume edge cases
+    it('2. Edge Case: should handle zero or null volume correctly', () => {
+        const dataWithZeroVol = { ...mockLegendData, ohlcv: { ...mockLegendData.ohlcv, volume: 0 } };
+        const { rerender } = renderWithProvider(<ChartLegend ticker="AAPL" legendData={dataWithZeroVol} />);
+  
+          // Assert that the text '0' is rendered in the document.
+        expect(screen.getByText('0')).toBeInTheDocument();
+      
+        const dataWithNullVol = { ...mockLegendData, ohlcv: { ...mockLegendData.ohlcv, volume: null } };
+        rerender(<ChartLegend ticker="AAPL" legendData={dataWithNullVol} />);
+        // Assert that the text 'N/A' is rendered in the document.
+        expect(screen.getByText('N/A')).toBeInTheDocument();
+    });
+
 
     it('2. Edge Case: should not render if legendData is null', () => {
         renderWithProvider(<ChartLegend ticker="AAPL" legendData={null} />);

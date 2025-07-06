@@ -127,6 +127,43 @@ class TestLowVolumePivotEndpoint(unittest.TestCase):
         self.assertTrue(json_data['analysis']['detected'])
         self.assertEqual(json_data['analysis']['lowVolumePivotDate'], expected_date)
 
+class TestVolumeTrendLine(unittest.TestCase):
+    """Tests for the volume trend line feature in the /analyze endpoint."""
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    @patch('app.requests.get')
+    def test_volume_trend_line_is_calculated(self, mock_get):
+        """1. Business Logic: Verifies the trend line is returned for a valid VCP."""
+        test_data = generate_pivot_test_data(vcp_present=True)
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+
+        response = self.app.get('/analyze/TREND')
+        json_data = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('volumeTrendLine', json_data['analysis'])
+        trend_line = json_data['analysis']['volumeTrendLine']
+        self.assertIsInstance(trend_line, list)
+        self.assertEqual(len(trend_line), 2)
+        self.assertIn('time', trend_line[0])
+        self.assertIn('value', trend_line[0])
+
+    @patch('app.requests.get')
+    def test_volume_trend_line_is_empty_when_no_vcp(self, mock_get):
+        """2. Edge Case: Verifies the trend line is an empty list when no VCP is found."""
+        test_data = generate_pivot_test_data(vcp_present=False)
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+
+        response = self.app.get('/analyze/NOTREND')
+        json_data = response.get_json()
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('volumeTrendLine', json_data['analysis'])
+        self.assertEqual(json_data['analysis']['volumeTrendLine'], [])
+
+
 if __name__ == '__main__':
     unittest.main()
 # Latest Add: End of new consolidated integration test file.

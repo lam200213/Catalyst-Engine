@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
-2025-07-05
-Enhanced the stability and reliability of the application by implementing a comprehensive test suite for the frontend chart and screening components, as well as the backend analysis service. Hardened the analysis service's error handling for dependency failures. Corrected multiple bugs in the test suites to ensure accurate validation of component logic.
+2025-07-06
+Enhanced the chart visualization by adding a dynamic, cursor-aware legend, a marker for low-volume pivot points, and a trend line for volume during contractions. Refactored the entire chart's color scheme into a centralized theme file for improved maintainability.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -179,7 +179,12 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
         "ma20": [{"time": "2024-07-01", "value": 192.5}, ...],
         "ma50": [{"time": "2024-07-01", "value": 190.0}, ...],
         "ma150": [{"time": "2024-07-01", "value": 185.0}, ...],
-        "ma200": [{"time": "2024-07-01", "value": 180.0}, ...]
+        "ma200": [{"time": "2024-07-01", "value": 180.0}, ...],
+        "lowVolumePivotDate": "2024-06-25",
+        "volumeTrendLine": [
+            {"time": "2024-06-10", "value": 5500000},
+            {"time": "2024-06-25", "value": 2500000}
+        ]
       },
       "historicalData": [
         {"formatted_date": "2024-01-01", "open": 170.0, "high": 172.0, "low": 169.0, "close": 171.5, "volume": 5000000},

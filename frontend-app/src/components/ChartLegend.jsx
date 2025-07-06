@@ -6,6 +6,17 @@ const formatValue = (value) => {
     return typeof value === 'number' ? value.toFixed(2) : 'N/A';
 };
 
+const formatVolume = (value) => {
+    if (typeof value !== 'number') return 'N/A';
+    if (value > 1_000_000) {
+        return `${(value / 1_000_000).toFixed(2)}M`;
+    }
+    if (value > 1_000) {
+        return `${(value / 1_000).toFixed(1)}K`;
+    }
+    return value.toString();
+};
+
 const ChartLegend = ({ ticker, legendData }) => {
     if (!legendData || !legendData.ohlcv) {
         return null; // Don't render anything if there's no data
@@ -38,7 +49,13 @@ const ChartLegend = ({ ticker, legendData }) => {
                     <Text>C: <Text as="span" color="white">{formatValue(ohlcv.close)}</Text></Text>
                 </HStack>
 
-                <VStack align="stretch" spacing={0} mt={2}>
+                {/* Display the formatted volume */}
+                <Flex justify="space-between" fontSize="xs" mt={2}>
+                    <Text>Volume:</Text>
+                    <Text>{formatVolume(ohlcv.volume)}</Text>
+                </Flex>
+
+                <VStack align="stretch" spacing={0} mt={1}>
                     {mas.map(ma => (
                         ma.value ? (
                             <Flex key={ma.name} justify="space-between" fontSize="xs">

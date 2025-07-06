@@ -4,11 +4,12 @@ import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChakraProvider } from '@chakra-ui/react';
 import ChartPanel from './ChartPanel';
+import { chartColors } from '../theme';
 
 // To capture the crosshair move event handler
 let crosshairMoveCallback = null;
 
-// Enhanced mock for lightweight-charts to spy on methods ---
+// mock for lightweight-charts 
 const mockPriceLine = { remove: vi.fn() };
 const mockCandlestick = { 
     setData: vi.fn(), 
@@ -24,17 +25,20 @@ const mockMa50 = { setData: vi.fn() };
 const mockMa150 = { setData: vi.fn() };
 const mockMa200 = { setData: vi.fn() };
 const mockTimeScale = { fitContent: vi.fn() };
+const mockVolumeTrendLine = { setData: vi.fn() };
 
 vi.mock('lightweight-charts', () => ({
     createChart: vi.fn(() => ({
         addCandlestickSeries: vi.fn(() => mockCandlestick),
         addHistogramSeries: vi.fn(() => mockVolume),
         addLineSeries: vi.fn((options) => {
+            // Return the new mock if the options match
+            if (options.priceScaleId === '') return mockVolumeTrendLine; 
             // Return the correct mock based on color for MA lines
-            if (options.color === 'pink') return mockMa20;
-            if (options.color === 'red') return mockMa50;
-            if (options.color === 'orange') return mockMa150;
-            if (options.color === 'green') return mockMa200;
+            if (options.color === chartColors.ma.ma20) return mockMa20;
+            if (options.color === chartColors.ma.ma50) return mockMa50;
+            if (options.color === chartColors.ma.ma150) return mockMa150;
+            if (options.color === chartColors.ma.ma200) return mockMa200;
             return mockVcpLine; // Default for VCP line
         }),
         subscribeCrosshairMove: vi.fn((callback) => { crosshairMoveCallback = callback; }),
@@ -60,6 +64,10 @@ const mockFullAnalysisData = {
         vcpLines: [], ma20: [], ma50: [], ma150: [], ma200: [],
         buyPoints: [{ value: 103.02 }],
         sellPoints: [{ value: 98.01 }],
+        volumeTrendLine: [
+            { time: '2023-01-01', value: 500 },
+            { time: '2023-01-05', value: 300 }
+        ]
     }
 };
 
@@ -98,7 +106,7 @@ describe('components/ChartPanel', () => {
 
         // Assert Volume Series data (with correct color logic)
         expect(mockVolume.setData).toHaveBeenLastCalledWith([
-            { time: '2023-01-01', value: 1000, color: 'rgba(38, 166, 154, 0.5)' }
+            { time: '2023-01-01', value: 1000, color: chartColors.volume.up }
         ]);
 
         // Assert data for all line series
@@ -117,7 +125,7 @@ describe('components/ChartPanel', () => {
         // Check Buy Pivot line
         expect(mockCandlestick.createPriceLine).toHaveBeenCalledWith({
             price: 103.02,
-            color: '#4caf50',
+            color: chartColors.pivots.buy,
             lineWidth: 2,
             lineStyle: 1, // Dashed
             axisLabelVisible: true,
@@ -127,7 +135,7 @@ describe('components/ChartPanel', () => {
         // Check Stop Loss line
         expect(mockCandlestick.createPriceLine).toHaveBeenCalledWith({
             price: 98.01,
-            color: '#f44336',
+            color: chartColors.pivots.stopLoss,
             lineWidth: 2,
             lineStyle: 1, // Dashed
             axisLabelVisible: true,
@@ -211,7 +219,7 @@ describe('components/ChartPanel', () => {
             {
                 time: '2023-01-01',
                 position: 'belowBar',
-                color: '#FFD700',
+                color: chartColors.pivots.lowVolume,
                 shape: 'arrowUp',
                 text: 'Low Vol Pivot',
             },
@@ -228,4 +236,13 @@ describe('components/ChartPanel', () => {
         expect(mockCandlestick.setMarkers).toHaveBeenCalledWith([]);
     });
 
+    // Test for the volume trend line
+    it('should draw the volume trend line when data is provided', () => {
+        renderWithProvider(<ChartPanel analysisData={mockFullAnalysisData} loading={false} />);
+        
+        // Assert that setData was called on the new series with the correct data
+        expect(mockVolumeTrendLine.setData).toHaveBeenCalledWith(
+            mockFullAnalysisData.analysis.volumeTrendLine
+        );
+    });
 });

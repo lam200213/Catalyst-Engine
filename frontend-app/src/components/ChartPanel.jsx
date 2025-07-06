@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, LineStyle } from 'lightweight-charts';
 import { Box, Text, Heading, Flex, Spinner } from '@chakra-ui/react';
 import ChartLegend from './ChartLegend';
+import { chartColors } from '../theme';
 
 const AnalysisChart = ({ analysisData }) => {
     const chartContainerRef = useRef();
@@ -15,34 +16,47 @@ const AnalysisChart = ({ analysisData }) => {
         if (!chartContainerRef.current) return;
 
         const chart = createChart(chartContainerRef.current, {
-            layout: { background: { type: ColorType.Solid, color: '#1A202C' }, textColor: '#E2E8F0' },
+            layout: { background: { type: ColorType.Solid, color: chartColors.background }, textColor: chartColors.textColor },
             width: chartContainerRef.current.clientWidth,
             height: 500, // Increased height for volume panel
-            grid: { vertLines: { color: '#2D3748' }, horzLines: { color: '#2D3748' } },
-            timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#4A5568' },
-            rightPriceScale: { borderColor: '#4A5568' },
+            grid: { vertLines: { color: chartColors.grid }, horzLines: { color: chartColors.grid } },
+            timeScale: { timeVisible: true, secondsVisible: false, borderColor: chartColors.grid },
+            rightPriceScale: { borderColor: chartColors.grid },
+            crosshair: {
+                horzLine: { color: chartColors.crosshair.price },
+                vertLine: { color: chartColors.crosshair.time }
+            },
         });
         chartRef.current = chart;
 
         // --- Create all series upfront ---
         seriesRef.current.candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a', downColor: '#ef5350', borderDownColor: '#ef5350',
-            borderUpColor: '#26a69a', wickDownColor: '#ef5350', wickUpColor: '#26a69a',
+            upColor: chartColors.candlestick.up, downColor: chartColors.candlestick.down, borderDownColor: chartColors.candlestick.down,
+            borderUpColor: chartColors.candlestick.up, wickDownColor: chartColors.candlestick.down, wickUpColor: chartColors.candlestick.up,
         });
 
         seriesRef.current.volumeSeries = chart.addHistogramSeries({
-            color: '#4A5568',
+            color: chartColors.volume.base,
             priceFormat: { type: 'volume' },
             priceScaleId: '', // This forces the series to the bottom pane
         });
         // Set pane size for volume
         chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
-        seriesRef.current.vcpLineSeries = chart.addLineSeries({ color: '#ef5350', lineWidth: 2 });
-        seriesRef.current.ma20Series = chart.addLineSeries({ color: 'pink', lineWidth: 1 });
-        seriesRef.current.ma50Series = chart.addLineSeries({ color: 'red', lineWidth: 1 });
-        seriesRef.current.ma150Series = chart.addLineSeries({ color: 'orange', lineWidth: 1 });
-        seriesRef.current.ma200Series = chart.addLineSeries({ color: 'green', lineWidth: 1 });
+        seriesRef.current.vcpLineSeries = chart.addLineSeries({ color: chartColors.vcp.line, lineWidth: 2 });
+        seriesRef.current.ma20Series = chart.addLineSeries({ color: chartColors.ma.ma20, lineWidth: 1 });
+        seriesRef.current.ma50Series = chart.addLineSeries({ color: chartColors.ma.ma50, lineWidth: 1 });
+        seriesRef.current.ma150Series = chart.addLineSeries({ color: chartColors.ma.ma150, lineWidth: 1 });
+        seriesRef.current.ma200Series = chart.addLineSeries({ color: chartColors.ma.ma200, lineWidth: 1 });
+
+        // Create a line series for the volume trend line on the volume pane
+        seriesRef.current.volumeTrendLine = chart.addLineSeries({
+            priceScaleId: '', // Attach to the volume pane
+            color: chartColors.volume.trendLine,
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            crosshairMarkerVisible: false,
+        });
 
         // Event handling logic for legend
         const handleCrosshairMove = (param) => {
@@ -57,10 +71,10 @@ const AnalysisChart = ({ analysisData }) => {
                 ticker: analysisData?.ticker,
                 ohlcv: { ...ohlcv, time: param.time, volume: volume?.value },
                 mas: [
-                    { name: 'MA 20', value: param.seriesData.get(seriesRef.current.ma20Series)?.value, color: 'pink' },
-                    { name: 'MA 50', value: param.seriesData.get(seriesRef.current.ma50Series)?.value, color: 'red' },
-                    { name: 'MA 150', value: param.seriesData.get(seriesRef.current.ma150Series)?.value, color: 'orange' },
-                    { name: 'MA 200', value: param.seriesData.get(seriesRef.current.ma200Series)?.value, color: 'green' },
+                    { name: 'MA 20', value: param.seriesData.get(seriesRef.current.ma20Series)?.value, color: chartColors.ma.ma20 },
+                    { name: 'MA 50', value: param.seriesData.get(seriesRef.current.ma50Series)?.value, color: chartColors.ma.ma50 },
+                    { name: 'MA 150', value: param.seriesData.get(seriesRef.current.ma150Series)?.value, color: chartColors.ma.ma150 },
+                    { name: 'MA 200', value: param.seriesData.get(seriesRef.current.ma200Series)?.value, color: chartColors.ma.ma200 },
                 ],
             });
         };
@@ -99,11 +113,11 @@ const AnalysisChart = ({ analysisData }) => {
         }
 
         const { historicalData, analysis } = analysisData;
-        const { candlestickSeries, volumeSeries, vcpLineSeries, ma20Series, ma50Series, ma150Series, ma200Series } = seriesRef.current;
+        const { candlestickSeries, volumeSeries, vcpLineSeries, ma20Series, ma50Series, ma150Series, ma200Series, volumeTrendLine } = seriesRef.current;
 
         // --- Set data for all series ---
         const candlestickData = historicalData.map(d => ({ time: d.formatted_date, open: d.open, high: d.high, low: d.low, close: d.close }));
-        const volumeData = historicalData.map(d => ({ time: d.formatted_date, value: d.volume, color: d.close >= d.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)' }));
+        const volumeData = historicalData.map(d => ({ time: d.formatted_date, value: d.volume, color: d.close >= d.open ? chartColors.volume.up : chartColors.volume.down }));
         
         candlestickSeries.setData(candlestickData);
         volumeSeries.setData(volumeData);
@@ -112,6 +126,7 @@ const AnalysisChart = ({ analysisData }) => {
         ma50Series.setData(analysis.ma50 || []);
         ma150Series.setData(analysis.ma150 || []);
         ma200Series.setData(analysis.ma200 || []);
+        volumeTrendLine.setData(analysis.volumeTrendLine || []);
 
         // Start of Marker Logic
         // Always clear existing markers before adding new ones to prevent duplicates.
@@ -123,7 +138,7 @@ const AnalysisChart = ({ analysisData }) => {
             const pivotMarker = {
                 time: analysis.lowVolumePivotDate,
                 position: 'belowBar',
-                color: '#FFD700', // A distinct yellow color
+                color: chartColors.pivots.lowVolume,
                 shape: 'arrowUp',
                 text: 'Low Vol Pivot'
             };
@@ -136,7 +151,7 @@ const AnalysisChart = ({ analysisData }) => {
         if (analysis.buyPoints && analysis.buyPoints.length > 0) {
             seriesRef.current.buyPivotLine = candlestickSeries.createPriceLine({
                 price: analysis.buyPoints[0].value,
-                color: '#4caf50',
+                color: chartColors.pivots.buy,
                 lineWidth: 2,
                 lineStyle: LineStyle.Dashed,
                 axisLabelVisible: true,
@@ -147,11 +162,11 @@ const AnalysisChart = ({ analysisData }) => {
         if (analysis.sellPoints && analysis.sellPoints.length > 0) {
             seriesRef.current.stopLossLine = candlestickSeries.createPriceLine({
                 price: analysis.sellPoints[0].value,
-                color: '#f44336',
+                color: chartColors.pivots.stopLoss,
                 lineWidth: 2,
                 lineStyle: LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: 'Stop Loss',
+                title: 'Stop Loss',  
             });
         }
         

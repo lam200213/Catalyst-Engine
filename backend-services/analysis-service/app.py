@@ -240,6 +240,7 @@ def analyze_ticker_endpoint(ticker):
         # Format the JSON Response (Step 4)
         vcp_lines, buy_points, sell_points = [], [], []
         low_volume_pivot_date = None
+        volume_trend_line = []
 
         if vcp_results:
             last_high_price = vcp_results[-1][1]
@@ -258,6 +259,18 @@ def analyze_ticker_endpoint(ticker):
                     min_volume_global_idx = last_contraction_high_idx + min_volume_local_idx
                     low_volume_pivot_date = dates[min_volume_global_idx]
             
+            # Calculate volume trend line
+            last_contraction_high_idx, _, last_contraction_low_idx, _ = vcp_results[-1]
+            if last_contraction_high_idx < len(volumes) and last_contraction_low_idx < len(volumes):
+                contraction_volumes = volumes[last_contraction_high_idx : last_contraction_low_idx + 1]
+                if len(contraction_volumes) > 1: # Need at least 2 points for a line
+                    x_axis = np.arange(len(contraction_volumes))
+                    slope, intercept = np.polyfit(x_axis, contraction_volumes, 1)
+                    
+                    # Get start and end coordinates for the line
+                    start_point = {"time": dates[last_contraction_high_idx], "value": intercept}
+                    end_point = {"time": dates[last_contraction_low_idx], "value": slope * x_axis[-1] + intercept}
+                    volume_trend_line = [start_point, end_point]
 
         return jsonify({
             "ticker": ticker,
@@ -271,7 +284,8 @@ def analyze_ticker_endpoint(ticker):
                 "ma50": ma_50_series,
                 "ma150": ma_150_series,
                 "ma200": ma_200_series,
-                "lowVolumePivotDate": low_volume_pivot_date
+                "lowVolumePivotDate": low_volume_pivot_date,
+                "volumeTrendLine": volume_trend_line
             },
             "historicalData": historical_data_sorted
         })
