@@ -20,46 +20,68 @@ Bug Fixing and UI/UX Refinement
 The application follows a microservices architecture. The frontend communicates with a single API Gateway, which routes requests to the appropriate backend service.
 
 ```
-/  
-├── backend-services/  
-│   ├── api-gateway/         \# Python/Flask
-│   │   ├── tests/                        # Integration tests for API Gateway
-│   │   │   ├── __init__.py
+/
+├── backend-services/
+│   ├── analysis-service/    # Python/Flask - Performs VCP analysis
+│   │   ├── tests/
+│   │   │   ├── test_integration.py
+│   │   │   └── test_unit.py
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── api-gateway/         # Python/Flask - Routes requests to other services
+│   │   ├── tests/
 │   │   │   └── test_gateway.py
-│   │   └── .dockerignore                 # Excludes tests from Docker image
-│   ├── data-service/        \# Python/Flask (Facade for Data Providers, with Caching)
-       ├── providers/
-       │   ├── __init__.py               # Makes 'providers' a Python package
-       │   ├── yfinance_provider.py
-       │   └── finnhub_provider.py
-       │   └── marketaux_provider.py
-       ├── tests/                        # Unit tests for data-service
-       │   ├── __init__.py
-       │   └── test_app.py
-       ├── app.py                        # Main Flask application with data source routing and caching
-       ├── Dockerfile
-       ├── requirements.txt              # Python dependencies
-       └── .dockerignore                 # Excludes tests from Docker image
-│   ├── screening-service/   \# Python/Flask
-│   │   └── tests/                        # Unit tests for screening-service
-│   │       └── __init__.py
-│   │   └── .dockerignore                 # Excludes tests from Docker image
-│   ├── analysis-service/    \# Python/Flask
-│   │   ├── tests/                        # Unit tests for analysis-service
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── data-service/        # Python/Flask - Facade for fetching and caching data
+│   │   ├── providers/
+│   │   │   ├── finnhub_provider.py
+│   │   │   ├── marketaux_provider.py
+│   │   │   └── yfinance_provider.py
+│   │   ├── tests/
 │   │   │   ├── __init__.py
-│   │   │   ├── test_unit.py
-│   │   │   └── test_integration.py
-│   │   └── .dockerignore                 # Excludes tests from Docker image
-│   └── ticker-service/      \# Python/Flask
-├── frontend-app/  
-│   └── src/
-│       ├── components/      # Reusable React components (e.g., Chart, Results)
-│       ├── hooks/           # Custom React hooks (e.g., for data fetching state)
-│       ├── services/        # API communication logic (e.g., api.js)
-│       ├── App.jsx          # Main application orchestrator
-│       └── main.jsx         # Application entry point
-├── .env.example  
-├── docker-compose.yml  
+│   │   │   ├── test_app.py
+│   │   │   ├── test_finnhub_provider.py
+│   │   │   └── test_marketaux_provider.py
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
+│   │   ├── tests/
+│   │   │   └── test_screening_logic.py
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   └── ticker-service/      # Python/Flask - Fetches all US stock tickers
+│       ├── tests/
+│       │   └── test_app.py
+│       ├── app.py
+│       ├── Dockerfile
+│       └── requirements.txt
+├── frontend-app/            # React/Vite - User Interface
+│   ├── scripts/
+│   │   └── verify-structure.cjs
+│   ├── src/
+│   │   ├── components/      # Reusable React components
+│   │   ├── hooks/           # Custom React hooks for state logic
+│   │   ├── services/        # API communication logic
+│   │   ├── App.jsx          # Main application orchestrator
+│   │   ├── App.test.jsx
+│   │   ├── main.jsx         # Application entry point
+│   │   ├── setupTests.js
+│   │   └── theme.js
+│   ├── Dockerfile           # For production builds
+│   ├── Dockerfile.dev       # For development environment
+│   ├── nginx.conf
+│   ├── package.json
+│   └── vitest.config.js
+├── scripts/
+│   └── check-debug-mode.sh
+├── .env.example
+├── .gitignore
+├── docker-compose.yml       # Orchestrates all services for local deployment
 └── README.md
 ```
 
@@ -67,12 +89,13 @@ The application follows a microservices architecture. The frontend communicates 
 
 | Component | Technology |
 | :---- | :---- |
-| **API Gateway** | **Python, Flask, Requests, Pytest, Requests-Mock** |
-| **Data Service** | **Python, Flask, PyMongo, Requests** |
-| **Quantitative Services** | **Python, Flask, NumPy** |
-| **Ticker Service** | **Python, Flask, Pandas** |
+| **API Gateway** | **Python, Flask, Requests, Flask-Cors** |
+| **Data Service** | **Python, Flask, PyMongo, Requests, yfinance, finnhub-python, python-dotenv** |
+| **Analysis & Screening Services** | **Python, Flask, NumPy, Requests** |
+| **Ticker Service** | **Python, Flask, Pandas, Requests** |
 | **Data Caching** | MongoDB |
-| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
+| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI, Axios |
+| **Test** | Pytest, requests-mock, Vitest, React Testing Library |
 | **Local Orchestration** | Docker, Docker Compose |
 
 ## Getting Started
@@ -94,11 +117,17 @@ Follow these steps to set up and run the application locally:
 
 2. **Create a `.env` file**:
    Copy the `.env.example` file to `.env` in the project root and add your Finnhub API key.
+   In Linux and macOS environments:
    ```bash
    cp .env.example .env
    ```
-   Open `.env` and replace `YOUR_FINNHUB_API_KEY` and `YOUR_MARKETAUX_API_KEY` with your actual key.
-   Also, ensure `TICKER_SERVICE_PORT` is set to `5001` if you are running the application locally.
+  
+  In Windows PowerShell"
+  ``` PowerShell
+  Copy-Item .env.example .env
+  ```
+
+   Open `.env` and replace `YOUR_FINNHUB_API_KEY` and `YOUR_MARKETAUX_API_KEY` with your actual key if have. (Finnhub API key is only needed if you specifically request it as a data source; MARKETAUX API key is necessary for the news-fetching feature)
 
 3. **Run the application**:
    Build and start all services using Docker Compose.
