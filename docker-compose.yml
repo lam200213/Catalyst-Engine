@@ -23,6 +23,10 @@ services:
       - mongodb
     networks:
       - app-network
+    # for development  
+    # volumes:
+    #   - ./backend-services/data-service:/app # Mount local directory to container's /app
+
 
   screening-service:
     build: ./backend-services/screening-service
@@ -36,6 +40,9 @@ services:
       - data-service
     networks:
       - app-network
+    # for development  
+    # volumes:
+    #   - ./backend-services/screening-service:/app # Mount local directory to container's /app
 
   analysis-service:
     build: ./backend-services/analysis-service
@@ -49,6 +56,9 @@ services:
       - data-service
     networks:
       - app-network
+    # for development  
+    # volumes:
+    #   - ./backend-services/analysis-service:/app # Mount local directory to container's /app
  
   ticker-service:
     build: ./backend-services/ticker-service
@@ -57,6 +67,9 @@ services:
       - "5001:5000"
     networks:
       - app-network
+    # for development  
+    # volumes:
+    #   - ./backend-services/ticker-service:/app # Mount local directory to container's /app
 
   api-gateway:
     build: ./backend-services/api-gateway
@@ -76,6 +89,9 @@ services:
       - data-service # Added dependency for data-service
     networks:
       - app-network
+    # for development  
+    # volumes:
+    #   - ./backend-services/api-gateway:/app # Mount local directory to container's /app
 
   # for production build with static Nginx server
   frontend-app:

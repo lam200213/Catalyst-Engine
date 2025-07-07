@@ -111,8 +111,8 @@ Follow these steps to set up and run the application locally:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/sepa-stock-screener.git
-   cd sepa-stock-screener
+   git clone https://github.com/lam200213/Catalyst-Engine.git
+   cd Catalyst-Engine
    ```
 
 2. **Create a `.env` file**:
@@ -132,7 +132,7 @@ Follow these steps to set up and run the application locally:
 3. **Run the application**:
    Build and start all services using Docker Compose.
    ```bash
-   docker-compose up
+   docker-compose up --build -d
    ```
    This command builds Docker images for each service and starts all containers.
 
@@ -231,9 +231,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **Example Usage:**
     ```Bash
-    {
       curl -X POST http://localhost:3000/cache/clear
-    }
     ```
 
 - **Example Success Response:**
