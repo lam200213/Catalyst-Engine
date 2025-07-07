@@ -120,20 +120,19 @@ def apply_screening_criteria(ticker, historical_data):
 
     # Criterion 6: Current Price is at least 30% above its 52-week low.
     crit6_pass = False
-    # Assuming 252 trading days in a year for 52-week low/high
-    if len(close_prices) >= 252:
-        low_52_week = np.min(close_prices[-252:])
-        values['low_52_week'] = low_52_week
-        crit6_pass = current_price >= (low_52_week * 1.30)
+    # The data-service provides ~1 year of data, so we use the min of the entire series.
+    low_52_week = np.min(close_prices)
+    values['low_52_week'] = low_52_week
+    crit6_pass = current_price >= (low_52_week * 1.30)
     details['price_30_percent_above_52_week_low'] = crit6_pass
     all_passes = all_passes and crit6_pass
 
     # Criterion 7: Current price is within 25% of its 52-week high.
     crit7_pass = False
-    if len(close_prices) >= 252:
-        high_52_week = np.max(close_prices[-252:])
-        values['high_52_week'] = high_52_week
-        crit7_pass = current_price >= (high_52_week * 0.75)
+    # We use the max of the entire series provided by the data-service.
+    high_52_week = np.max(close_prices)
+    values['high_52_week'] = high_52_week
+    crit7_pass = current_price >= (high_52_week * 0.75)
     details['price_within_25_percent_of_52_week_high'] = crit7_pass
     all_passes = all_passes and crit7_pass
 
@@ -144,7 +143,7 @@ def apply_screening_criteria(ticker, historical_data):
     }
 
 @app.route('/screen/<ticker>')
-def screen_ticker_endpoint(ticker): # Removed async
+def screen_ticker_endpoint(ticker):
     try:
         ticker = ticker.upper()
         # Fetch historical price data from data-service

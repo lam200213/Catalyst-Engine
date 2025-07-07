@@ -1,11 +1,11 @@
 # SEPA Stock Screener & VCP Analyzer
 
 ## Project Objective
-To deliver a locally-runnable, containerized web application that allows users to identify stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
+To deliver a locally-runnable, containerized web application that allows users to identify US stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
 
 ## Last Updated
 2025-07-07
-Simplified README.md
+Revised screening logic
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
