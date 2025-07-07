@@ -23,8 +23,6 @@ services:
       - mongodb
     networks:
       - app-network
-    volumes:
-      - ./backend-services/data-service:/app # Mount local directory to container's /app
 
   screening-service:
     build: ./backend-services/screening-service
@@ -32,15 +30,12 @@ services:
     ports:
       - "3002:3002"
     environment:
-      FLASK_DEBUG: '1'
       PORT: 3002
       DATA_SERVICE_URL: http://data-service:3001
     depends_on:
       - data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/screening-service:/app # Mount local directory to container's /app
 
   analysis-service:
     build: ./backend-services/analysis-service
@@ -54,9 +49,7 @@ services:
       - data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/analysis-service:/app # Mount local directory to container's /app
-  
+ 
   ticker-service:
     build: ./backend-services/ticker-service
     container_name: ticker-service
@@ -83,41 +76,38 @@ services:
       - data-service # Added dependency for data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/api-gateway:/app # Mount local directory to container's /app
 
   # for production build with static Nginx server
-  # frontend-app:
-  #   build: ./frontend-app
-  #   container_name: frontend-app
-  #   ports:
-  #     - "5173:80"
-  #   environment:
-  #     VITE_API_BASE_URL: http://localhost:3000
-  #   depends_on:
-  #     - api-gateway
-  #   networks:
-  #     - app-network
-  #   volumes: 
-  #     - ./frontend-app:/app
-
-  # for development
   frontend-app:
-    build:
-      context: ./frontend-app
-      dockerfile: Dockerfile.dev
+    build: ./frontend-app
     container_name: frontend-app
     ports:
-      - "5173:5173" # Vite dev server runs on 5173
+      - "5173:80"
     environment:
-      - VITE_API_BASE_URL=http://localhost:3000
+      VITE_API_BASE_URL: http://localhost:3000
     depends_on:
       - api-gateway
     networks:
       - app-network
-    volumes:
-      - ./frontend-app:/app
-      - /app/node_modules # Prevents local node_modules from overwriting container's
+
+  # Development configuration for local development
+  # frontend-app:
+  #   build:
+  #     context: ./frontend-app
+  #     dockerfile: Dockerfile.dev
+  #   container_name: frontend-app
+  #   ports:
+  #     - "5173:5173" # Vite dev server runs on 5173
+  #   environment:
+  #     - VITE_API_BASE_URL=http://localhost:3000
+  #   depends_on:
+  #     - api-gateway
+  #   networks:
+  #     - app-network
+  #   volumes:
+  #     - ./frontend-app:/app
+  #     - /app/node_modules # Prevents local node_modules from overwriting container's
+
 
 volumes:
   mongodb_data:

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that allows users t
 
 ## Last Updated
 2025-07-07
-Bug Fixing and UI/UX Refinement
+Production Hardening
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -122,7 +122,7 @@ Follow these steps to set up and run the application locally:
    cp .env.example .env
    ```
   
-  In Windows PowerShell"
+  In Windows PowerShell
   ``` PowerShell
   Copy-Item .env.example .env
   ```
@@ -139,6 +139,9 @@ Follow these steps to set up and run the application locally:
 4. **Access the application**:
    - **Frontend UI**: [http://localhost:5173](http://localhost:5173) (default port: 5173)
    - **API Gateway**: [http://localhost:3000](http://localhost:3000) (all API requests from the frontend are sent here)
+
+## Production Environment
+The docker-compose.yml file is configured for a production-like environment. It uses optimized, static builds for the frontend and runs backend services without debug mode enabled. For development with features like hot-reloading, you will need to modify the docker-compose.yml file to use Dockerfile.dev for the frontend and mount local volumes for the backend services.
 
 ## API Gateway Endpoints
 The frontend communicates exclusively with the API Gateway, which proxies requests to the appropriate backend services.
@@ -240,7 +243,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
-  ## **Common Errors & Troubleshooting**
+## **Common Errors & Troubleshooting**
 
 ### **Container Name Conflict**
 
@@ -253,13 +256,16 @@ Error response from daemon: Conflict. The container name "/some-service" is alre
 **Solution:**
 
 1. **Stop and Remove the Application Stack:** The standard command to fix this is docker-compose down. This gracefully stops and removes all containers and networks for the project.  
-   Bash  
+   ```Bash  
    docker-compose down
+   ```
 
 2. **Forceful Cleanup (If Needed):** For stubborn cases or to perform a general cleanup, you can use docker container prune to remove all stopped containers on your system.  
-   Bash  
+   ```Bash  
    docker container prune
+   ```
 
 3. **Relaunch:** You can now start the application again.  
-   Bash  
+   ```Bash  
    docker-compose up --build -d
+   ```
