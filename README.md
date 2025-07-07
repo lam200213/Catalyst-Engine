@@ -44,6 +44,9 @@ graph LR
     style APIGateway fill:#60a5fa,stroke:#1e40af,stroke-width:2px,color:#fff
 ```
 
+### Screenshots
+![Sample](docs/images/homepage.png)
+
 ## Quick Start
 
 ### Prerequisites
