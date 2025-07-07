@@ -1,7 +1,7 @@
 # SEPA Stock Screener & VCP Analyzer
 
 ## Project Objective
-To deliver a locally-runnable, containerized web application that allows users to identify US stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
+To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
 2025-07-07
@@ -43,6 +43,9 @@ graph LR
     style FrontendApp fill:#2dd4bf,stroke:#115e59,stroke-width:2px,color:#fff
     style APIGateway fill:#60a5fa,stroke:#1e40af,stroke-width:2px,color:#fff
 ```
+
+### Screenshots
+![Sample](docs/images/homepage.png)
 
 ## Quick Start
 
