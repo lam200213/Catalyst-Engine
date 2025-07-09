@@ -62,8 +62,6 @@ Follow these steps to set up and run the application locally:
    ```bash
    git clone https://github.com/lam200213/Catalyst-Engine.git
    cd Catalyst-Engine
-   git clone https://github.com/lam200213/Catalyst-Engine.git
-   cd Catalyst-Engine
    ```
 
 2. **Create a `.env` file**:
