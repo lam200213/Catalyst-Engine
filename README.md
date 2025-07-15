@@ -1,7 +1,7 @@
 # SEPA Stock Screener & VCP Analyzer
 
 ## Project Objective
-To deliver a locally-runnable, containerized web application that allows users to identify US stocks passing key quantitative SEPA criteria and visually analyze their Volatility Contraction Pattern (VCP) on a chart.
+To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
 2025-07-07
@@ -60,8 +60,6 @@ Follow these steps to set up and run the application locally:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/lam200213/Catalyst-Engine.git
-   cd Catalyst-Engine
    git clone https://github.com/lam200213/Catalyst-Engine.git
    cd Catalyst-Engine
    ```
