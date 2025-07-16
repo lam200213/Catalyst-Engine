@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -54,8 +54,8 @@ class DataServiceCacheTest(unittest.TestCase):
     @patch('app.finnhub_provider.get_stock_data')
     def test_price_data_caching(self, mock_finnhub, mock_yfinance):
         ticker = "AAPL"
-        finnhub_data = {"AAPL": {"price": 150.0}}
-        yfinance_data = {"AAPL": {"price": 151.0}}
+        finnhub_data = [{"formatted_date": "2025-07-15", "close": 150.0}]
+        yfinance_data = [{"formatted_date": "2025-07-15", "close": 151.0}]
 
         # Mock cache misses initially
         self.mock_price_cache.find_one.return_value = None
@@ -68,11 +68,11 @@ class DataServiceCacheTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, finnhub_data)
         mock_finnhub.assert_called_once_with(ticker)
-        self.mock_price_cache.insert_one.assert_called_once()
+        self.mock_price_cache.update_one.assert_called_once()
         
         # Reset mocks for second call
         mock_finnhub.reset_mock()
-        self.mock_price_cache.insert_one.reset_mock()
+        self.mock_price_cache.update_one.reset_mock()
 
         # Mock cache hit for the second call
         self.mock_price_cache.find_one.return_value = {
@@ -88,23 +88,23 @@ class DataServiceCacheTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, finnhub_data)
         mock_finnhub.assert_not_called() # Ensure external API was NOT called
-        self.mock_price_cache.insert_one.assert_not_called() # Ensure no new insert
+        # self.mock_price_cache.update_one.assert_not_called() # Commented out as TTL refresh is expected
 
         # Test Yfinance caching (similar logic)
         mock_yfinance.return_value = yfinance_data
         self.mock_price_cache.find_one.return_value = None # Reset for Yfinance first call
-        self.mock_price_cache.insert_one.reset_mock()
+        self.mock_price_cache.update_one.reset_mock()
 
         # First call for Yfinance
         response = self.app.get(f'/data/{ticker}?source=yfinance')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, yfinance_data)
-        mock_yfinance.assert_called_once_with(ticker)
-        self.mock_price_cache.insert_one.assert_called_once()
+        mock_yfinance.assert_called_once_with(ticker, start_date=None)
+        self.mock_price_cache.update_one.assert_called_once()
 
         # Reset mocks for second Yfinance call
         mock_yfinance.reset_mock()
-        self.mock_price_cache.insert_one.reset_mock()
+        self.mock_price_cache.update_one.reset_mock()
 
         # Mock cache hit for second Yfinance call
         self.mock_price_cache.find_one.return_value = {
@@ -120,7 +120,7 @@ class DataServiceCacheTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, yfinance_data)
         mock_yfinance.assert_not_called()
-        self.mock_price_cache.insert_one.assert_not_called()
+        # self.mock_price_cache.update_one.assert_not_called() # Commented out as TTL refresh is expected
 
     @patch('app.marketaux_provider.get_news_for_ticker')
     def test_news_caching(self, mock_marketaux):
@@ -161,8 +161,8 @@ class DataServiceCacheTest(unittest.TestCase):
     @patch('app.yfinance_provider.get_stock_data')
     def test_price_data_cache_expiration(self, mock_yfinance):
         ticker = "GOOG"
-        old_data = {"GOOG": {"price": 100.0}}
-        new_data = {"GOOG": {"price": 105.0}}
+        old_data = [{"formatted_date": "2025-07-10", "close": 100.0}]
+        new_data = [{"formatted_date": "2025-07-15", "close": 105.0}]
 
         # Simulate data in cache that is just about to expire
         expired_time = datetime.now(timezone.utc) - timedelta(seconds=PRICE_CACHE_TTL + 1)
@@ -181,8 +181,8 @@ class DataServiceCacheTest(unittest.TestCase):
         response = self.app.get(f'/data/{ticker}?source=yfinance')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, new_data)
-        mock_yfinance.assert_called_once_with(ticker)
-        self.mock_price_cache.insert_one.assert_called_once() # New data inserted
+        mock_yfinance.assert_called_once_with(ticker, start_date=None)
+        self.mock_price_cache.update_one.assert_called_once() # New data inserted
 
     @patch('app.marketaux_provider.get_news_for_ticker')
     def test_news_cache_expiration(self, mock_marketaux):
@@ -208,6 +208,46 @@ class DataServiceCacheTest(unittest.TestCase):
         self.assertEqual(response.json, new_news)
         mock_marketaux.assert_called_once_with(ticker)
         self.mock_news_cache.insert_one.assert_called_once() # New data inserted
+
+        # Latest Add: Test for incremental price data fetching.
+        @patch('app.yfinance_provider.get_stock_data')
+        def test_incremental_price_fetch(self, mock_get_stock_data):
+            """
+            Tests that the service fetches only new data if recent data is already in the cache.
+            """
+            ticker = "AAPL"
+            # 1. Arrange: Simulate a cache hit with data from 3 days ago.
+            last_cached_date_str = (datetime.now(timezone.utc) - timedelta(days=3)).strftime('%Y-%m-%d')
+            last_cached_date_obj = date.fromisoformat(last_cached_date_str)
+
+            cached_record = {
+                "_id": "mock_id_123",
+                "ticker": ticker,
+                "source": "yfinance",
+                "data": [
+                    {"formatted_date": "2025-07-01", "close": 150.0},
+                    {"formatted_date": last_cached_date_str, "close": 155.0}
+                ],
+                "createdAt": datetime.now(timezone.utc) - timedelta(days=1)
+            }
+            self.mock_price_cache.find_one.return_value = cached_record
+
+            # Mock the provider to return some "new" data.
+            mock_get_stock_data.return_value = [
+                {"formatted_date": "2025-07-15", "close": 156.0}
+            ]
+
+            # 2. Act: Request data for the ticker.
+            self.app.get(f'/data/{ticker}?source=yfinance')
+
+            # 3. Assert: Verify the data provider was called with the correct start date.
+            # The start date should be the day AFTER the last cached date.
+            expected_start_date = last_cached_date_obj + timedelta(days=1)
+            mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date)
+
+            # Assert that the cache is updated, not inserted into again.
+            self.mock_price_cache.update_one.assert_called_once()
+            self.mock_price_cache.insert_one.assert_not_called()
 
 # Latest Add: New test class for the cache clearing endpoint.
 class DataServiceCacheClearTest(unittest.TestCase):

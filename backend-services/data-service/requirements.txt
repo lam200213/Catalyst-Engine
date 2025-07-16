@@ -5,3 +5,4 @@ yfinance
 finnhub-python
 python-dotenv
 pytest
+curl-cffi

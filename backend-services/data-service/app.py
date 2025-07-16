@@ -3,7 +3,7 @@ import os
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -40,43 +40,88 @@ def init_db():
 def get_data(ticker: str):
     source = request.args.get('source', 'yfinance').lower()
     print(f"Received request for ticker: {ticker}, source: {source}")
-    
-    # Check cache first
-    cached_data = price_cache.find_one({"ticker": ticker, "source": source})
-    if cached_data:
-        # Ensure cached_data['createdAt'] is timezone-aware for comparison
-        if cached_data['createdAt'].tzinfo is None:
-            cached_data['createdAt'] = cached_data['createdAt'].replace(tzinfo=timezone.utc)
-        time_elapsed = (datetime.now(timezone.utc) - cached_data['createdAt']).total_seconds()
-        if time_elapsed < PRICE_CACHE_TTL:
-            print(f"DATA-SERVICE: Cache HIT for price: {ticker} from {source}")
-            return jsonify(cached_data['data'])
-        else:
-            print(f"Cache EXPIRED for price: {ticker} from {source}")
-            price_cache.delete_one({"_id": cached_data["_id"]}) # Optionally delete expired entry immediately
-    
-    print(f"DATA-SERVICE: Cache MISS for price: {ticker} from {source}")
 
-    # If not in cache, fetch from provider
+    # --- Incremental Cache Logic ---
+    # This logic determines whether to perform a full data fetch or an incremental one.
+    # It checks for existing cached data and its freshness.
+    cached_data = price_cache.find_one({"ticker": ticker, "source": source})
+    new_start_date = None # This will be set if an incremental fetch is needed.
+
+    if cached_data:
+        # Ensure createdAt is timezone-aware for accurate comparison.
+        created_at = cached_data['createdAt'].replace(tzinfo=timezone.utc) if cached_data['createdAt'].tzinfo is None else cached_data['createdAt']
+
+        # Check if the cache entry is still within its Time-To-Live (TTL).
+        if (datetime.now(timezone.utc) - created_at).total_seconds() < PRICE_CACHE_TTL:
+            # If the cache is valid, check how recent the data is.
+            if cached_data.get('data'):
+                last_date_str = cached_data['data'][-1]['formatted_date']
+                last_date = date.fromisoformat(last_date_str)
+
+                # If the last data point is from yesterday or today, it's current enough.
+                if last_date >= (date.today() - timedelta(days=1)):
+                    print(f"DATA-SERVICE: Cache HIT and data is current for price: {ticker}")
+                    # Refresh the TTL to keep the entry alive.
+                    price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+                    return jsonify(cached_data['data'])
+
+                # If data is old, set the start date for an incremental fetch.
+                new_start_date = last_date + timedelta(days=1)
+        else:
+            # If the cache TTL has expired, treat it as a miss. A full fetch will occur.
+            print(f"Cache EXPIRED for price: {ticker} from {source}")
+
+    # --- Data Fetching ---
+    # Based on the cache check, decide whether to fetch full or incremental data.
+    if new_start_date:
+        print(f"DATA-SERVICE: Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
+    else:
+        print(f"DATA-SERVICE: Full Cache MISS for price: {ticker} from {source}")
+
     data = None
     if source == 'yfinance':
-        data = yfinance_provider.get_stock_data(ticker)
+        # yfinance supports incremental fetching via the `start_date` parameter.
+        data = yfinance_provider.get_stock_data(ticker, start_date=new_start_date)
     elif source == 'finnhub':
+        # Finnhub provider currently only supports full fetches.
         data = finnhub_provider.get_stock_data(ticker)
     else:
         return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
 
+    # --- Cache and Response Handling ---
     if data:
-        # Store the fresh data in the cache
-        price_cache.insert_one({
-            "ticker": ticker,
-            "source": source,
-            "data": data,
-            "createdAt": datetime.now(timezone.utc)
-        })
-        print(f"DATA-SERVICE: CACHE INSERT for price: {ticker} from {source}")
-        return jsonify(data)
+        if new_start_date and cached_data:
+            # If it was an incremental fetch, append the new data to the existing cache.
+            full_data = cached_data['data'] + data
+            price_cache.update_one(
+                {"_id": cached_data["_id"]},
+                {"$set": {"data": full_data, "createdAt": datetime.now(timezone.utc)}}
+            )
+            print(f"DATA-SERVICE: CACHE INCREMENTAL UPDATE for price: {ticker}")
+            return jsonify(full_data)
+        else:
+            # If it was a full fetch, replace the old cache entry or insert a new one.
+            update_data = {
+                "ticker": ticker,
+                "source": source,
+                "data": data,
+                "createdAt": datetime.now(timezone.utc)
+            }
+            price_cache.update_one(
+                {"ticker": ticker, "source": source},
+                {"$set": update_data},
+                upsert=True # Creates the document if it doesn't exist.
+            )
+            print(f"DATA-SERVICE: CACHE FULL REPLACE/INSERT for price: {ticker}")
+            return jsonify(data)
+    elif cached_data:
+        # If the provider returned no new data but we have old data, return the old data.
+        print(f"DATA-SERVICE: No new price data for {ticker}. Returning existing cached data.")
+        # Refresh the TTL to prevent the old data from being purged immediately.
+        price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        return jsonify(cached_data['data'])
     else:
+        # If there's no data from the provider and no cache, return an error.
         return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
 
 @app.route('/news/<string:ticker>', methods=['GET'])

@@ -1,66 +1,96 @@
-# data-service/providers/yfinance_provider.py
-import yfinance as yf
-import pandas as pd
+from curl_cffi import requests
+import datetime as dt
+import random
+import time
 
-def get_stock_data(ticker: str) -> list | None:
-    """
-    Fetches historical stock data from Yahoo Finance using the yfinance library
-    and formats it into the application's standard list-of-dictionaries format.
+# A list of user-agents to rotate through
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+]
 
-    Args:
-        ticker: The stock symbol to fetch data for.
+# In a real-world scenario, this would be a more extensive and dynamic list of proxies.
+# For this example, we'll use a small, static list.
+PROXIES = [
+    # Add your proxy URLs here, e.g., "http://user:pass@host:port"
+]
 
-    Returns:
-        A list of dictionaries with OHLCV data, or None if an error occurs.
-    """
+def _get_random_user_agent() -> str:
+    """Returns a random user-agent from the list."""
+    return random.choice(USER_AGENTS)
+
+def _get_random_proxy() -> dict | None:
+    """Returns a random proxy if available."""
+    if not PROXIES:
+        return None
+    proxy_url = random.choice(PROXIES)
+    return {"http": proxy_url, "https": proxy_url}
+
+def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
+    """Transforms Yahoo's JSON into our standard list-of-dicts format."""
     try:
-        # Create a Ticker object
-        stock = yf.Ticker(ticker)
-        
-        # Get historical market data for the last year
-        # yfinance returns a pandas DataFrame
-        hist_df = stock.history(period="1y")
-        
-        # If the DataFrame is empty, the ticker might be invalid or delisted
-        if hist_df.empty:
-            print(f"No data found for ticker: {ticker}")
+        result = response_json['chart']['result'][0]
+        timestamps = result['timestamp']
+        ohlc = result['indicators']['quote'][0]
+
+        standardized_data = []
+        for i, ts in enumerate(timestamps):
+            standardized_data.append({
+                "formatted_date": dt.datetime.fromtimestamp(ts).strftime('%Y-%m-%d'),
+                "open": ohlc['open'][i],
+                "high": ohlc['high'][i],
+                "low": ohlc['low'][i],
+                "close": ohlc['close'][i],
+                "volume": ohlc['volume'][i],
+                "adjclose": result['indicators']['adjclose'][0]['adjclose'][i]
+            })
+        return standardized_data
+    except (KeyError, IndexError, TypeError) as e:
+        print(f"Error transforming Yahoo Finance data for {ticker}: {e}")
+        return None
+
+def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
+    """
+    Fetches historical stock data from Yahoo Finance using curl_cffi
+    and formats it into the application's standard list-of-dictionaries format.
+    Accepts an optional start_date for incremental fetches.
+    """
+    # --- Date Range Logic ---
+    # This section determines the appropriate Yahoo Finance API URL based on whether
+    # a `start_date` is provided. This supports incremental data fetching.
+    if start_date:
+        # If a start_date is provided, construct a URL with a specific date range.
+        # `period1` is the start timestamp, `period2` is the current time.
+        start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
+        end_ts = int(time.time())
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
+    else:
+        # If no start_date is given, default to a 1-year data range.
+        # This is used for initial data population or full cache refreshes.
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
+
+    headers = {'User-Agent': _get_random_user_agent()}
+    proxy = _get_random_proxy()
+
+    try:
+        session = requests.AsyncSession()
+        response = session.get(
+            url,
+            headers=headers,
+            proxies=proxy,
+            impersonate="chrome110",
+            timeout=10
+        ).result()
+
+        if response.status_code != 200:
+            print(f"Yahoo Finance API returned status {response.status_code} for {ticker}")
             return None
-            
-        # Reset index to make 'Date' a column instead of the index
-        hist_df.reset_index(inplace=True)
 
-        # Rename columns to match our standardized format where necessary
-        # yfinance uses capitalized column names ('Open', 'High', etc.)
-        hist_df.rename(columns={
-            'Date': 'formatted_date',
-            'Open': 'open',
-            'High': 'high',
-            'Low': 'low',
-            'Close': 'close',
-            'Volume': 'volume'
-        }, inplace=True)
-        
-        # 'Adj Close' is often available; we'll map it to 'adjclose'
-        if 'Adj Close' in hist_df.columns:
-            hist_df['adjclose'] = hist_df['Adj Close']
-        else:
-            # Fallback to 'close' if 'Adj Close' is not present
-            hist_df['adjclose'] = hist_df['close']
-
-        # Format the date to string 'YYYY-MM-DD'
-        hist_df['formatted_date'] = hist_df['formatted_date'].dt.strftime('%Y-%m-%d')
-        
-        # Define the columns we need for our standard format
-        required_columns = [
-            'formatted_date', 'open', 'high', 'low', 'close', 'volume', 'adjclose'
-        ]
-        
-        # Select only the required columns
-        standardized_df = hist_df[required_columns]
-
-        # Convert the DataFrame to the required list of dictionaries format
-        return standardized_df.to_dict(orient='records')
+        data = response.json()
+        # Latest Add: Pass ticker to transformation function
+        return _transform_yahoo_response(data, ticker)
 
     except Exception as e:
-        print(f"Error fetching data from yfinance for {ticker}: {e}")
+        print(f"Error fetching data from yfinance with curl_cffi for {ticker}: {e}")
         return None
