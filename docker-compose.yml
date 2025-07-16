@@ -23,10 +23,32 @@ services:
       - mongodb
     networks:
       - app-network
-    # for development  
+    # for development
     volumes:
-      - ./backend-services/data-service:/app 
+      - ./backend-services/data-service:/app
     # Mount local directory to container's /app
+
+  scheduler-service: # Latest Add: Start of new service definition
+    build: ./backend-services/scheduler-service
+    container_name: scheduler-service
+    ports:
+      - "${SCHEDULER_SERVICE_PORT:-3004}:3004"
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      PORT: 3004
+      TICKER_SERVICE_URL: ${SCHEDULER_TICKER_SERVICE_URL}
+      SCREENING_SERVICE_URL: ${SCHEDULER_SCREENING_SERVICE_URL}
+      ANALYSIS_SERVICE_URL: ${SCHEDULER_ANALYSIS_SERVICE_URL}
+    depends_on:
+      - mongodb
+      - ticker-service
+      - screening-service
+      - analysis-service
+    networks:
+      - app-network
+    volumes:
+      - ./backend-services/scheduler-service:/app # For development
+  # Latest Add: End of new service definition
 
 
   screening-service:
