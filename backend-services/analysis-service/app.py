@@ -12,13 +12,20 @@ app = Flask(__name__)
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 3003))
 
-# Define constants from algoParas in cookStock.py
-COUNTER_THRESHOLD = 5 # Used for finding local highs/lows (5 consecutive non-new highs/lows)
-PIVOT_PRICE_PERC = 0.2 # For is_pivot_good, max correction percentage
-PRICE_POSITION_LOW = 0.66 # For price_strategy, current price position relative to 1-year low/high
+# --- Constants ---
+# For VCP detection: number of consecutive windows without a new high/low to define a peak/trough.
+COUNTER_THRESHOLD = 5
+# For VCP screening: the maximum allowable percentage for a pivot's contraction depth.
+PIVOT_PRICE_PERC = 0.2
+# For VCP screening: the maximum allowable percentage for the entire correction from the first high.
+MAX_CORRECTION_PERC = 0.5
 
-# Add the custom JSON provider to handle NumPy types
+
+# --- Flask App Initialization and Custom JSON Encoding ---
+
+# Add the custom JSON provider to handle NumPy types, which are not natively serializable.
 class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle NumPy data types."""
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -31,12 +38,213 @@ class NumpyJSONEncoder(json.JSONEncoder):
         return super(NumpyJSONEncoder, self).default(obj)
 
 class CustomJSONProvider(JSONProvider):
+    """Custom JSON provider that uses the NumPy-aware encoder."""
     def dumps(self, obj, **kwargs):
         return json.dumps(obj, **kwargs, cls=NumpyJSONEncoder)
     def loads(self, s, **kwargs):
         return json.loads(s, **kwargs)
 
 app.json = CustomJSONProvider(app)
+
+
+# --- VCP (Volatility Contraction Pattern) Logic ---
+
+# --- VCP Pattern Detection ---
+
+def find_one_contraction(prices, start_index):
+    """
+    Finds a single volatility contraction pattern (VCP) from a given start index.
+    It searches for a local high (peak) followed by a local low (trough).
+    A peak/trough is identified when a new high/low is not found for `COUNTER_THRESHOLD` consecutive 5-day windows.
+    
+    Returns:
+        tuple: (high_idx, high_price, low_idx, low_price) or None if no contraction is found.
+    """
+    if start_index < 0 or start_index >= len(prices):
+        return None
+
+    # --- Find Local High (Peak) ---
+    local_highest_price = -float('inf')
+    local_highest_idx = -1
+    no_new_high_count = 0
+
+    # Iterate from start_index to find a peak
+    for i in range(start_index, len(prices)):
+        window_end = min(i + 5, len(prices))
+        if i >= window_end: break
+
+        window_prices = prices[i : window_end]
+        if not window_prices: continue
+
+        current_window_high = max(window_prices)
+        current_window_high_relative_idx = window_prices.index(current_window_high)
+        current_window_high_global_idx = i + current_window_high_relative_idx
+
+        if current_window_high > local_highest_price:
+            local_highest_price = current_window_high
+            local_highest_idx = current_window_high_global_idx
+            no_new_high_count = 0
+        else:
+            no_new_high_count += 1
+        
+        if no_new_high_count >= COUNTER_THRESHOLD:
+            break
+    
+    if no_new_high_count < COUNTER_THRESHOLD or local_highest_idx == -1:
+        return None
+
+    # --- Find Local Low (Trough) ---
+    local_lowest_price = float('inf')
+    local_lowest_idx = -1
+    no_new_low_count = 0
+
+    # Iterate from the local_highest_idx to find a trough
+    for j in range(local_highest_idx, len(prices)):
+        window_end = min(j + 5, len(prices))
+        if j >= window_end: break
+
+        window_prices = prices[j : window_end]
+        if not window_prices: continue
+
+        current_window_low = min(window_prices)
+        current_window_low_relative_idx = window_prices.index(current_window_low)
+        current_window_low_global_idx = j + current_window_low_relative_idx
+
+        if current_window_low < local_lowest_price:
+            local_lowest_price = current_window_low
+            local_lowest_idx = current_window_low_global_idx
+            no_new_low_count = 0
+        else:
+            no_new_low_count += 1
+        
+        if no_new_low_count >= COUNTER_THRESHOLD:
+            break
+    
+    if no_new_low_count < COUNTER_THRESHOLD or local_lowest_idx == -1:
+        return None
+
+    if local_highest_idx >= local_lowest_idx or local_highest_price == local_lowest_price:
+        return None
+
+    return (local_highest_idx, local_highest_price, local_lowest_idx, local_lowest_price)
+
+def find_volatility_contraction_pattern(prices):
+    """
+    Main function to detect VCPs by iteratively calling find_one_contraction.
+    Collects all detected contractions to form the complete pattern.
+    """
+    contractions = []
+    start_index = 0
+    while start_index < len(prices):
+        result = find_one_contraction(prices, start_index)
+        if result:
+            contractions.append(result)
+            # Advance start_index past the found contraction's low point to search for the next one.
+            start_index = result[2] + 1
+        else:
+            # If no more contractions are found, advance by one to avoid an infinite loop.
+            start_index += 1
+    return contractions
+
+# --- VCP Screening Criteria ---
+
+def _calculate_volume_trend(volume_list):
+    """Helper to perform linear regression on volume to find its trend (slope)."""
+    if not volume_list or len(volume_list) < 2:
+        return 0, 0
+    x = np.arange(len(volume_list))
+    y = np.array(volume_list)
+    slope, _ = np.polyfit(x, y, 1)
+    return slope, _
+
+def get_vcp_footprint(vcp_results):
+    """
+    Calculates the VCP "footprint," a human-readable string summarizing
+    the depth and duration of each contraction. (e.g., "10D 15.5% | 8D 7.2%")
+    """
+    footprint = []
+    if not vcp_results:
+        return footprint, ""
+
+    for high_idx, high_price, low_idx, low_price in vcp_results:
+        contraction_depth = (high_price - low_price) / high_price
+        contraction_days = low_idx - high_idx
+        footprint.append(f"{contraction_days}D {contraction_depth:.1%}")
+
+    footprint_str = " | ".join(footprint)
+    return footprint, footprint_str
+
+def is_pivot_good(vcp_results, current_price):
+    """
+    Checks if the stock is near a valid pivot point.
+    A good pivot has a recent contraction depth less than `PIVOT_PRICE_PERC`
+    and the current price is above the last low.
+    """
+    if not vcp_results:
+        return False
+
+    last_high_price = vcp_results[-1][1]
+    last_low_price = vcp_results[-1][3]
+    last_contraction_depth = (last_high_price - last_low_price) / last_high_price
+
+    return last_contraction_depth <= PIVOT_PRICE_PERC and current_price > last_low_price
+
+def is_correction_deep(vcp_results):
+    """
+    Checks if the overall correction from the first high to the deepest low
+    is too severe (i.e., exceeds `MAX_CORRECTION_PERC`).
+    """
+    if not vcp_results:
+        return False
+
+    first_high = vcp_results[0][1]
+    deepest_low = min(low_price for _, _, _, low_price in vcp_results)
+    max_correction = (first_high - deepest_low) / first_high
+
+    return max_correction >= MAX_CORRECTION_PERC
+
+def is_demand_dry(vcp_results, volumes):
+    """
+    Checks if demand (volume) is declining during the last contraction,
+    which is a bullish sign indicating supply has been exhausted.
+    """
+    if not vcp_results or not volumes or len(volumes) < 2:
+        return False
+
+    last_high_idx, _, last_low_idx, _ = vcp_results[-1]
+
+    if last_high_idx >= len(volumes) or last_low_idx >= len(volumes):
+        return False
+
+    contraction_volumes = volumes[last_high_idx : last_low_idx + 1]
+
+    if len(contraction_volumes) < 2:
+        return False
+
+    slope, _ = _calculate_volume_trend(contraction_volumes)
+    return slope <= 0 # A non-positive slope indicates drying up demand.
+
+def run_vcp_screening(vcp_results, prices, volumes):
+    """
+    Orchestrates all VCP screening checks to determine if the pattern is valid.
+    """
+    if not vcp_results:
+        return False, ""
+
+    current_price = prices[-1]
+
+    # Perform all individual checks
+    pivot_check = is_pivot_good(vcp_results, current_price)
+    deep_check = not is_correction_deep(vcp_results)
+    demand_check = is_demand_dry(vcp_results, volumes)
+
+    vcp_pass = pivot_check and deep_check and demand_check
+    _, footprint_str = get_vcp_footprint(vcp_results)
+
+    return vcp_pass, footprint_str
+
+
+# --- Data Preparation and Utility Functions ---
 
 def prepare_historical_data(historical_data):
     """
@@ -52,117 +260,18 @@ def prepare_historical_data(historical_data):
     dates = [item['formatted_date'] for item in sorted_data]
     return prices, dates, sorted_data # Return original sorted data for historicalData
 
-def find_one_contraction(prices, start_index):
     """
-    Finds a single volatility contraction pattern (VCP) from a given start index.
-    It searches for a local high (peak) followed by a local low (trough) within rolling 5-day windows.
-    Returns (high_idx, high_price, low_idx, low_price) or None if no contraction is found.
+    Transforms data-service response into sorted lists of prices, dates, and the original sorted data.
     """
-    if start_index < 0 or start_index >= len(prices):
-        return None
+    if not historical_data:
+        return [], [], []
 
-    # --- Find Local High (Peak) ---
-    local_highest_price = -float('inf')
-    local_highest_idx = -1
-    no_new_high_count = 0
+    # Sort data by date to ensure chronological order for analysis.
+    sorted_data = sorted(historical_data, key=lambda x: x['formatted_date'])
+    prices = [item['close'] for item in sorted_data]
+    dates = [item['formatted_date'] for item in sorted_data]
+    return prices, dates, sorted_data
 
-    # Iterate from start_index to find a peak
-    # A peak is found when 5 consecutive 5-day windows do not produce a new high
-    for i in range(start_index, len(prices)):
-        # Define a 5-day window starting from current index 'i'
-        window_end = min(i + 5, len(prices))
-        if i >= window_end: # Not enough data for a 5-day window
-            break
-
-        window_prices = prices[i : window_end]
-        if not window_prices:
-            continue
-
-        current_window_high = max(window_prices)
-        # Get the relative index of the highest price within this window, then convert to global index
-        current_window_high_relative_idx = window_prices.index(current_window_high)
-        current_window_high_global_idx = i + current_window_high_relative_idx
-
-        if current_window_high > local_highest_price:
-            local_highest_price = current_window_high
-            local_highest_idx = current_window_high_global_idx
-            no_new_high_count = 0 # Reset counter if a new high is found
-        else:
-            no_new_high_count += 1 # Increment if no new high in this window
-        
-        if no_new_high_count >= COUNTER_THRESHOLD:
-            # Found a peak: 5 consecutive windows without a new high
-            break
-    
-    # If we didn't find a peak (counter didn't reach threshold) or no high was set
-    if no_new_high_count < COUNTER_THRESHOLD or local_highest_idx == -1:
-        return None
-
-    # --- Find Local Low (Trough) ---
-    # Start searching for the low from the local_highest_idx
-    local_lowest_price = float('inf')
-    local_lowest_idx = -1
-    no_new_low_count = 0
-
-    # Iterate from the local_highest_idx to find a trough
-    # A trough is found when 5 consecutive 5-day windows do not produce a new low
-    for j in range(local_highest_idx, len(prices)):
-        window_end = min(j + 5, len(prices))
-        if j >= window_end: break
-
-        window_prices = prices[j : window_end]
-        if not window_prices: continue
-
-        current_window_low = min(window_prices)
-        # Get the relative index of the lowest price within this window, then convert to global index
-        current_window_low_relative_idx = window_prices.index(current_window_low)
-        current_window_low_global_idx = j + current_window_low_relative_idx
-
-        if current_window_low < local_lowest_price:
-            local_lowest_price = current_window_low
-            local_lowest_idx = current_window_low_global_idx
-            no_new_low_count = 0 # Reset counter if a new low is found
-        else:
-            no_new_low_count += 1 # Increment if no new low in this window
-        
-        if no_new_low_count >= COUNTER_THRESHOLD:
-            # Found a trough: 5 consecutive windows without a new low
-            break
-    
-    # If we didn't find a trough or no low was set
-    if no_new_low_count < COUNTER_THRESHOLD or local_lowest_idx == -1:
-        return None
-
-    # Ensure the high point comes before the low point in terms of index
-    # And that the high and low prices are distinct
-    if local_highest_idx >= local_lowest_idx or local_highest_price == local_lowest_price:
-        return None
-
-    return (local_highest_idx, local_highest_price, local_lowest_idx, local_lowest_price)
-
-def find_volatility_contraction_pattern(prices):
-    """
-    Main function to detect VCPs by iteratively calling find_one_contraction.
-    Collects all detected contractions.
-    """
-    contractions = []
-    start_index = 0
-    # Loop until we run out of data to search for contractions
-    while start_index < len(prices):
-        result = find_one_contraction(prices, start_index)
-        if result:
-            contractions.append(result)
-            # Advance start_index past the found contraction's lowest point
-            # This ensures we search for the next contraction after the current one ends.
-            # result is (high_idx, high_price, low_idx, low_price)
-            start_index = result[2] + 1 # Advance past the low_idx
-        else:
-            # If no contraction found from current start_index, advance by one day
-            # This prevents infinite loops if find_one_contraction always returns None
-            start_index += 1
-    return contractions
-
-# Helper function to calculate a moving average series
 def calculate_sma_series(prices, dates, period):
     """
     Calculates a continuous Simple Moving Average series.
@@ -186,108 +295,117 @@ def calculate_sma_series(prices, dates, period):
         
     return sma_values
 
+# --- API Endpoints ---
+
 @app.route('/')
 def index():
+    """Health check endpoint."""
     return "Analysis Service is running."
 
 @app.route('/analyze/<ticker>')
 def analyze_ticker_endpoint(ticker):
+    """
+    Main endpoint to perform VCP analysis on a given stock ticker.
+    It fetches data, runs the VCP detection and screening, calculates MAs,
+    and returns a comprehensive JSON response for the frontend.
+    """
     print(f"Received analysis request for ticker: {ticker}")
     try:
         ticker = ticker.upper()
-        # Fetch historical data from data-service
+        # 1. Fetch historical data from the data-service
         hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/{ticker}")
         
-        if hist_resp.status_code == 404:
+        if hist_resp.status_code != 200:
             try:
                 error_details = hist_resp.json().get('error', hist_resp.text)
             except requests.exceptions.JSONDecodeError:
                 error_details = hist_resp.text
+            
+            error_message = "Failed to retrieve data from data-service."
+            if hist_resp.status_code == 404:
+                error_message = f"Invalid or non-existent ticker: {ticker}"
+
             return jsonify({
-                "error": "Invalid or non-existent ticker: " + ticker,
-                "details": error_details
-            }), 502 # Return 502 Bad Gateway for invalid tickers
-        elif hist_resp.status_code != 200:
-            try:
-                error_details = hist_resp.json().get('error', hist_resp.text)
-            except requests.exceptions.JSONDecodeError:
-                error_details = hist_resp.text
-            return jsonify({
-                "error": "Failed to retrieve data from data-service.",
+                "error": error_message,
                 "dependency_status_code": hist_resp.status_code,
-                "dependency_error": error_details
-            }), 502 # Return 502 Bad Gateway for other data-service errors
+                "details": error_details
+            }), 502 # 502 Bad Gateway for dependency errors
 
+        # 2. Prepare data for analysis
         raw_historical_data = hist_resp.json()
-
         prices, dates, historical_data_sorted = prepare_historical_data(raw_historical_data)
 
-        # Handle empty price data gracefully
         if not prices:
             return jsonify({"error": f"No price data available for {ticker} to analyze."}), 404
 
-        # Extract volumes for pivot calculation
         volumes = [item.get('volume', 0) for item in historical_data_sorted]
 
+        # 3. Run VCP analysis
         vcp_results = find_volatility_contraction_pattern(prices)
+        vcp_pass_status, vcp_footprint_string = run_vcp_screening(vcp_results, prices, volumes)
 
-        # Calculate moving averages
+        # 4. Calculate Moving Averages for charting
         ma_20_series = calculate_sma_series(prices, dates, 20)
         ma_50_series = calculate_sma_series(prices, dates, 50)
         ma_150_series = calculate_sma_series(prices, dates, 150)
         ma_200_series = calculate_sma_series(prices, dates, 200)
 
-        # Format the JSON Response (Step 4)
-        vcp_lines, buy_points, sell_points = [], [], []
-        low_volume_pivot_date = None
-        volume_trend_line = []
+        # Latest Add: New JSON response structure
+        # 5. Assemble chart data for the frontend
+        chart_data = {
+            "detected": bool(vcp_results),
+            "message": "VCP analysis complete." if vcp_results else "No VCP detected.",
+            "vcpLines": [],
+            "buyPoints": [],
+            "sellPoints": [],
+            "lowVolumePivotDate": None,
+            "volumeTrendLine": [],
+            "ma20": ma_20_series,
+            "ma50": ma_50_series,
+            "ma150": ma_150_series,
+            "ma200": ma_200_series,
+            "historicalData": historical_data_sorted
+        }
 
         if vcp_results:
+            # Generate lines connecting highs and lows for charting the VCP
+            vcp_lines = []
+            for high_idx, high_price, low_idx, low_price in vcp_results:
+                vcp_lines.extend([
+                    {"time": dates[high_idx], "value": high_price},
+                    {"time": dates[low_idx], "value": low_price}
+                ])
+            chart_data["vcpLines"] = vcp_lines
+
+            # Define potential buy/sell points based on the last contraction
             last_high_price = vcp_results[-1][1]
             last_low_price = vcp_results[-1][3]
-            for high_idx, high_price, low_idx, low_price in vcp_results:
-                vcp_lines.extend([{"time": dates[high_idx], "value": high_price}, {"time": dates[low_idx], "value": low_price}])
-            buy_points.append({"value": last_high_price * 1.01})
-            sell_points.append({"value": last_low_price * 0.99})
+            chart_data["buyPoints"] = [{"value": last_high_price * 1.01}]
+            chart_data["sellPoints"] = [{"value": last_low_price * 0.99}]
 
-            # Find the low volume pivot date
-            last_contraction_high_idx, _, last_contraction_low_idx, _ = vcp_results[-1]
-            if last_contraction_high_idx < len(volumes) and last_contraction_low_idx < len(volumes):
-                contraction_volumes = volumes[last_contraction_high_idx : last_contraction_low_idx + 1]
+            # Identify the date of the lowest volume within the last contraction
+            last_high_idx, _, last_low_idx, _ = vcp_results[-1]
+            if last_high_idx < len(volumes) and last_low_idx < len(volumes):
+                contraction_volumes = volumes[last_high_idx : last_low_idx + 1]
                 if contraction_volumes:
-                    min_volume_local_idx = np.argmin(contraction_volumes)
-                    min_volume_global_idx = last_contraction_high_idx + min_volume_local_idx
-                    low_volume_pivot_date = dates[min_volume_global_idx]
-            
-            # Calculate volume trend line
-            last_contraction_high_idx, _, last_contraction_low_idx, _ = vcp_results[-1]
-            if last_contraction_high_idx < len(volumes) and last_contraction_low_idx < len(volumes):
-                contraction_volumes = volumes[last_contraction_high_idx : last_contraction_low_idx + 1]
-                if len(contraction_volumes) > 1: # Need at least 2 points for a line
-                    x_axis = np.arange(len(contraction_volumes))
-                    slope, intercept = np.polyfit(x_axis, contraction_volumes, 1)
-                    
-                    # Get start and end coordinates for the line
-                    start_point = {"time": dates[last_contraction_high_idx], "value": intercept}
-                    end_point = {"time": dates[last_contraction_low_idx], "value": slope * x_axis[-1] + intercept}
-                    volume_trend_line = [start_point, end_point]
+                    min_vol_local_idx = np.argmin(contraction_volumes)
+                    min_vol_global_idx = last_high_idx + min_vol_local_idx
+                    chart_data["lowVolumePivotDate"] = dates[min_vol_global_idx]
+                
+                # Calculate the volume trend line for the last contraction
+                if len(contraction_volumes) > 1:
+                    slope, intercept = _calculate_volume_trend(contraction_volumes)
+                    start_point = {"time": dates[last_high_idx], "value": intercept}
+                    end_point_val = slope * (len(contraction_volumes) - 1) + intercept
+                    end_point = {"time": dates[last_low_idx], "value": end_point_val}
+                    chart_data["volumeTrendLine"] = [start_point, end_point]
 
+        # 6. Return the final JSON response
         return jsonify({
             "ticker": ticker,
-            "analysis": {
-                "detected": bool(vcp_results),
-                "message": "VCP analysis complete." if vcp_results else "No VCP detected.",
-                "vcpLines": vcp_lines,
-                "buyPoints": buy_points,
-                "sellPoints": sell_points,
-                "ma20": ma_20_series,
-                "ma50": ma_50_series,
-                "ma150": ma_150_series,
-                "ma200": ma_200_series,
-                "lowVolumePivotDate": low_volume_pivot_date,
-                "volumeTrendLine": volume_trend_line
-            },
-            "historicalData": historical_data_sorted
+            "vcp_pass": vcp_pass_status,
+            "vcpFootprint": vcp_footprint_string,
+            "chart_data": chart_data
         })
     except requests.exceptions.RequestException as e:
         print(f"Connection error to data-service: {e}")
