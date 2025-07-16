@@ -1,10 +1,11 @@
 # backend-services/screening-service/app.py
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import requests
 import numpy as np
 import json
 from flask.json.provider import JSONProvider
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
@@ -191,6 +192,67 @@ def screen_ticker_endpoint(ticker):
     except Exception as e:
         # This catches other unexpected errors within the screening-service
         return jsonify({"error": "An internal error occurred in the screening-service.", "details": str(e)}), 500
+
+def _process_ticker(ticker):
+    """
+    Helper function to process a single ticker.
+    Encapsulates data fetching and screening logic.
+    Returns the ticker if it passes, otherwise None.
+    """
+    try:
+        # 1. Fetch data for the ticker
+        data_service_url = f"{DATA_SERVICE_URL}/data/{ticker.upper()}"
+        hist_resp = requests.get(data_service_url)
+        
+        # Skip this ticker if data fetching fails
+        if hist_resp.status_code != 200:
+            print(f"Skipping {ticker}: Failed to get data (status {hist_resp.status_code})")
+            return None
+        
+        historical_data = hist_resp.json()
+        
+        # 2. Apply screening logic
+        result = apply_screening_criteria(ticker, historical_data)
+        
+        # 3. Return ticker if it passes
+        if result.get("passes", False):
+            return ticker
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Skipping {ticker} due to connection error: {e}")
+    except Exception as e:
+        print(f"Skipping {ticker} due to an unexpected error during its processing: {e}")
+    
+    return None
+
+@app.route('/screen/batch', methods=['POST'])
+def screen_batch_endpoint():
+    """
+    Receives a list of tickers and returns a sub-list containing only
+    the tickers that pass all screening criteria.
+    """
+    try:
+        data = request.get_json()
+        if not data or 'tickers' not in data or not isinstance(data['tickers'], list):
+            return jsonify({"error": "Invalid request body. 'tickers' array is required."}), 400
+
+        incoming_tickers = data['tickers']
+        passing_tickers = []
+        
+        with ThreadPoolExecutor() as executor:
+            # Submit all tickers to the executor
+            future_to_ticker = {executor.submit(_process_ticker, ticker) for ticker in incoming_tickers}
+            
+            for future in future_to_ticker:
+                result = future.result()
+                if result:
+                    passing_tickers.append(result)
+
+        return jsonify(passing_tickers), 200
+
+    except Exception as e:
+        print(f"An internal error occurred in the batch screening endpoint: {e}")
+        return jsonify({"error": "An internal error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':
     is_debug = os.environ.get('FLASK_DEBUG', '0').lower() in ['true', '1', 't']

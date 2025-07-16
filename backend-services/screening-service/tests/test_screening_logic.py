@@ -3,10 +3,12 @@ import unittest
 import numpy as np
 import os
 import sys
+# Latest Add: Import 'app' for the test client and 'patch' for mocking
+from unittest.mock import patch
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app import apply_screening_criteria, calculate_sma
+from app import app, apply_screening_criteria, calculate_sma # Latest Add: import app
 
 # --- Deterministic Test Data Generation ---
 def create_ideal_passing_data():
@@ -112,6 +114,44 @@ class TestScreeningLogic(unittest.TestCase):
         self.assertAlmostEqual(calculate_sma(prices, 5), 8.0)  # (6+7+8+9+10)/5
         self.assertAlmostEqual(calculate_sma(prices, 10), 5.5)  # (1+..+10)/10
         self.assertIsNone(calculate_sma(prices, 11))  # Insufficient data
+
+# Latest Add: New integration test class for endpoints
+class TestScreeningEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    @patch('app.requests.get')
+    def test_batch_screen_endpoint(self, mock_get):
+        """
+        Tests the batch screening endpoint. Mocks the call to the data-service
+        and verifies that only passing tickers are returned.
+        """
+        # Arrange: Configure the mock to return different data based on the ticker
+        def mock_data_service_response(*args, **kwargs):
+            url = args[0]
+            if "PASS_TICKER" in url:
+                return unittest.mock.MagicMock(
+                    status_code=200,
+                    json=lambda: create_ideal_passing_data()
+                )
+            elif "FAIL_TICKER" in url:
+                return unittest.mock.MagicMock(
+                    status_code=200,
+                    json=lambda: create_failing_high_price_data()
+                )
+            return unittest.mock.MagicMock(status_code=404)
+
+        mock_get.side_effect = mock_data_service_response
+
+        # Act: Make a POST request to the batch endpoint
+        response = self.app.post('/screen/batch',
+                                 json={"tickers": ["PASS_TICKER", "FAIL_TICKER"]})
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), ["PASS_TICKER"])
+
 
 if __name__ == '__main__':
     unittest.main()
