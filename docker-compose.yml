@@ -19,6 +19,7 @@ services:
       FINNHUB_API_KEY: ${FINNHUB_API_KEY}
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
+      YAHOO_FINANCE_PROXIES: ${YAHOO_FINANCE_PROXIES}
     depends_on:
       - mongodb
     networks:
@@ -28,7 +29,7 @@ services:
       - ./backend-services/data-service:/app
     # Mount local directory to container's /app
 
-  scheduler-service: # Latest Add: Start of new service definition
+  scheduler-service:
     build: ./backend-services/scheduler-service
     container_name: scheduler-service
     ports:
@@ -46,9 +47,10 @@ services:
       - analysis-service
     networks:
       - app-network
+    # for development  
     volumes:
-      - ./backend-services/scheduler-service:/app # For development
-  # Latest Add: End of new service definition
+      - ./backend-services/scheduler-service:/app
+    # Mount local directory to container's /app
 
 
   screening-service:

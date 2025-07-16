@@ -7,6 +7,9 @@ WORKDIR /app
 # Create a non-root user for security
 RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
 
+# Latest Add: Install curl development headers needed for curl_cffi
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev && rm -rf /var/lib/apt/lists/*
+
 # Copy and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

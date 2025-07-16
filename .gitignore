@@ -72,8 +72,8 @@ dev-debug.log
 *.code-workspace
 # OS specific
 
+.mailmap
+
 # Task files
 # tasks.json
 # tasks/ 
-
-.mailmap

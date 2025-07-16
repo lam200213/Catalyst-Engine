@@ -1,7 +1,7 @@
 from curl_cffi import requests
 import datetime as dt
-import random
-import time
+import time # Add time for throttling
+import random # Add random for throttling
 
 # A list of user-agents to rotate through
 USER_AGENTS = [
@@ -10,11 +10,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
 ]
 
-# In a real-world scenario, this would be a more extensive and dynamic list of proxies.
-# For this example, we'll use a small, static list.
-PROXIES = [
-    # Add your proxy URLs here, e.g., "http://user:pass@host:port"
-]
+# Proxies are now loaded from an environment variable for better configuration management.
+import os # Add os import for environment variable access
+PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
 
 def _get_random_user_agent() -> str:
     """Returns a random user-agent from the list."""
@@ -56,6 +54,9 @@ def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
     and formats it into the application's standard list-of-dictionaries format.
     Accepts an optional start_date for incremental fetches.
     """
+    # Latest Add: Introduce request throttling to avoid rate-limiting.
+    time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds
+
     # --- Date Range Logic ---
     # This section determines the appropriate Yahoo Finance API URL based on whether
     # a `start_date` is provided. This supports incremental data fetching.
@@ -91,6 +92,9 @@ def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
         # Latest Add: Pass ticker to transformation function
         return _transform_yahoo_response(data, ticker)
 
+    except requests.errors.RequestsError as e:
+        print(f"A curl_cffi request error occurred for {ticker}: {e}")
+        return None
     except Exception as e:
-        print(f"Error fetching data from yfinance with curl_cffi for {ticker}: {e}")
+        print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
         return None

@@ -85,3 +85,20 @@ class TestYfinanceProvider(unittest.TestCase):
 
         # Assert
         self.assertIsNone(data)
+    @patch('providers.yfinance_provider.random.uniform')
+    @patch('providers.yfinance_provider.time.sleep')
+    @patch('curl_cffi.requests.AsyncSession.get')
+    def test_throttling_is_applied(self, mock_cffi_get, mock_sleep, mock_uniform):
+        """Tests that a randomized delay is applied to throttle requests."""
+        # Arrange
+        mock_uniform.return_value = 1.0
+        mock_response = MagicMock()
+        mock_response.status_code = 404 # Return a non-200 to exit early after throttling
+        mock_cffi_get.return_value.result.return_value = mock_response
+
+        # Act
+        yfinance_provider.get_stock_data('THROTTLE')
+
+        # Assert
+        mock_uniform.assert_called_once_with(0.5, 1.5)
+        mock_sleep.assert_called_once_with(1.0)
