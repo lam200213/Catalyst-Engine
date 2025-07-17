@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-07-16
-Implemented data service resilience (throttling, proxy rotation, improved error handling)
+2025-07-17
+Performed configuration and documentation hygiene check. Added scheduler-service to architecture diagram.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -26,6 +26,13 @@ graph LR
     subgraph Backend Infrastructure
         FrontendApp --> APIGateway[API Gateway];
         
+        subgraph Orchestration
+           Scheduler[Scheduler Service] --> TickerService;
+           Scheduler --> ScreeningService;
+           Scheduler --> AnalysisService;
+           Scheduler --> MongoDB;
+        end
+
         subgraph Core Services
             APIGateway --> TickerService[Ticker Service];
             APIGateway --> ScreeningService[Screening Service];
@@ -42,6 +49,7 @@ graph LR
 
     style FrontendApp fill:#2dd4bf,stroke:#115e59,stroke-width:2px,color:#fff
     style APIGateway fill:#60a5fa,stroke:#1e40af,stroke-width:2px,color:#fff
+    style Scheduler fill:#facc15,stroke:#713f12,stroke-width:2px,color:#000
 ```
 
 ### Screenshots

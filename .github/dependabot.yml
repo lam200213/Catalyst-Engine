@@ -1,0 +1,11 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  # Monitor dependencies for the Python data-service
+  - package-ecosystem: "pip"
+    directory: "/backend-services/data-service"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
