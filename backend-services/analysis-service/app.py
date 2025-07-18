@@ -5,7 +5,14 @@ from flask import Flask, jsonify
 from flask.json.provider import JSONProvider
 import requests
 import numpy as np
-from vcp_logic import is_pivot_good, PIVOT_PRICE_PERC, is_correction_deep
+from vcp_logic import (
+    is_pivot_good,
+    PIVOT_PRICE_PERC,
+    is_correction_deep,
+    get_vcp_footprint,
+    is_demand_dry,
+    run_vcp_screening,
+)
 
 
 app = Flask(__name__)
@@ -145,44 +152,10 @@ def find_volatility_contraction_pattern(prices):
 
 # --- VCP Screening Criteria ---
 
-def get_vcp_footprint(vcp_results):
-    """
-    Calculates the VCP "footprint," a human-readable string summarizing
-    the depth and duration of each contraction. (e.g., "10D 15.5% | 8D 7.2%")
-    """
-    footprint = []
-    if not vcp_results:
-        return footprint, ""
-
-    for high_idx, high_price, low_idx, low_price in vcp_results:
-        contraction_depth = (high_price - low_price) / high_price
-        contraction_days = low_idx - high_idx
-        footprint.append(f"{contraction_days}D {contraction_depth:.1%}")
-
-    footprint_str = " | ".join(footprint)
-    return footprint, footprint_str
 
 
 
 
-def run_vcp_screening(vcp_results, prices, volumes):
-    """
-    Orchestrates all VCP screening checks to determine if the pattern is valid.
-    """
-    if not vcp_results:
-        return False, ""
-
-    current_price = prices[-1]
-
-    # Perform all individual checks
-    pivot_check = is_pivot_good(vcp_results, current_price)
-    deep_check = not is_correction_deep(vcp_results)
-    demand_check = is_demand_dry(vcp_results, volumes)
-
-    vcp_pass = pivot_check and deep_check and demand_check
-    _, footprint_str = get_vcp_footprint(vcp_results)
-
-    return vcp_pass, footprint_str
 
 
 # --- Data Preparation and Utility Functions ---

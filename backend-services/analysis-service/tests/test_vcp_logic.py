@@ -14,11 +14,9 @@ from vcp_logic import (
     is_pivot_good,
     is_correction_deep,
     is_demand_dry,
-    # get_vcp_footprint,
-    # run_vcp_screening,
+    get_vcp_footprint,
+    run_vcp_screening,
     _calculate_volume_trend,
-    # PIVOT_PRICE_PERC,
-    MAX_CORRECTION_PERC
 )
 
 class TestVcpHelperFunctions(unittest.TestCase):
@@ -59,23 +57,6 @@ class TestVcpScreeningLogic(unittest.TestCase):
         # 4. Edge Case: No VCP data provided.
         self.assertFalse(is_pivot_good([], current_price=100), "Should fail gracefully if no VCP data is available.")
 
-    def test_is_pivot_good_scenarios(self):
-        """
-        Business Logic: Verifies if the pivot is good under different mock data scenarios.
-        This test follows the "Red" step of TDD.
-        """
-        # 1. Create mock data for two scenarios
-        # Scenario A: A "good" pivot with a tight final contraction
-        good_pivot_data = [(0, 120, 15, 100), (16, 110, 25, 105)] # Final contraction: (110-105)/110 = 4.5%
-        
-        # Scenario B: A "bad" pivot with a deep final contraction
-        bad_pivot_data = [(0, 120, 15, 100), (16, 110, 25, 85)] # Final contraction: (110-85)/110 = 22.7%
-
-        # 2. Assert that is_pivot_good(good_pivot_data) returns True
-        self.assertTrue(is_pivot_good(good_pivot_data, current_price=108), "A tight pivot should be considered good.")
-
-        # 3. Assert that is_pivot_good(bad_pivot_data) returns False
-        self.assertFalse(is_pivot_good(bad_pivot_data, current_price=108), "A deep pivot should be considered bad.")
     def test_is_correction_deep(self):
         """
         Business Logic: Verifies if the total correction from the first peak
@@ -127,72 +108,72 @@ class TestVcpScreeningLogic(unittest.TestCase):
 
         self.assertFalse(is_demand_dry(vcp_results_recent_pressure, prices_recent_pressure, volumes_recent_pressure), "Should fail if recent volume is rising while price is falling.")
 
-    # def test_get_vcp_footprint(self):
-    #     """
-    #     Business Logic: Verifies the correct formatting of the VCP footprint string.
-    #     """
-    #     # Mock VCP results: [ (high_idx, high_price, low_idx, low_price), ... ]
-    #     # Contraction 1: 10 days, (100-80)/100 = 20.0%
-    #     # Contraction 2: 5 days, (90-85)/90 = 5.6%
-    #     vcp_results = [(0, 100, 10, 80), (15, 90, 20, 85)]
+    def test_get_vcp_footprint(self):
+        """
+        Business Logic: Verifies the correct formatting of the VCP footprint string.
+        """
+        # Mock VCP results: [ (high_idx, high_price, low_idx, low_price), ... ]
+        # Contraction 1: 10 days, (100-80)/100 = 20.0%
+        # Contraction 2: 5 days, (90-85)/90 = 5.6%
+        vcp_results = [(0, 100, 10, 80), (15, 90, 20, 85)]
         
-    #     expected_footprint_str = "10D 20.0% | 5D 5.6%"
+        expected_footprint_str = "10D 20.0% | 5D 5.6%"
 
-    #     # 1. Pass: Correctly formats a multi-contraction footprint.
-    #     _, footprint_str = get_vcp_footprint(vcp_results)
-    #     self.assertEqual(footprint_str, expected_footprint_str)
+        # 1. Pass: Correctly formats a multi-contraction footprint.
+        _, footprint_str = get_vcp_footprint(vcp_results)
+        self.assertEqual(footprint_str, expected_footprint_str)
 
-    #     # 2. Edge Case: Single contraction (no separator).
-    #     _, footprint_str_single = get_vcp_footprint([(0, 100, 10, 80)])
-    #     self.assertEqual(footprint_str_single, "10D 20.0%")
+        # 2. Edge Case: Single contraction (no separator).
+        _, footprint_str_single = get_vcp_footprint([(0, 100, 10, 80)])
+        self.assertEqual(footprint_str_single, "10D 20.0%")
         
-    #     # 3. Edge Case: No VCP data returns an empty string.
-    #     _, footprint_str_empty = get_vcp_footprint([])
-    #     self.assertEqual(footprint_str_empty, "")
+        # 3. Edge Case: No VCP data returns an empty string.
+        _, footprint_str_empty = get_vcp_footprint([])
+        self.assertEqual(footprint_str_empty, "")
 
-# class TestVcpOrchestration(unittest.TestCase):
-#     """
-#     Test suite for the main orchestrator function `run_vcp_screening`.
-#     This uses mocking to isolate the orchestrator's logic.
-#     """
-#     @patch('vcp_logic.is_demand_dry')
-#     @patch('vcp_logic.is_correction_deep')
-#     @patch('vcp_logic.is_pivot_good')
-#     def test_run_vcp_screening_pass(self, mock_is_pivot_good, mock_is_correction_deep, mock_is_demand_dry):
-#         """Tests the case where all individual checks pass."""
-#         # Arrange: All checks return a "pass" condition.
-#         mock_is_pivot_good.return_value = True
-#         mock_is_correction_deep.return_value = False # is_deep returns False for a pass
-#         mock_is_demand_dry.return_value = True
+class TestVcpOrchestration(unittest.TestCase):
+    """
+    Test suite for the main orchestrator function `run_vcp_screening`.
+    This uses mocking to isolate the orchestrator's logic.
+    """
+    @patch('vcp_logic.is_demand_dry')
+    @patch('vcp_logic.is_correction_deep')
+    @patch('vcp_logic.is_pivot_good')
+    def test_run_vcp_screening_pass(self, mock_is_pivot_good, mock_is_correction_deep, mock_is_demand_dry):
+        """Tests the case where all individual checks pass."""
+        # Arrange: All checks return a "pass" condition.
+        mock_is_pivot_good.return_value = True
+        mock_is_correction_deep.return_value = False # is_deep returns False for a pass
+        mock_is_demand_dry.return_value = True
 
-#         # Act
-#         vcp_pass_status, _ = run_vcp_screening([("mock_vcp_data")], [100], [10000])
+        # Act
+        vcp_pass_status, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
 
-#         # Assert
-#         self.assertTrue(vcp_pass_status)
-#         mock_is_demand_dry.assert_called_once_with([("mock_vcp_data")], [100], [10000])
+        # Assert
+        self.assertTrue(vcp_pass_status)
+        mock_is_demand_dry.assert_called_once_with([(0, 100, 10, 80)], [100], [10000])
 
-#     @patch('vcp_logic.is_demand_dry')
-#     @patch('vcp_logic.is_correction_deep')
-#     @patch('vcp_logic.is_pivot_good')
-#     def test_run_vcp_screening_fail(self, mock_is_pivot_good, mock_is_correction_deep, mock_is_demand_dry):
-#         """Tests that a single failure results in an overall failure."""
-#         # Arrange: One check returns a "fail" condition.
-#         mock_is_pivot_good.return_value = True
-#         mock_is_correction_deep.return_value = False
-#         mock_is_demand_dry.return_value = False # This is the failing check
+    @patch('vcp_logic.is_demand_dry')
+    @patch('vcp_logic.is_correction_deep')
+    @patch('vcp_logic.is_pivot_good')
+    def test_run_vcp_screening_fail(self, mock_is_pivot_good, mock_is_correction_deep, mock_is_demand_dry):
+        """Tests that a single failure results in an overall failure."""
+        # Arrange: One check returns a "fail" condition.
+        mock_is_pivot_good.return_value = True
+        mock_is_correction_deep.return_value = False
+        mock_is_demand_dry.return_value = False # This is the failing check
 
-#         # Act
-#         vcp_pass_status, _ = run_vcp_screening([("mock_vcp_data")], [100], [10000])
+        # Act
+        vcp_pass_status, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
 
-#         # Assert
-#         self.assertFalse(vcp_pass_status)
+        # Assert
+        self.assertFalse(vcp_pass_status)
 
-#     def test_run_vcp_screening_no_data(self):
-#         """Tests that the orchestrator returns False if no VCP is detected."""
-#         vcp_pass_status, footprint = run_vcp_screening([], [100], [10000])
-#         self.assertFalse(vcp_pass_status)
-#         self.assertEqual(footprint, "")
+    def test_run_vcp_screening_no_data(self):
+        """Tests that the orchestrator returns False if no VCP is detected."""
+        vcp_pass_status, footprint = run_vcp_screening([], [100], [10000])
+        self.assertFalse(vcp_pass_status)
+        self.assertEqual(footprint, "")
 
 
 if __name__ == '__main__':
