@@ -5,11 +5,11 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-18
-Completed internal refactoring of the analysis-service. VCP screening logic was moved into a dedicated, testable module to improve maintainability.
+Refactored the `analysis-service` to support dual-mode VCP screening. The `/analyze/:ticker` endpoint now accepts a `?mode=fast` parameter for efficient batch processing and returns a detailed breakdown of all checks in the default `full` mode for UI clarity.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
-- **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from multiple sources (Finnhub, yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
+- **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.

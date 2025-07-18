@@ -189,41 +189,53 @@ def get_vcp_footprint(
     return footprint_list, footprint_str
 
 
-def run_vcp_screening(
-    vcp_results: list[tuple], prices: list[float], volumes: list[float]
-) -> tuple[bool, str]:
+# Latest Add: In backend-services/analysis-service/vcp_logic.py
+def run_vcp_screening(vcp_results: list[tuple], prices: list[float], volumes: list[float], mode: str = 'full') -> tuple[bool, str, dict]:
     """
-    Orchestrates all VCP screening checks to determine if a pattern is valid.
-
-    This function acts as a master validator, running a series of checks.
-    A stock's VCP is considered valid only if all individual checks pass.
+    Orchestrates VCP screening checks in one of two modes.
 
     Args:
         vcp_results: A list of detected VCP contraction tuples.
         prices: A list of historical prices.
         volumes: A list of historical volumes.
+        mode: 'full' to run all checks, 'fast' to halt on first failure.
 
     Returns:
         A tuple containing:
-        - A boolean indicating if the VCP passed all screening criteria.
-        - The VCP footprint string (e.g., "10D 20.0% | 5D 5.6%").
+        - A boolean indicating the overall pass status.
+        - The VCP footprint string.
+        - A dictionary with the detailed results of each check.
     """
-    # Immediately fail if no VCP was detected in the first place.
     if not vcp_results:
-        return False, ""
+        return False, "", {}
 
-    # Define all screening checks as a list of boolean conditions.
-    # This pattern makes it easy to add or remove checks in the future.
-    screening_checks = [
-        is_pivot_good(vcp_results, prices[-1]),
-        not is_correction_deep(vcp_results),  # Note: is_correction_deep returns True for a failure.
-        is_demand_dry(vcp_results, prices, volumes),
-    ]
-
-    # The VCP passes only if all checks are True.
-    vcp_pass = all(screening_checks)
-
-    # The footprint is calculated regardless of the outcome for informational purposes.
     _, footprint_str = get_vcp_footprint(vcp_results)
+    details = {}
 
-    return vcp_pass, footprint_str
+    """
+    The 'fast' mode is optimized for the automated scheduler-service, which
+    only needs a quick pass/fail to decide if a stock moves to the next
+    stage in the screening funnel.
+
+    The 'full' mode is used by the frontend when a user analyzes a single
+    ticker, providing a detailed breakdown of which criteria passed or failed.
+    """
+
+    # --- Fast Mode: Halt on first failure ---
+    if mode == 'fast':
+        if not is_pivot_good(vcp_results, prices[-1]):
+            return False, footprint_str, {}
+        if is_correction_deep(vcp_results): # is_deep returns True for a failure
+            return False, footprint_str, {}
+        if not is_demand_dry(vcp_results, prices, volumes):
+            return False, footprint_str, {}
+        return True, footprint_str, {} # All passed in fast mode
+
+    # --- Full Mode: Run all checks and return details ---
+    else:
+        details['is_pivot_good'] = is_pivot_good(vcp_results, prices[-1])
+        details['is_correction_deep'] = not is_correction_deep(vcp_results) # Invert logic for PASS status
+        details['is_demand_dry'] = is_demand_dry(vcp_results, prices, volumes)
+
+        vcp_pass_status = all(details.values())
+        return vcp_pass_status, footprint_str, details

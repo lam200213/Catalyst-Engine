@@ -52,12 +52,21 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **GET `/analyze/:ticker`**  
   - Proxies to the Analysis Service.  
   - Performs VCP analysis on historical data and returns a standardized payload containing the analysis results and historical data used for charting.
+  - **Query Parameters**:
+    - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
   - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
-  - **Example Success Response:**
+  - **Example Success Response (`full` mode):**
     ```json
     {
       "ticker": "AAPL",
-      "analysis": {
+      "vcp_pass": true,
+      "vcpFootprint": "10D 8.6% | 5D 5.3%",
+      "vcp_details": {
+          "is_pivot_good": true,
+          "is_correction_deep": true,
+          "is_demand_dry": true
+      },
+      "chart_data": {
         "detected": true,
         "message": "VCP analysis complete.",
         "vcpLines": [{"time": "2024-06-10", "value": 195.0}, ...],
@@ -71,12 +80,9 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
         "volumeTrendLine": [
             {"time": "2024-06-10", "value": 5500000},
             {"time": "2024-06-25", "value": 2500000}
-        ]
-      },
-      "historicalData": [
-        {"formatted_date": "2024-01-01", "open": 170.0, "high": 172.0, "low": 169.0, "close": 171.5, "volume": 5000000},
-        ...
-      ]
+        ],
+        "historicalData": [...]
+      }
     }
     ```
 

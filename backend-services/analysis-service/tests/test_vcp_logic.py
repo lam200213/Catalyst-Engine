@@ -147,7 +147,7 @@ class TestVcpOrchestration(unittest.TestCase):
         mock_is_demand_dry.return_value = True
 
         # Act
-        vcp_pass_status, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
+        vcp_pass_status, _, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
 
         # Assert
         self.assertTrue(vcp_pass_status)
@@ -164,14 +164,14 @@ class TestVcpOrchestration(unittest.TestCase):
         mock_is_demand_dry.return_value = False # This is the failing check
 
         # Act
-        vcp_pass_status, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
+        vcp_pass_status, _, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
 
         # Assert
         self.assertFalse(vcp_pass_status)
 
     def test_run_vcp_screening_no_data(self):
         """Tests that the orchestrator returns False if no VCP is detected."""
-        vcp_pass_status, footprint = run_vcp_screening([], [100], [10000])
+        vcp_pass_status, footprint, _ = run_vcp_screening([], [100], [10000])
         self.assertFalse(vcp_pass_status)
         self.assertEqual(footprint, "")
 

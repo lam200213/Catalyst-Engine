@@ -206,6 +206,81 @@ class TestResponseStructure(unittest.TestCase):
         self.assertIsInstance(json_data['vcp_pass'], bool)
         self.assertIsInstance(json_data['vcpFootprint'], str)
 
+class TestVCPEvaluationModes(unittest.TestCase):
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+        # Use a helper to generate predictable test data
+        self.mock_price_data = generate_pivot_test_data(vcp_present=True)
+
+    @patch('app.requests.get')
+    @patch('app.run_vcp_screening')
+    def test_analyze_full_evaluation_returns_detailed_results(self, mock_run_vcp_screening, mock_get):
+        """
+        Tests that the default 'full' mode returns a detailed breakdown of every VCP check.
+        """
+        # --- Arrange ---
+        # Mock the data-service to return valid price data
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: self.mock_price_data)
+
+        # Mock the orchestrator to return a "fail" status with detailed results
+        # This simulates a ticker that passes some checks but fails others.
+        mock_run_vcp_screening.return_value = (
+            False, # Overall vcp_pass
+            "10D 20.0% | 5D 15.0%", # vcpFootprint
+            { # The new detailed breakdown
+                "is_pivot_good": True,
+                "is_correction_deep": False, # This check passes (is_deep is False)
+                "is_demand_dry": False # This check fails
+            }
+        )
+
+        # --- Act ---
+        # Call the endpoint without the 'mode' parameter to test the default
+        response = self.app.get('/analyze/FAILING_TICKER')
+        json_data = response.get_json()
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('vcp_pass', json_data)
+        self.assertFalse(json_data['vcp_pass'])
+        self.assertIn('vcp_details', json_data, "Response should contain the detailed check results.")
+        self.assertEqual(json_data['vcp_details']['is_pivot_good'], True)
+        self.assertEqual(json_data['vcp_details']['is_demand_dry'], False)
+
+    # Ensure that ?mode=fast stops processing on the first failure and returns a lean response.
+    @patch('app.requests.get')
+    @patch('vcp_logic.is_pivot_good')
+    @patch('vcp_logic.is_correction_deep')
+    @patch('vcp_logic.is_demand_dry') # Mock the individual checks
+    def test_analyze_fail_fast_mode_halts_on_first_failure(self, mock_is_demand_dry, mock_is_correction_deep, mock_is_pivot_good, mock_get):
+        """
+        Tests that 'fast' mode halts execution on the first check failure.
+        """
+        # --- Arrange ---
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: self.mock_price_data)
+
+        # Mock the VCP checks so the first one fails
+        mock_is_pivot_good.return_value = False # This is the first check, it will fail.
+        mock_is_correction_deep.return_value = False # Should not be called
+        mock_is_demand_dry.return_value = True # Should not be called
+
+        # --- Act ---
+        # Call the endpoint explicitly with mode=fast
+        response = self.app.get('/analyze/FAILING_TICKER?mode=fast')
+        json_data = response.get_json()
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('vcp_pass', json_data)
+        self.assertFalse(json_data['vcp_pass'])
+        self.assertNotIn('vcp_details', json_data, "Fast mode should not return detailed results.")
+
+        # Crucially, assert that the logic halted after the first failure
+        mock_is_pivot_good.assert_called_once()
+        mock_is_correction_deep.assert_not_called()
+        mock_is_demand_dry.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
-# Latest Add: End of new consolidated integration test file.

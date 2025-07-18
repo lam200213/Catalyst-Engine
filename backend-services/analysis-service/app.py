@@ -1,10 +1,11 @@
 # backend-services/analysis-service/app.py
 import os
 import json
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask.json.provider import JSONProvider
 import requests
 import numpy as np
+import vcp_logic
 from vcp_logic import run_vcp_screening, _calculate_volume_trend
 
 
@@ -193,10 +194,12 @@ def index():
 def analyze_ticker_endpoint(ticker):
     """
     Main endpoint to perform VCP analysis on a given stock ticker.
-    It fetches data, runs the VCP detection and screening, calculates MAs,
-    and returns a comprehensive JSON response for the frontend.
+    Supports two modes:
+    - 'full' (default): Returns a detailed breakdown of all VCP checks.
+    - 'fast': Halts on the first failure and returns a lean response.
     """
-    print(f"Received analysis request for ticker: {ticker}")
+    mode = request.args.get('mode', 'full') # Read the mode parameter
+    print(f"Received analysis request for ticker: {ticker}, mode: {mode}")
     try:
         ticker = ticker.upper()
         # 1. Fetch historical data from the data-service
@@ -229,7 +232,7 @@ def analyze_ticker_endpoint(ticker):
 
         # 3. Run VCP analysis
         vcp_results = find_volatility_contraction_pattern(prices)
-        vcp_pass_status, vcp_footprint_string = run_vcp_screening(vcp_results, prices, volumes)
+        vcp_pass_status, vcp_footprint_string, vcp_details = run_vcp_screening(vcp_results, prices, volumes, mode)
 
         # 4. Calculate Moving Averages for charting
         ma_20_series = calculate_sma_series(prices, dates, 20)
@@ -287,12 +290,18 @@ def analyze_ticker_endpoint(ticker):
                     chart_data["volumeTrendLine"] = [start_point, end_point]
 
         # 6. Return the final JSON response
-        return jsonify({
+        response_payload = {
             "ticker": ticker,
             "vcp_pass": vcp_pass_status,
             "vcpFootprint": vcp_footprint_string,
-            "chart_data": chart_data
-        })
+            "chart_data": chart_data,
+        }
+        # Only include details if in full mode
+        if mode == 'full':
+            response_payload["vcp_details"] = vcp_details
+
+        return jsonify(response_payload)
+    
     except requests.exceptions.RequestException as e:
         print(f"Connection error to data-service: {e}")
         return jsonify({"error": "Service unavailable: data-service", "details": str(e)}), 503
