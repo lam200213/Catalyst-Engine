@@ -5,14 +5,7 @@ from flask import Flask, jsonify
 from flask.json.provider import JSONProvider
 import requests
 import numpy as np
-from vcp_logic import (
-    is_pivot_good,
-    PIVOT_PRICE_PERC,
-    is_correction_deep,
-    get_vcp_footprint,
-    is_demand_dry,
-    run_vcp_screening,
-)
+from vcp_logic import run_vcp_screening, _calculate_volume_trend
 
 
 app = Flask(__name__)
@@ -150,14 +143,6 @@ def find_volatility_contraction_pattern(prices):
             start_index += 1
     return contractions
 
-# --- VCP Screening Criteria ---
-
-
-
-
-
-
-
 # --- Data Preparation and Utility Functions ---
 
 def prepare_historical_data(historical_data):
@@ -169,18 +154,6 @@ def prepare_historical_data(historical_data):
         return [], [], []
 
     # Sort data by date to ensure chronological order
-    sorted_data = sorted(historical_data, key=lambda x: x['formatted_date'])
-    prices = [item['close'] for item in sorted_data]
-    dates = [item['formatted_date'] for item in sorted_data]
-    return prices, dates, sorted_data # Return original sorted data for historicalData
-
-    """
-    Transforms data-service response into sorted lists of prices, dates, and the original sorted data.
-    """
-    if not historical_data:
-        return [], [], []
-
-    # Sort data by date to ensure chronological order for analysis.
     sorted_data = sorted(historical_data, key=lambda x: x['formatted_date'])
     prices = [item['close'] for item in sorted_data]
     dates = [item['formatted_date'] for item in sorted_data]
@@ -264,7 +237,6 @@ def analyze_ticker_endpoint(ticker):
         ma_150_series = calculate_sma_series(prices, dates, 150)
         ma_200_series = calculate_sma_series(prices, dates, 200)
 
-        # Latest Add: New JSON response structure
         # 5. Assemble chart data for the frontend
         chart_data = {
             "detected": bool(vcp_results),
@@ -306,7 +278,7 @@ def analyze_ticker_endpoint(ticker):
                     min_vol_global_idx = last_high_idx + min_vol_local_idx
                     chart_data["lowVolumePivotDate"] = dates[min_vol_global_idx]
                 
-                # Calculate the volume trend line for the last contraction
+                # Calculate the volume trend line for the last contraction for charting
                 if len(contraction_volumes) > 1:
                     slope, intercept = _calculate_volume_trend(contraction_volumes)
                     start_point = {"time": dates[last_high_idx], "value": intercept}
