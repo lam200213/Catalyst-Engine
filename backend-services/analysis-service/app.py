@@ -5,6 +5,7 @@ from flask import Flask, jsonify
 from flask.json.provider import JSONProvider
 import requests
 import numpy as np
+from vcp_logic import is_pivot_good, PIVOT_PRICE_PERC, is_correction_deep
 
 
 app = Flask(__name__)
@@ -15,10 +16,6 @@ PORT = int(os.getenv("PORT", 3003))
 # --- Constants ---
 # For VCP detection: number of consecutive windows without a new high/low to define a peak/trough.
 COUNTER_THRESHOLD = 5
-# For VCP screening: the maximum allowable percentage for a pivot's contraction depth.
-PIVOT_PRICE_PERC = 0.2
-# For VCP screening: the maximum allowable percentage for the entire correction from the first high.
-MAX_CORRECTION_PERC = 0.5
 
 
 # --- Flask App Initialization and Custom JSON Encoding ---
@@ -148,15 +145,6 @@ def find_volatility_contraction_pattern(prices):
 
 # --- VCP Screening Criteria ---
 
-def _calculate_volume_trend(volume_list):
-    """Helper to perform linear regression on volume to find its trend (slope)."""
-    if not volume_list or len(volume_list) < 2:
-        return 0, 0
-    x = np.arange(len(volume_list))
-    y = np.array(volume_list)
-    slope, _ = np.polyfit(x, y, 1)
-    return slope, _
-
 def get_vcp_footprint(vcp_results):
     """
     Calculates the VCP "footprint," a human-readable string summarizing
@@ -174,55 +162,8 @@ def get_vcp_footprint(vcp_results):
     footprint_str = " | ".join(footprint)
     return footprint, footprint_str
 
-def is_pivot_good(vcp_results, current_price):
-    """
-    Checks if the stock is near a valid pivot point.
-    A good pivot has a recent contraction depth less than `PIVOT_PRICE_PERC`
-    and the current price is above the last low.
-    """
-    if not vcp_results:
-        return False
 
-    last_high_price = vcp_results[-1][1]
-    last_low_price = vcp_results[-1][3]
-    last_contraction_depth = (last_high_price - last_low_price) / last_high_price
 
-    return last_contraction_depth <= PIVOT_PRICE_PERC and current_price > last_low_price
-
-def is_correction_deep(vcp_results):
-    """
-    Checks if the overall correction from the first high to the deepest low
-    is too severe (i.e., exceeds `MAX_CORRECTION_PERC`).
-    """
-    if not vcp_results:
-        return False
-
-    first_high = vcp_results[0][1]
-    deepest_low = min(low_price for _, _, _, low_price in vcp_results)
-    max_correction = (first_high - deepest_low) / first_high
-
-    return max_correction >= MAX_CORRECTION_PERC
-
-def is_demand_dry(vcp_results, volumes):
-    """
-    Checks if demand (volume) is declining during the last contraction,
-    which is a bullish sign indicating supply has been exhausted.
-    """
-    if not vcp_results or not volumes or len(volumes) < 2:
-        return False
-
-    last_high_idx, _, last_low_idx, _ = vcp_results[-1]
-
-    if last_high_idx >= len(volumes) or last_low_idx >= len(volumes):
-        return False
-
-    contraction_volumes = volumes[last_high_idx : last_low_idx + 1]
-
-    if len(contraction_volumes) < 2:
-        return False
-
-    slope, _ = _calculate_volume_trend(contraction_volumes)
-    return slope <= 0 # A non-positive slope indicates drying up demand.
 
 def run_vcp_screening(vcp_results, prices, volumes):
     """
