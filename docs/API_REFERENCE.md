@@ -86,20 +86,38 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
- - **POST `/cache/clear`**  
-- Proxies to: data-service
-- Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
-
-- **Example Usage:**
-    ```Bash
-      curl -X POST http://localhost:3000/cache/clear
+- **POST `/jobs/screening/start`**
+  - Proxies to: `scheduler-service`
+  - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates to the database.
+  - **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:3000/jobs/screening/start
+    ```
+  - **Example Success Response:**
+    ```json
+    {
+      "message": "Screening job completed successfully.",
+      "job_id": "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+      "total_tickers_fetched": 8123,
+      "trend_screen_survivors": 157,
+      "final_candidates_count": 12
+    }
     ```
 
-- **Example Success Response:**
-    ```JSON
-    {
-      "message": "All data service caches have been cleared."
-    }
+- **POST `/cache/clear`**  
+  - Proxies to: data-service
+  - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
+
+  - **Example Usage:**
+      ```Bash
+        curl -X POST http://localhost:3000/cache/clear
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "message": "All data service caches have been cleared."
+      }
 
 # Internal Service Communication
 

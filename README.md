@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-19
-Completed the implementation of dual-mode VCP screening. The `scheduler-service` now calls the `analysis-service` in a resource-efficient 'fail-fast' mode during batch operations, aligning with the project's 'Just-in-Time' data retrieval principles.
+Completed the core orchestration logic for the `scheduler-service`, enabling automated, multi-stage screening of the entire market.
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

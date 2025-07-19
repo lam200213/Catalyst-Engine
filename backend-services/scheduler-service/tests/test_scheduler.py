@@ -14,31 +14,38 @@ class TestScheduler(unittest.TestCase):
         self.app = app.test_client()
         self.app.testing = True
 
-    @patch('app.results_collection')
+    @patch('app.get_db_collection')
     @patch('app.requests.post')
     @patch('app.requests.get')
-    def test_screening_job_workflow_success(self, mock_requests_get, mock_requests_post, mock_results_collection):
-        # --- Arrange: Mock a successful workflow ---
+    def test_screening_job_workflow_success(self, mock_requests_get, mock_requests_post, mock_get_db_collection):
+        # --- Arrange: Mock a successful workflow where one ticker passes all stages ---
+        mock_results_collection = MagicMock()
+        mock_get_db_collection.return_value = mock_results_collection
+
         def get_side_effect(url, **kwargs):
             mock_resp = MagicMock()
             if 'ticker-service' in url:
                 mock_resp.status_code = 200
-                mock_resp.json.return_value = ['PASS', 'FAIL', 'SKIP']
-            # Latest Add: Check that the 'mode=fast' param is passed for analysis calls
-            elif 'analyze/PASS' in url and kwargs.get('params') == {'mode': 'fast'}:
+                mock_resp.json.return_value = ['PASS_TICKER', 'FAIL_VCP_TICKER', 'FAIL_TREND_TICKER']
+            elif 'analyze/PASS_TICKER' in url:
+                self.assertEqual(kwargs.get('params'), {'mode': 'fast'})
                 mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "PASS"}
-            elif 'analyze/FAIL' in url and kwargs.get('params') == {'mode': 'fast'}:
+                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "PASS_TICKER"}
+            elif 'analyze/FAIL_VCP_TICKER' in url:
+                self.assertEqual(kwargs.get('params'), {'mode': 'fast'})
                 mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": False, "ticker": "FAIL"}
+                mock_resp.json.return_value = {"vcp_pass": False, "ticker": "FAIL_VCP_TICKER"}
             else:
-                # If the params are wrong or the URL is unexpected, return a clear failure
-                mock_resp.status_code = 400
-                mock_resp.json.return_value = {"error": "Incorrect parameters for mock"}
+                mock_resp.status_code = 404
+                mock_resp.json.return_value = {"error": "URL not mocked"}
             return mock_resp
 
         mock_requests_get.side_effect = get_side_effect
-        mock_requests_post.return_value = MagicMock(status_code=200, json=lambda: ['PASS', 'FAIL'])
+
+        mock_requests_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: ['PASS_TICKER', 'FAIL_VCP_TICKER']
+        )
 
         # --- Act ---
         response = self.app.post('/jobs/screening/start')
@@ -46,21 +53,18 @@ class TestScheduler(unittest.TestCase):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(json_data['message'], "Screening job completed successfully.")
+        self.assertEqual(json_data['total_tickers_fetched'], 3)
+        self.assertEqual(json_data['trend_screen_survivors'], 2)
         self.assertEqual(json_data['final_candidates_count'], 1)
 
-        # Verify the analysis service was called correctly for both passing and failing tickers
-        mock_requests_get.assert_any_call(
-            'http://analysis-service:3003/analyze/PASS',
-            params={'mode': 'fast'},
-            timeout=60
-        )
-        mock_requests_get.assert_any_call(
-            'http://analysis-service:3003/analyze/FAIL',
-            params={'mode': 'fast'},
-            timeout=60
-        )
-
+        # Verify database call
         mock_results_collection.insert_many.assert_called_once()
+        # Check that the argument passed to insert_many is a list with one dictionary
+        args, _ = mock_results_collection.insert_many.call_args
+        self.assertEqual(len(args[0]), 1)
+        self.assertEqual(args[0][0]['ticker'], 'PASS_TICKER')
+
 
     @patch('app.results_collection')
     @patch('app.requests.post')
