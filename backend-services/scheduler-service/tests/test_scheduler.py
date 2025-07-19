@@ -113,39 +113,89 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertIn("Failed to connect to ticker-service", response.get_json()['error'])
 
-    @patch('app.results_collection')
+    @patch('app.get_db_collection')
+    @patch('app.requests.post')
     @patch('app.requests.get')
-    def test_database_failure(self, mock_requests_get, mock_results_collection):
-        # --- Arrange: Mock a full, successful API pipeline ---
+    def test_database_failure(self, mock_requests_get, mock_requests_post, mock_get_db_collection):
+        # --- Arrange: Mock a successful workflow up to the point of DB failure ---
+        mock_collection = MagicMock()
+        mock_collection.insert_many.side_effect = errors.PyMongoError("DB connection lost")
+        mock_get_db_collection.return_value = mock_collection
+
         def get_side_effect(url, **kwargs):
             mock_resp = MagicMock()
-            # This mock now correctly handles the different GET requests
             if 'ticker-service' in url:
                 mock_resp.status_code = 200
-                mock_resp.json.return_value = ['PASS'] # Correctly return a list for tickers
-            elif 'analyze/PASS' in url:
+                mock_resp.json.return_value = ['DB_FAIL_TICKER']
+            elif 'analyze/DB_FAIL_TICKER' in url:
                 mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "PASS"}
+                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "DB_FAIL_TICKER"}
             else:
                 mock_resp.status_code = 404
             return mock_resp
 
         mock_requests_get.side_effect = get_side_effect
+        mock_requests_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: ['DB_FAIL_TICKER']
+        )
 
-        # Mock the POST call and the DB failure
-        with patch('app.requests.post') as mock_post:
-            mock_post.return_value = MagicMock(status_code=200, json=lambda: ['PASS'])
-            # Set the side effect for the DB call to simulate an error
-            mock_results_collection.insert_many.side_effect = errors.PyMongoError("DB connection lost")
-
-            # --- Act ---
-            response = self.app.post('/jobs/screening/start')
+        # --- Act ---
+        response = self.app.post('/jobs/screening/start')
 
         # --- Assert ---
         self.assertEqual(response.status_code, 500)
         self.assertIn("Failed to write to database", response.get_json()['error'])
-        # Verify that insert_many was indeed called, triggering the error
-        mock_results_collection.insert_many.assert_called_once()
+        mock_collection.insert_many.assert_called_once()
+
+    @patch('builtins.print')
+    @patch('app.get_db_collection')
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_funnel_logging_and_database_persistence(self, mock_requests_get, mock_requests_post, mock_get_db_collection, mock_print):
+        # --- Arrange: Mock a successful workflow for logging and persistence checks ---
+        mock_collection = MagicMock()
+        mock_get_db_collection.return_value = mock_collection
+        PASS_TICKER = 'LOG_PASS'
+
+        def get_side_effect(url, **kwargs):
+            mock_resp = MagicMock()
+            if 'ticker-service' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = [PASS_TICKER, 'LOG_FAIL_VCP', 'LOG_FAIL_TREND']
+            elif f'analyze/{PASS_TICKER}' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"vcp_pass": True, "ticker": PASS_TICKER}
+            elif 'analyze/LOG_FAIL_VCP' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"vcp_pass": False, "ticker": "LOG_FAIL_VCP"}
+            else:
+                mock_resp.status_code = 404
+            return mock_resp
+
+        mock_requests_get.side_effect = get_side_effect
+        mock_requests_post.return_value = MagicMock(status_code=200, json=lambda: [PASS_TICKER, 'LOG_FAIL_VCP'])
+
+        # --- Act ---
+        response = self.app.post('/jobs/screening/start')
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+
+        # Assert Database Persistence
+        mock_collection.insert_many.assert_called_once()
+        args, _ = mock_collection.insert_many.call_args
+        self.assertEqual(len(args[0]), 1)
+        self.assertIn('job_id', args[0][0])
+        self.assertIn('processed_at', args[0][0])
+        self.assertEqual(args[0][0]['ticker'], PASS_TICKER)
+
+        # Assert Funnel Logging
+        log_calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertIn("Fetched 3 total tickers.", "\n".join(log_calls))
+        self.assertIn("Stage 1 (Trend Screen) passed: 2 tickers.", "\n".join(log_calls))
+        self.assertIn("Stage 2 (VCP Screen) passed: 1 tickers.", "\n".join(log_calls))
+        self.assertIn("Inserted 1 documents into the database.", "\n".join(log_calls))
 
 if __name__ == '__main__':
     unittest.main()

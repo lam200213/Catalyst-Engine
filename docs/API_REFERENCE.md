@@ -51,7 +51,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **GET `/analyze/:ticker`**  
   - Proxies to the Analysis Service.  
-  - Performs VCP analysis on historical data and returns a standardized payload containing the analysis results and historical data used for charting.
+  - Performs VCP analysis on historical data and returns a pass/fail boolean, a VCP footprint string, and detailed data for charting.
   - **Query Parameters**:
     - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
   - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.

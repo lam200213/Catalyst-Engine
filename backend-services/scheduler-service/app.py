@@ -100,19 +100,21 @@ def _run_vcp_analysis(job_id, tickers):
 def _store_results(job_id, results):
     """Stores analysis results in the database."""
     if not results:
-        return None
+        print(f"Job {job_id}: No results to store.")
+        return (True, None)
     
     collection = get_db_collection()
     if collection is None:
-        return {"error": "Database client not available"}, 500
+        print(f"ERROR: Job {job_id}: Database collection is not available.")
+        return (False, ({"error": "Database client not available"}, 500))
         
     try:
         collection.insert_many(results)
-        print(f"Job {job_id}: Inserted {len(results)} results into MongoDB.")
-        return None
+        print(f"Job {job_id}: Inserted {len(results)} documents into the database.")
+        return (True, None)
     except errors.PyMongoError as e:
         print(f"ERROR: Job {job_id}: Failed to write results to database: {e}")
-        return {"error": "Failed to write to database", "details": str(e)}, 500
+        return (False, ({"error": "Failed to write to database", "details": str(e)}, 500))
 
 # --- Orchestration Logic ---
 def run_screening_pipeline():
@@ -127,18 +129,21 @@ def run_screening_pipeline():
     all_tickers, error = _get_all_tickers(job_id)
     if error:
         return error
+    print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
 
     # 2. Run Stage 1 Trend Screening on the fetched tickers.
     trend_survivors, error = _run_trend_screening(job_id, all_tickers)
     if error:
         return error
+    print(f"Job {job_id}: Funnel: After trend screening, {len(trend_survivors)} tickers remain.")
 
     # 3. Run Stage 2 VCP Analysis on the tickers that survived trend screening.
     final_candidates = _run_vcp_analysis(job_id, trend_survivors)
+    print(f"Job {job_id}: Funnel: After VCP analysis, {len(final_candidates)} final candidates found.")
     
     # 4. Store the final candidates that passed all stages in the database.
-    error_info = _store_results(job_id, final_candidates)
-    if error_info:
+    success, error_info = _store_results(job_id, final_candidates)
+    if not success:
         return error_info
 
     # 5. Return a success response with job details.

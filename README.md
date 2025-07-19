@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-19
-Completed the core orchestration logic for the `scheduler-service`, enabling automated, multi-stage screening of the entire market.
+Implement Funnel Measurement and Persistence
 
 ## Key Features (Current MVP)
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
