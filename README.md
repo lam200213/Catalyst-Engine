@@ -5,9 +5,9 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-19
-Implement Funnel Measurement and Persistence
+Improve Service Resilience to Malformed Data
 
-## Key Features (Current MVP)
+## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
 - **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
@@ -17,6 +17,14 @@ Implement Funnel Measurement and Persistence
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
 
 ## Architecture Overview
+**- Frontend App: The user interface...**
+**- API Gateway: Routes all incoming...**
+**- Scheduler Service: The Scheduler Service automates...**
+**- Ticker Service: Provides the list...**
+**- Data Service: The single source...**
+**- Screening Service: Applies the 8...**
+**- Analysis Service: Performs the VCP...**
+**- MongoDB: Caching layer...**
 ```mermaid
 graph LR
     subgraph User Interaction

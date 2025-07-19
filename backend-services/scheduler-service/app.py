@@ -44,9 +44,15 @@ def _get_all_tickers(job_id):
     try:
         resp = requests.get(f"{TICKER_SERVICE_URL}/tickers", timeout=15)
         resp.raise_for_status()
-        tickers = resp.json()
+        # Gracefully handle malformed JSON from a downstream service to prevent job failure.
+        try:
+            tickers = resp.json()
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"Warning: Job {job_id}: Could not decode JSON from ticker-service: {e}. Skipping ticker fetching.")
+            return [], None
+
         if not isinstance(tickers, list):
-            print(f"Warning: Job {job_id}: Ticker service returned non-list format.")
+            print(f"Warning: Job {job_id}: Ticker service returned non-list format. Skipping ticker fetching.")
             return [], None
         print(f"Job {job_id}: Fetched {len(tickers)} total tickers.")
         return tickers, None
@@ -62,7 +68,13 @@ def _run_trend_screening(job_id, tickers):
     try:
         resp = requests.post(f"{SCREENING_SERVICE_URL}/screen/batch", json={"tickers": tickers}, timeout=300)
         resp.raise_for_status()
-        trend_survivors = resp.json()
+        # Gracefully handle malformed JSON from a downstream service to prevent job failure.
+        try:
+            trend_survivors = resp.json()
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"Warning: Job {job_id}: Could not decode JSON from screening-service: {e}. Skipping trend screening.")
+            return [], None
+
         print(f"Job {job_id}: Stage 1 (Trend Screen) passed: {len(trend_survivors)} tickers.")
         return trend_survivors, None
     except requests.exceptions.RequestException as e:
@@ -86,7 +98,13 @@ def _run_vcp_analysis(job_id, tickers):
                 timeout=60
             )
             if resp.status_code == 200:
-                result = resp.json()
+                # Gracefully handle malformed JSON from a downstream service to prevent job failure.
+                try:
+                    result = resp.json()
+                except requests.exceptions.JSONDecodeError as e:
+                    print(f"Warning: Job {job_id}: Could not decode JSON for ticker {ticker}: {e}. Skipping.")
+                    continue
+
                 if isinstance(result, dict) and result.get("vcp_pass"):
                     result['job_id'] = job_id
                     result['processed_at'] = datetime.now(timezone.utc)
