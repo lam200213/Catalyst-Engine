@@ -78,7 +78,11 @@ def _run_vcp_analysis(job_id, tickers):
     vcp_survivors = []
     for ticker in tickers:
         try:
-            resp = requests.get(f"{ANALYSIS_SERVICE_URL}/analyze/{ticker}", timeout=60)
+            resp = requests.get(
+                f"{ANALYSIS_SERVICE_URL}/analyze/{ticker}",
+                params={'mode': 'fast'}, # This ensures we don'trvice/tests/test_scheduler.py waste resources on stocks that clearly fail
+                timeout=60
+            )
             if resp.status_code == 200:
                 result = resp.json()
                 if isinstance(result, dict) and result.get("vcp_pass"):

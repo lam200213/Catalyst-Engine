@@ -100,3 +100,9 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     {
       "message": "All data service caches have been cleared."
     }
+
+# Internal Service Communication
+
+## `scheduler-service` -> `analysis-service`
+
+For efficient batch processing, the **`scheduler-service`** calls the **`analysis-service`** using the `?mode=fast` query parameter. This instructs the `analysis-service` to perform a "fail-fast" evaluation, immediately stopping and returning a fail status for a ticker that does not meet a VCP criterion, thus conserving system resources.

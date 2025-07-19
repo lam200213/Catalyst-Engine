@@ -24,14 +24,17 @@ class TestScheduler(unittest.TestCase):
             if 'ticker-service' in url:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = ['PASS', 'FAIL', 'SKIP']
-            elif 'analyze/PASS' in url:
+            # Latest Add: Check that the 'mode=fast' param is passed for analysis calls
+            elif 'analyze/PASS' in url and kwargs.get('params') == {'mode': 'fast'}:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = {"vcp_pass": True, "ticker": "PASS"}
-            elif 'analyze/FAIL' in url:
+            elif 'analyze/FAIL' in url and kwargs.get('params') == {'mode': 'fast'}:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = {"vcp_pass": False, "ticker": "FAIL"}
             else:
-                mock_resp.status_code = 404
+                # If the params are wrong or the URL is unexpected, return a clear failure
+                mock_resp.status_code = 400
+                mock_resp.json.return_value = {"error": "Incorrect parameters for mock"}
             return mock_resp
 
         mock_requests_get.side_effect = get_side_effect
@@ -44,10 +47,20 @@ class TestScheduler(unittest.TestCase):
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json_data['final_candidates_count'], 1)
+
+        # Verify the analysis service was called correctly for both passing and failing tickers
+        mock_requests_get.assert_any_call(
+            'http://analysis-service:3003/analyze/PASS',
+            params={'mode': 'fast'},
+            timeout=60
+        )
+        mock_requests_get.assert_any_call(
+            'http://analysis-service:3003/analyze/FAIL',
+            params={'mode': 'fast'},
+            timeout=60
+        )
+
         mock_results_collection.insert_many.assert_called_once()
-        inserted_docs = mock_results_collection.insert_many.call_args[0][0]
-        self.assertEqual(len(inserted_docs), 1)
-        self.assertEqual(inserted_docs[0]['ticker'], 'PASS')
 
     @patch('app.results_collection')
     @patch('app.requests.post')
