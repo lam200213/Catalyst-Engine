@@ -106,15 +106,17 @@ services:
       - "3000:3000"
     environment:
       PORT: 3000
+      DATA_SERVICE_URL: http://data-service:3001
       SCREENING_SERVICE_URL: http://screening-service:3002
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
+      SCHEDULER_SERVICE_URL: http://scheduler-service:3004
       TICKER_SERVICE_URL: http://ticker-service:5000
-      DATA_SERVICE_URL: http://data-service:3001 # Added for data-service routing
     depends_on:
       - screening-service
       - analysis-service
       - ticker-service
-      - data-service # Added dependency for data-service
+      - data-service
+      - scheduler-service
     networks:
       - app-network
     # for development  

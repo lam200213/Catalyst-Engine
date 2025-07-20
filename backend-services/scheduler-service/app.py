@@ -66,7 +66,7 @@ def _run_trend_screening(job_id, tickers):
         print(f"Job {job_id}: Skipping trend screen, no tickers to process.")
         return [], None
     try:
-        resp = requests.post(f"{SCREENING_SERVICE_URL}/screen/batch", json={"tickers": tickers}, timeout=300)
+        resp = requests.post(f"{SCREENING_SERVICE_URL}/screen/batch", json={"tickers": tickers}, timeout=5999)
         resp.raise_for_status()
         # Gracefully handle malformed JSON from a downstream service to prevent job failure.
         try:

@@ -37,7 +37,7 @@ def get_all_us_tickers():
 
     return sorted(list(set(all_tickers)))
 
-@app.route('/')
+@app.route('/tickers')
 def get_tickers_endpoint():
     """The API endpoint to provide the list of tickers."""
     try:

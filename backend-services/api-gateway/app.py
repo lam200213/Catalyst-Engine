@@ -19,6 +19,7 @@ SERVICES = {
     "analyze": os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003"),
     "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5000"),
     "cache": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
+    "jobs": os.getenv("SCHEDULER_SERVICE_URL", "http://scheduler-service:3004"),
 }
 
 @app.route('/<service>/<path:path>', methods=['GET', 'POST'])
@@ -32,24 +33,31 @@ def gateway(service, path=""):
 
     # Construct the full URL for the target service
     # The target service already knows its endpoint structure (e.g., /data/, /news/, /screen/)
-    target_url = f"{SERVICES[service]}/{service}/{path}"
+    # Handle the specific path for the jobs service, as it doesn't follow the /service/path pattern.
+    if service == 'jobs':
+        target_url = f"{SERVICES[service]}/{service}/{path}"
     
     # Special cases for services that have a root endpoint or handle their own path prefix
-    if service == 'tickers': # Only tickers has a root endpoint
+    elif service == 'tickers': # Only tickers has a root endpoint
         target_url = f"{SERVICES[service]}/{path}"
     # Handle the specific path for cache clearing
     elif service == 'cache' and path == 'clear':
         target_url = f"{SERVICES[service]}/cache/clear"
+    else:
+        target_url = f"{SERVICES[service]}/{service}/{path}"
 
     try:
         # Conditional logic to handle POST vs. GET requests
         if request.method == 'POST':
-            resp = requests.post(target_url, json=request.get_json(), timeout=20)
-        else: # Default to GET
+            # Only attempt to forward a JSON body if one is present in the request.
+            post_data = request.get_json() if request.is_json else None
+            # Set a much longer timeout specifically for the 'jobs' service
+            timeout = 6000 if service == 'jobs' else 20
+            resp = requests.post(target_url, json=post_data, timeout=timeout)
+        else:  # Default to GET
             resp = requests.get(target_url, params=request.args, timeout=20)
 
         # The client can then handle different status codes (e.g., 404, 500)
-        return jsonify(resp.json()), resp.status_code
         return jsonify(resp.json()), resp.status_code
 
     except requests.exceptions.Timeout:

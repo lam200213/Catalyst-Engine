@@ -75,14 +75,13 @@ def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
     proxy = _get_random_proxy()
 
     try:
-        session = requests.AsyncSession()
-        response = session.get(
+        response = requests.get(
             url,
             headers=headers,
             proxies=proxy,
             impersonate="chrome110",
             timeout=10
-        ).result()
+        )
 
         if response.status_code != 200:
             print(f"Yahoo Finance API returned status {response.status_code} for {ticker}")
