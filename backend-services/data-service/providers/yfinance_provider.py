@@ -54,7 +54,7 @@ def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
     and formats it into the application's standard list-of-dictionaries format.
     Accepts an optional start_date for incremental fetches.
     """
-    # Latest Add: Introduce request throttling to avoid rate-limiting.
+    #  Introduce request throttling to avoid rate-limiting.
     time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds
 
     # --- Date Range Logic ---
@@ -88,7 +88,7 @@ def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
             return None
 
         data = response.json()
-        # Latest Add: Pass ticker to transformation function
+        #  Pass ticker to transformation function
         return _transform_yahoo_response(data, ticker)
 
     except requests.errors.RequestsError as e:

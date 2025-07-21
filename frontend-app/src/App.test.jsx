@@ -13,7 +13,7 @@ vi.mock('lightweight-charts', () => ({
         addCandlestickSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn(), setMarkers: vi.fn() })),
         addHistogramSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn() })),
         addLineSeries: vi.fn(() => ({ setData: vi.fn() })),
-        // Latest Add: Add missing mock functions to prevent component crash
+        //  Add missing mock functions to prevent component crash
         subscribeCrosshairMove: vi.fn(),
         unsubscribeCrosshairMove: vi.fn(),
         remove: vi.fn(),

@@ -20,7 +20,7 @@ price_cache = None
 news_cache = None
 
 # Cache expiration times in seconds
-PRICE_CACHE_TTL = 3600
+PRICE_CACHE_TTL = 172800 # 2 days
 NEWS_CACHE_TTL = 14400
 
 def init_db():
@@ -159,7 +159,7 @@ def get_news(ticker: str):
     except Exception as e:
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
-# Latest Add: New endpoint to manually clear the cache
+#  New endpoint to manually clear the cache
 @app.route('/cache/clear', methods=['POST'])
 def clear_cache():
     """

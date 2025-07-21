@@ -2,6 +2,7 @@
 import os
 import requests
 import uuid
+import shortuuid
 from datetime import datetime, timezone
 from flask import Flask, jsonify
 from pymongo import MongoClient, errors
@@ -18,25 +19,28 @@ ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-servic
 # --- Database Setup ---
 client = None
 results_collection = None
+jobs_collection = None
 
-def get_db_collection():
-    """Initializes database connection and returns the results collection."""
-    global client, results_collection
-    if results_collection is not None:
-        return results_collection
+def get_db_collections():
+    """Initializes database connection and returns all relevant collections."""
+    global client, results_collection, jobs_collection
+    if results_collection is not None and jobs_collection is not None:
+        return results_collection, jobs_collection
 
     try:
         client = MongoClient(MONGO_URI)
         db = client.stock_analysis
         results_collection = db.screening_results
+        jobs_collection = db.screening_jobs
         client.admin.command('ping')
         print("MongoDB connection successful.")
-        return results_collection
+        return results_collection, jobs_collection
     except errors.ConnectionFailure as e:
         print(f"MongoDB connection failed: {e}")
         client = None
         results_collection = None
-        return None
+        jobs_collection = None
+        return None, None
 
 # --- Helper Functions ---
 def _get_all_tickers(job_id):
@@ -106,8 +110,6 @@ def _run_vcp_analysis(job_id, tickers):
                     continue
 
                 if isinstance(result, dict) and result.get("vcp_pass"):
-                    result['job_id'] = job_id
-                    result['processed_at'] = datetime.now(timezone.utc)
                     final_candidates.append(result)
         except requests.exceptions.RequestException as e:
             print(f"Warning: Job {job_id}: Could not analyze ticker {ticker}: {e}. Skipping.")
@@ -115,24 +117,45 @@ def _run_vcp_analysis(job_id, tickers):
     print(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
     return final_candidates
 
-def _store_results(job_id, results):
-    """Stores analysis results in the database."""
-    if not results:
-        print(f"Job {job_id}: No results to store.")
-        return (True, None)
+# backend-services/scheduler-service/app.py
+
+def _store_results(job_id, candidates, funnel_summary):
+    """Stores candidate results and the job summary in the database."""
+    results_coll, jobs_coll = get_db_collections()
     
-    collection = get_db_collection()
-    if collection is None:
-        print(f"ERROR: Job {job_id}: Database collection is not available.")
-        return (False, ({"error": "Database client not available"}, 500))
-        
+    # boolean check to compare with None.
+    if jobs_coll is None:
+        print(f"ERROR: Job {job_id}: Database collection 'screening_jobs' is not available.")
+        return False, ({"error": "Database 'screening_jobs' client not available"}, 500)
+
     try:
-        collection.insert_many(results)
-        print(f"Job {job_id}: Inserted {len(results)} documents into the database.")
-        return (True, None)
+        jobs_coll.update_one({"job_id": job_id}, {"$set": funnel_summary}, upsert=True)
+        print(f"Job {job_id}: Successfully logged job summary.")
     except errors.PyMongoError as e:
-        print(f"ERROR: Job {job_id}: Failed to write results to database: {e}")
-        return (False, ({"error": "Failed to write to database", "details": str(e)}, 500))
+        print(f"ERROR: Job {job_id}: Failed to write job summary to database: {e}")
+        return False, ({"error": "Failed to write job summary to database", "details": str(e)}, 500)
+
+    if not candidates:
+        print(f"Job {job_id}: No final candidates to store.")
+        return True, None
+
+    # boolean check to compare with None.
+    if results_coll is None:
+        print(f"ERROR: Job {job_id}: Database collection 'screening_results' is not available.")
+        return False, ({"error": "Database 'screening_results' client not available"}, 500)
+
+    try:
+        processed_time = datetime.now(timezone.utc)
+        for candidate in candidates:
+            candidate['job_id'] = job_id
+            candidate['processed_at'] = processed_time
+        
+        results_coll.insert_many(candidates)
+        print(f"Job {job_id}: Inserted {len(candidates)} documents into the database.")
+        return True, None
+    except errors.PyMongoError as e:
+        print(f"ERROR: Job {job_id}: Failed to write candidate results to database: {e}")
+        return False, ({"error": "Failed to write candidate results to database", "details": str(e)}, 500)
 
 # --- Orchestration Logic ---
 def run_screening_pipeline():
@@ -140,7 +163,11 @@ def run_screening_pipeline():
     Orchestrates the multi-stage screening process.
     Fetches all tickers, runs trend screening, then VCP analysis on survivors.
     """
-    job_id = str(uuid.uuid4())
+    # Generate a human-readable and chronological job ID
+    now = datetime.now(timezone.utc)
+    timestamp_str = now.strftime('%Y%m%d-%H%M%S')
+    unique_part = shortuuid.uuid()[:8]
+    job_id = f"{timestamp_str}-{unique_part}"
     print(f"Starting screening job ID: {job_id}")
 
     # 1. Get all available tickers from the ticker service.
@@ -159,8 +186,16 @@ def run_screening_pipeline():
     final_candidates = _run_vcp_analysis(job_id, trend_survivors)
     print(f"Job {job_id}: Funnel: After VCP analysis, {len(final_candidates)} final candidates found.")
     
-    # 4. Store the final candidates that passed all stages in the database.
-    success, error_info = _store_results(job_id, final_candidates)
+    # 4. Prepare and store results and summary
+    job_summary = {
+        "job_id": job_id,
+        "processed_at": now,
+        "total_tickers_fetched": len(all_tickers),
+        "trend_screen_survivors_count": len(trend_survivors),
+        "final_candidates_count": len(final_candidates)
+    }
+
+    success, error_info = _store_results(job_id, final_candidates, job_summary)
     if not success:
         return error_info
 
@@ -168,10 +203,7 @@ def run_screening_pipeline():
     print(f"Screening job {job_id} completed successfully.")
     return {
         "message": "Screening job completed successfully.",
-        "job_id": job_id,
-        "total_tickers_fetched": len(all_tickers),
-        "trend_screen_survivors": len(trend_survivors),
-        "final_candidates_count": len(final_candidates)
+        **job_summary # Unpack the summary into the response
     }, 200
 
 # --- API Endpoint ---
@@ -181,4 +213,5 @@ def start_screening_job_endpoint():
     return jsonify(result), status_code
 
 if __name__ == '__main__':
+    get_db_collections() # Initialize DB connection on startup
     app.run(host='0.0.0.0', port=PORT)

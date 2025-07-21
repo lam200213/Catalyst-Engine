@@ -189,7 +189,7 @@ def get_vcp_footprint(
     return footprint_list, footprint_str
 
 
-# Latest Add: In backend-services/analysis-service/vcp_logic.py
+#  In backend-services/analysis-service/vcp_logic.py
 def run_vcp_screening(vcp_results: list[tuple], prices: list[float], volumes: list[float], mode: str = 'full') -> tuple[bool, str, dict]:
     """
     Orchestrates VCP screening checks in one of two modes.

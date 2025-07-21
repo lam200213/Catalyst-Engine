@@ -88,7 +88,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`
-  - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates to the database.
+  - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.
   - **Example Usage:**
     ```bash
     curl -X POST http://localhost:3000/jobs/screening/start
@@ -97,9 +97,10 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```json
     {
       "message": "Screening job completed successfully.",
-      "job_id": "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+      "job_id": "20250720-064530-AbcDE123",
+      "processed_at": "2025-07-20T06:45:30.123456Z",
       "total_tickers_fetched": 8123,
-      "trend_screen_survivors": 157,
+      "trend_screen_survivors_count": 157,
       "final_candidates_count": 12
     }
     ```

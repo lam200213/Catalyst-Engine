@@ -83,7 +83,7 @@ class TestVcpScreeningLogic(unittest.TestCase):
         Business Logic: Verifies if volume is declining during the last contraction,
         indicating supply exhaustion.
         """
-        # Latest Add: This function now requires prices to check for recent selling pressure.
+        #  This function now requires prices to check for recent selling pressure.
         vcp_results = [(0, 100, 5, 90)] # Contraction is from index 0 to 5
         prices = [100, 98, 95, 96, 94, 92]
         volumes_dry = [200, 180, 150, 120, 100, 80] # Volume for indices 0-5

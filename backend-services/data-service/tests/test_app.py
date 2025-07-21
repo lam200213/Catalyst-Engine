@@ -209,7 +209,7 @@ class DataServiceCacheTest(unittest.TestCase):
         mock_marketaux.assert_called_once_with(ticker)
         self.mock_news_cache.insert_one.assert_called_once() # New data inserted
 
-        # Latest Add: Test for incremental price data fetching.
+        #  Test for incremental price data fetching.
         @patch('app.yfinance_provider.get_stock_data')
         def test_incremental_price_fetch(self, mock_get_stock_data):
             """
@@ -249,7 +249,7 @@ class DataServiceCacheTest(unittest.TestCase):
             self.mock_price_cache.update_one.assert_called_once()
             self.mock_price_cache.insert_one.assert_not_called()
 
-# Latest Add: New test class for the cache clearing endpoint.
+#  New test class for the cache clearing endpoint.
 class DataServiceCacheClearTest(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True

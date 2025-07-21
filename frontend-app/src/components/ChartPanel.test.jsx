@@ -91,8 +91,7 @@ describe('components/ChartPanel', () => {
     it('2. Edge Case: should render correctly without crashing when analysisData is null', () => {
         renderWithProvider(<ChartPanel analysisData={null} loading={false} />);
         expect(screen.getByRole('heading', { name: /VCP Analysis/i })).toBeInTheDocument();
-        // Gone: expect(mockCandlestick.setData).not.toHaveBeenCalled();
-        // FIX: Assert that the chart clearing logic IS called with an empty array.
+        // Assert that the chart clearing logic IS called with an empty array.
         expect(mockCandlestick.setData).toHaveBeenCalledWith([]);
     });
 

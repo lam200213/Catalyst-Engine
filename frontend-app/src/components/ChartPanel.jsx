@@ -202,7 +202,7 @@ const AnalysisChart = ({ analysisData }) => {
             title: 'Last Close',
         });
         
-        // --- Latest Add: Add marker for the latest volume ---
+        // ---  Add marker for the latest volume ---
         volumeSeries.createPriceLine({
             price: lastDataPoint.volume,
             color: chartColors.textColor,
