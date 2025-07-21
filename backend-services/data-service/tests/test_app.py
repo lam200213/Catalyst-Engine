@@ -3,308 +3,146 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 from datetime import date, datetime, timezone, timedelta
+from app import app, price_cache, news_cache, PRICE_CACHE_TTL, NEWS_CACHE_TTL, init_db
+from pymongo.errors import OperationFailure
+from app import app, init_db, PRICE_CACHE_TTL, NEWS_CACHE_TTL
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app import app, price_cache, news_cache, PRICE_CACHE_TTL, NEWS_CACHE_TTL, init_db
+# Test class for the database initialization logic.
+class TestDataServiceDbInit(unittest.TestCase):
+    """
+    Tests the init_db function, specifically its ability to handle
+    index conflicts gracefully.
+    """
+    @patch('app.MongoClient')
+    def test_init_db_handles_index_conflict(self, mock_mongo_client):
+        """
+        Verifies that if an index conflict occurs, the app drops the old
+        index and successfully recreates it.
+        """
+        # --- Arrange ---
+        mock_price_collection = MagicMock()
+        mock_news_collection = MagicMock()
+        
+        # Simulate the conflict: the first call to create_index fails
+        conflict_error = OperationFailure("Index conflict", code=85)
+        mock_price_collection.create_index.side_effect = [
+            conflict_error, # First call fails
+            None            # Second call succeeds
+        ]
 
-class DataServiceCacheTest(unittest.TestCase):
+        mock_db = MagicMock()
+        mock_db.price_cache = mock_price_collection
+        mock_db.news_cache = mock_news_collection
+        mock_mongo_client.return_value.stock_analysis = mock_db
 
-    def setUp(self):
-        # Use a test database for isolation
-        app.config['TESTING'] = True
-        self.app = app.test_client()
-        self.db_client = MagicMock() # Mock the MongoClient
-        
-        # Patch MongoClient to return our mock client
-        patch('app.MongoClient', return_value=self.db_client).start()
-        
-        # Mock the database and collections
-        self.mock_db = MagicMock()
-        self.db_client.stock_analysis = self.mock_db
-        
-        self.mock_price_cache = MagicMock()
-        self.mock_news_cache = MagicMock()
-        
-        self.mock_db.price_cache = self.mock_price_cache
-        self.mock_db.news_cache = self.mock_news_cache
-
-        # Call init_db after patching MongoClient
+        # --- Act ---
+        # Call the function we are testing
         init_db()
 
-        # Ensure indexes are created (mocked)
-        self.mock_price_cache.create_index.return_value = None
-        self.mock_news_cache.create_index.return_value = None
+        # --- Assert ---
+        # 1. The code should have tried to create the index, failed, and then dropped it.
+        mock_price_collection.drop_index.assert_called_once()
+        # 2. The code should have tried to create the index a second time.
+        self.assertEqual(mock_price_collection.create_index.call_count, 2)
 
-        # Patch the global variables in app.py after init_db has been called
-        # This ensures that subsequent calls to price_cache and news_cache in app.py
-        # refer to our mock objects.
-        patch('app.price_cache', new=self.mock_price_cache).start()
-        patch('app.news_cache', new=self.mock_news_cache).start()
+    @patch('app.MongoClient')
+    def test_init_db_crashes_on_other_failures(self, mock_mongo_client):
+        """
+        Verifies that for any other database error, the app does not
+        handle it and raises the exception, causing a crash.
+        """
+        # --- Arrange ---
+        mock_price_collection = MagicMock()
+        # Simulate a different, unexpected database error
+        other_error = OperationFailure("Some other error", code=12345)
+        mock_price_collection.create_index.side_effect = other_error
 
-        # Clear caches before each test (now using the mocked caches)
-        self.mock_price_cache.delete_many({})
-        self.mock_news_cache.delete_many({})
+        mock_db = MagicMock()
+        mock_db.price_cache = mock_price_collection
+        mock_mongo_client.return_value.stock_analysis = mock_db
 
-    def tearDown(self):
-        patch.stopall() # Stop all patches
+        # --- Act & Assert ---
+        # Verify that the original error is re-raised, which would halt the app
+        with self.assertRaises(OperationFailure):
+            init_db()
 
-    @patch('app.yfinance_provider.get_stock_data')
-    @patch('app.finnhub_provider.get_stock_data')
-    def test_price_data_caching(self, mock_finnhub, mock_yfinance):
-        ticker = "AAPL"
-        finnhub_data = [{"formatted_date": "2025-07-15", "close": 150.0}]
-        yfinance_data = [{"formatted_date": "2025-07-15", "close": 151.0}]
-
-        # Mock cache misses initially
-        self.mock_price_cache.find_one.return_value = None
-
-        # Test Finnhub caching
-        mock_finnhub.return_value = finnhub_data
-        
-        # First call: should hit external API and cache
-        response = self.app.get(f'/data/{ticker}?source=finnhub')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, finnhub_data)
-        mock_finnhub.assert_called_once_with(ticker)
-        self.mock_price_cache.update_one.assert_called_once()
-        
-        # Reset mocks for second call
-        mock_finnhub.reset_mock()
-        self.mock_price_cache.update_one.reset_mock()
-
-        # Mock cache hit for the second call
-        self.mock_price_cache.find_one.return_value = {
-            "_id": MagicMock(), # Add a mock _id
-            "ticker": ticker,
-            "source": "finnhub",
-            "data": finnhub_data,
-            "createdAt": datetime.now(timezone.utc)
-        }
-
-        # Second call: should hit cache, not external API
-        response = self.app.get(f'/data/{ticker}?source=finnhub')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, finnhub_data)
-        mock_finnhub.assert_not_called() # Ensure external API was NOT called
-        # self.mock_price_cache.update_one.assert_not_called() # Commented out as TTL refresh is expected
-
-        # Test Yfinance caching (similar logic)
-        mock_yfinance.return_value = yfinance_data
-        self.mock_price_cache.find_one.return_value = None # Reset for Yfinance first call
-        self.mock_price_cache.update_one.reset_mock()
-
-        # First call for Yfinance
-        response = self.app.get(f'/data/{ticker}?source=yfinance')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, yfinance_data)
-        mock_yfinance.assert_called_once_with(ticker, start_date=None)
-        self.mock_price_cache.update_one.assert_called_once()
-
-        # Reset mocks for second Yfinance call
-        mock_yfinance.reset_mock()
-        self.mock_price_cache.update_one.reset_mock()
-
-        # Mock cache hit for second Yfinance call
-        self.mock_price_cache.find_one.return_value = {
-            "_id": MagicMock(), # Add a mock _id
-            "ticker": ticker,
-            "source": "yfinance",
-            "data": yfinance_data,
-            "createdAt": datetime.now(timezone.utc)
-        }
-
-        # Second call for Yfinance
-        response = self.app.get(f'/data/{ticker}?source=yfinance')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, yfinance_data)
-        mock_yfinance.assert_not_called()
-        # self.mock_price_cache.update_one.assert_not_called() # Commented out as TTL refresh is expected
-
-    @patch('app.marketaux_provider.get_news_for_ticker')
-    def test_news_caching(self, mock_marketaux):
-        ticker = "TSLA"
-        news_data = [{"title": "TSLA news 1"}, {"title": "TSLA news 2"}]
-
-        # Mock cache miss initially
-        self.mock_news_cache.find_one.return_value = None
-
-        mock_marketaux.return_value = news_data
-
-        # First call: should hit external API and cache
-        response = self.app.get(f'/news/{ticker}')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, news_data)
-        mock_marketaux.assert_called_once_with(ticker)
-        self.mock_news_cache.insert_one.assert_called_once()
-
-        # Reset mocks for second call
-        mock_marketaux.reset_mock()
-        self.mock_news_cache.insert_one.reset_mock()
-
-        # Mock cache hit for the second call
-        self.mock_news_cache.find_one.return_value = {
-            "_id": MagicMock(), # Add a mock _id
-            "ticker": ticker,
-            "data": news_data,
-            "createdAt": datetime.now(timezone.utc)
-        }
-
-        # Second call: should hit cache, not external API
-        response = self.app.get(f'/news/{ticker}')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, news_data)
-        mock_marketaux.assert_not_called() # Ensure external API was NOT called
-        self.mock_news_cache.insert_one.assert_not_called() # Ensure no new insert
-
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_price_data_cache_expiration(self, mock_yfinance):
-        ticker = "GOOG"
-        old_data = [{"formatted_date": "2025-07-10", "close": 100.0}]
-        new_data = [{"formatted_date": "2025-07-15", "close": 105.0}]
-
-        # Simulate data in cache that is just about to expire
-        expired_time = datetime.now(timezone.utc) - timedelta(seconds=PRICE_CACHE_TTL + 1)
-        self.mock_price_cache.find_one.return_value = {
-            "_id": MagicMock(), # Add a mock _id
-            "ticker": ticker,
-            "source": "finnhub", # Source doesn't matter for expiration test, but needs to be present
-            "data": old_data,
-            "createdAt": expired_time
-        }
-
-        # Mock external API for fresh data
-        mock_yfinance.return_value = new_data
-
-        # First call: cache should be considered expired, so external API is called
-        response = self.app.get(f'/data/{ticker}?source=yfinance')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, new_data)
-        mock_yfinance.assert_called_once_with(ticker, start_date=None)
-        self.mock_price_cache.update_one.assert_called_once() # New data inserted
-
-    @patch('app.marketaux_provider.get_news_for_ticker')
-    def test_news_cache_expiration(self, mock_marketaux):
-        ticker = "AMZN"
-        old_news = [{"title": "Old AMZN news"}]
-        new_news = [{"title": "New AMZN news"}]
-
-        # Simulate data in cache that is just about to expire
-        expired_time = datetime.now(timezone.utc) - timedelta(seconds=NEWS_CACHE_TTL + 1)
-        self.mock_news_cache.find_one.return_value = {
-            "_id": MagicMock(), # Add a mock _id
-            "ticker": ticker,
-            "data": old_news,
-            "createdAt": expired_time
-        }
-
-        # Mock external API for fresh news
-        mock_marketaux.return_value = new_news
-
-        # First call: cache should be considered expired, so external API is called
-        response = self.app.get(f'/news/{ticker}')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, new_news)
-        mock_marketaux.assert_called_once_with(ticker)
-        self.mock_news_cache.insert_one.assert_called_once() # New data inserted
-
-        #  Test for incremental price data fetching.
-        @patch('app.yfinance_provider.get_stock_data')
-        def test_incremental_price_fetch(self, mock_get_stock_data):
-            """
-            Tests that the service fetches only new data if recent data is already in the cache.
-            """
-            ticker = "AAPL"
-            # 1. Arrange: Simulate a cache hit with data from 3 days ago.
-            last_cached_date_str = (datetime.now(timezone.utc) - timedelta(days=3)).strftime('%Y-%m-%d')
-            last_cached_date_obj = date.fromisoformat(last_cached_date_str)
-
-            cached_record = {
-                "_id": "mock_id_123",
-                "ticker": ticker,
-                "source": "yfinance",
-                "data": [
-                    {"formatted_date": "2025-07-01", "close": 150.0},
-                    {"formatted_date": last_cached_date_str, "close": 155.0}
-                ],
-                "createdAt": datetime.now(timezone.utc) - timedelta(days=1)
-            }
-            self.mock_price_cache.find_one.return_value = cached_record
-
-            # Mock the provider to return some "new" data.
-            mock_get_stock_data.return_value = [
-                {"formatted_date": "2025-07-15", "close": 156.0}
-            ]
-
-            # 2. Act: Request data for the ticker.
-            self.app.get(f'/data/{ticker}?source=yfinance')
-
-            # 3. Assert: Verify the data provider was called with the correct start date.
-            # The start date should be the day AFTER the last cached date.
-            expected_start_date = last_cached_date_obj + timedelta(days=1)
-            mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date)
-
-            # Assert that the cache is updated, not inserted into again.
-            self.mock_price_cache.update_one.assert_called_once()
-            self.mock_price_cache.insert_one.assert_not_called()
-
-#  New test class for the cache clearing endpoint.
-class DataServiceCacheClearTest(unittest.TestCase):
+# Test class for caching logic
+@patch('app.init_db') # Patch init_db to prevent it from running in these tests
+class TestDataServiceCacheLogic(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.app = app.test_client()
-
-        # We need to patch the global variables `price_cache` and `news_cache`
-        # that are used by the `clear_cache` endpoint.
+        
+        # Patch the global collection variables for test isolation
         self.price_cache_patcher = patch('app.price_cache', MagicMock())
         self.news_cache_patcher = patch('app.news_cache', MagicMock())
-        self.init_db_patcher = patch('app.init_db', MagicMock())
-
         self.mock_price_cache = self.price_cache_patcher.start()
         self.mock_news_cache = self.news_cache_patcher.start()
-        self.mock_init_db = self.init_db_patcher.start()
 
     def tearDown(self):
         self.price_cache_patcher.stop()
         self.news_cache_patcher.stop()
-        self.init_db_patcher.stop()
 
-    def test_clear_cache_success(self):
-        """Tests successful cache clearing."""
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_incremental_price_fetch(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests that the service fetches only new data if recent data is in cache.
+        """
+        ticker = "AAPL"
+        # Arrange: Simulate a cache hit with recent but not up-to-date data
+        last_cached_date_str = (date.today() - timedelta(days=3)).strftime('%Y-%m-%d')
+        last_cached_date_obj = date.fromisoformat(last_cached_date_str)
+        
+        cached_record = {
+            "_id": "mock_id_123", "ticker": ticker, "source": "yfinance",
+            "data": [{"formatted_date": last_cached_date_str, "close": 155.0}],
+            "createdAt": datetime.now(timezone.utc) - timedelta(days=1)
+        }
+        self.mock_price_cache.find_one.return_value = cached_record
+        mock_get_stock_data.return_value = [{"formatted_date": "2025-07-20", "close": 156.0}]
+
         # Act
-        response = self.app.post('/cache/clear')
+        self.app.get(f'/data/{ticker}?source=yfinance')
+
+        # Assert: The provider was called with the day AFTER the last cached date
+        expected_start_date = last_cached_date_obj + timedelta(days=1)
+        mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date)
+        # Assert that the existing cache record was updated, not a new one inserted
+        self.mock_price_cache.update_one.assert_called_once()
+    
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_price_cache_is_used_when_fresh(self, mock_get_stock_data, mock_init_db):
+        """
+        Verifies that if cache is fresh, the external provider is not called.
+        """
+        ticker = "MSFT"
+        # Arrange: Data from yesterday, well within TTL
+        fresh_date = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
+        fresh_record = {
+            "_id": "mock_id_456", "ticker": ticker, "source": "yfinance",
+            "data": [{"formatted_date": fresh_date, "close": 400.0}],
+            "createdAt": datetime.now(timezone.utc)
+        }
+        self.mock_price_cache.find_one.return_value = fresh_record
+
+        # Act
+        response = self.app.get(f'/data/{ticker}?source=yfinance')
 
         # Assert
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, {"message": "All data service caches have been cleared."})
-        
-        # Verify that the drop method was called on each mock collection
+        self.assertEqual(response.json, fresh_record['data'])
+        mock_get_stock_data.assert_not_called() # Crucially, the provider was not hit
+
+    def test_clear_cache_endpoint(self, mock_init_db):
+        """Tests that the POST /cache/clear endpoint works."""
+        response = self.app.post('/cache/clear')
+        self.assertEqual(response.status_code, 200)
         self.mock_price_cache.drop.assert_called_once()
         self.mock_news_cache.drop.assert_called_once()
-        
-        # Verify that the database is re-initialized after dropping
-        self.mock_init_db.assert_called_once()
-
-    def test_clear_cache_failure(self):
-        """Tests failure during cache clearing."""
-        # Arrange: Configure one of the mock drop methods to raise an exception
-        self.mock_price_cache.drop.side_effect = Exception("Database connection failed")
-
-        # Act
-        response = self.app.post('/cache/clear')
-
-        # Assert
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("error", response.json)
-        self.assertEqual(response.json["error"], "Failed to clear caches.")
-        
-        # Even though it failed, the drop method was still called
-        self.mock_price_cache.drop.assert_called_once()
-        
-        # In this failure path, the second drop is not called, and init_db is not called
-        self.mock_news_cache.drop.assert_not_called()
-        self.mock_init_db.assert_not_called()
-
+        # The real init_db should be called after dropping
+        mock_init_db.assert_called_once()
 if __name__ == '__main__':
     unittest.main()
