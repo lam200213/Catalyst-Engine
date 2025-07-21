@@ -53,7 +53,9 @@ def gateway(service, path=""):
             timeout = 6000 if service == 'jobs' else 20
             resp = requests.post(target_url, json=post_data, timeout=timeout)
         else:  # Default to GET
-            resp = requests.get(target_url, params=request.args, timeout=20)
+            # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.
+            query_params = dict(request.args)
+            resp = requests.get(target_url, params=query_params, timeout=20)
 
         # The client can then handle different status codes (e.g., 404, 500)
         return jsonify(resp.json()), resp.status_code

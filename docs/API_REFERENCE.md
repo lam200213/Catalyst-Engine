@@ -1,7 +1,7 @@
 # API Gateway Endpoints
 The frontend communicates exclusively with the API Gateway, which proxies requests to the appropriate backend services.
 
-- **GET `/ticker`** 
+- **GET `/tickers`** 
   - Retrieves a list of all US stock tickers from the ticker-service.  
 
 * **GET `/data/:ticker`**
@@ -93,7 +93,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```bash
     curl -X POST http://localhost:3000/jobs/screening/start
     ```
-  - **Example Success Response:**
+   - **Example Success Response:**
     ```json
     {
       "message": "Screening job completed successfully.",
@@ -104,7 +104,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       "final_candidates_count": 12
     }
     ```
-
+    
 - **POST `/cache/clear`**  
   - Proxies to: data-service
   - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.

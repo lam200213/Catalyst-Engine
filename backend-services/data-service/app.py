@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from datetime import date, datetime, timedelta, timezone
+from pymongo.errors import OperationFailure
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -23,6 +24,32 @@ news_cache = None
 PRICE_CACHE_TTL = 172800 # 2 days
 NEWS_CACHE_TTL = 14400
 
+# A helper function to make index creation robust
+def _create_ttl_index(collection, field, ttl_seconds, name):
+    """
+    Creates a TTL index, handling conflicts if the TTL value has changed.
+    """
+    try:
+        # Attempt to create the index with the new TTL and name
+        collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
+        print(f"TTL index '{name}' on '{collection.name}' is set to {ttl_seconds} seconds.")
+    except OperationFailure as e:
+        # Error code 85 is for "IndexOptionsConflict"
+        if e.code == 85:
+            print(f"Index conflict on '{collection.name}'. Dropping old index and recreating.")
+            
+            # drop the OLD, default-named index.
+            # The default name for an index on a single field is 'field_1'.
+            old_index_name = f"{field}_1"
+            collection.drop_index(old_index_name)
+            
+            # Re-create the index with the correct TTL and new name
+            collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
+            print(f"Successfully recreated TTL index with new name '{name}' on '{collection.name}'.")
+        else:
+            # For any other database error, re-raise the exception to halt startup
+            raise
+
 def init_db():
     global client, db, price_cache, news_cache
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
@@ -32,9 +59,9 @@ def init_db():
     price_cache = db.price_cache # Collection for price data
     news_cache = db.news_cache   # Collection for news data
 
-    # Create TTL indexes to auto-delete old cache documents.
-    price_cache.create_index("createdAt", expireAfterSeconds=PRICE_CACHE_TTL)
-    news_cache.create_index("createdAt", expireAfterSeconds=NEWS_CACHE_TTL)
+    # Use the robust helper function to create/update TTL indexes
+    _create_ttl_index(price_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index")
+    _create_ttl_index(news_cache, "createdAt", NEWS_CACHE_TTL, "createdAt_ttl_index")
 
 @app.route('/data/<string:ticker>', methods=['GET'])
 def get_data(ticker: str):
