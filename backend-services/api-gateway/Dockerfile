@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
+# Copy the debug script
+COPY debug_network.py .
+
 # Change ownership of the app directory
 RUN chown -R appuser:appgroup /app
 

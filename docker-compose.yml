@@ -37,9 +37,9 @@ services:
     environment:
       MONGO_URI: ${MONGO_URI}
       PORT: 3004
-      TICKER_SERVICE_URL: ${SCHEDULER_TICKER_SERVICE_URL}
-      SCREENING_SERVICE_URL: ${SCHEDULER_SCREENING_SERVICE_URL}
-      ANALYSIS_SERVICE_URL: ${SCHEDULER_ANALYSIS_SERVICE_URL}
+      TICKER_SERVICE_URL: http://ticker-service:5000
+      SCREENING_SERVICE_URL: http://screening-service:3002
+      ANALYSIS_SERVICE_URL: http://analysis-service:3003
     depends_on:
       - mongodb
       - ticker-service
@@ -120,8 +120,9 @@ services:
     networks:
       - app-network
     # for development  
-    # volumes:
-    #   - ./backend-services/api-gateway:/app # Mount local directory to container's /app
+    volumes:
+      - ./backend-services/api-gateway:/app 
+    # Mount local directory to container's /app
 
   # for production build with static Nginx server
   # frontend-app:

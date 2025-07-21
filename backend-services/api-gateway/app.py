@@ -36,13 +36,11 @@ def gateway(service, path=""):
     # Handle the specific path for the jobs service, as it doesn't follow the /service/path pattern.
     if service == 'jobs':
         target_url = f"{SERVICES[service]}/{service}/{path}"
-    
-    # Special cases for services that have a root endpoint or handle their own path prefix
-    elif service == 'tickers': # Only tickers has a root endpoint
-        target_url = f"{SERVICES[service]}/{path}"
-    # Handle the specific path for cache clearing
     elif service == 'cache' and path == 'clear':
         target_url = f"{SERVICES[service]}/cache/clear"
+    elif service == 'tickers':
+        # Route to the /tickers endpoint
+        target_url = f"{SERVICES[service]}/tickers"
     else:
         target_url = f"{SERVICES[service]}/{service}/{path}"
 
