@@ -13,6 +13,29 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     * Proxies to: `data-service`
     * Retrieves recent news articles for a ticker, with caching.
 
+- **POST `/data/batch`**
+  - Proxies to: `data-service`
+  - Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
+  - **Request Body (JSON):**
+    ```json
+    {
+      "tickers": ["AAPL", "GOOGL", "MSFT", "FAKETICKER"],
+      "source": "yfinance"
+    }
+    ```
+  - **Response Body (JSON):**
+    - Returns two lists: `success` for tickers where data was retrieved, and `failed` for tickers that could not be processed.
+    ```json
+    {
+      "success": [
+        {"ticker": "AAPL", "data": [...]},
+        {"ticker": "GOOGL", "data": [...]},
+        {"ticker": "MSFT", "data": [...]}
+      ],
+      "failed": ["FAKETICKER"]
+    }
+    ```
+
 - **GET `/screen/:ticker`**
   - Proxies to the Screening Service.
   - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.

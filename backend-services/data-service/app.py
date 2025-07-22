@@ -148,6 +148,96 @@ def get_data(ticker: str):
         # If there's no data from the provider and no cache, return an error.
         return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
 
+@app.route('/data/batch', methods=['POST'])
+def get_batch_data():
+    """
+    Handles fetching data for a batch of tickers.
+    - Checks the cache for each ticker.
+    - Fetches data from the provider for tickers not in the cache.
+    - Combines cached and newly fetched data.
+    - Returns successful and failed tickers.
+    """
+    payload = request.get_json()
+    if not payload or 'tickers' not in payload or 'source' not in payload:
+        return jsonify({"error": "Invalid request payload. 'tickers' and 'source' are required."}), 400
+
+    tickers = payload['tickers']
+    source = payload['source'].lower()
+    
+    if not isinstance(tickers, list):
+        return jsonify({"error": "'tickers' must be a list of strings."}), 400
+
+    # --- Handle Empty Ticker List ---
+    if not tickers:
+        return jsonify({"success": [], "failed": []}), 200
+
+    # --- Cache Lookup ---
+    cached_results = {}
+    # Find all documents where the ticker is in the requested list and source matches
+    cached_cursor = price_cache.find({
+        'ticker': {'$in': tickers},
+        'source': source
+    })
+    for doc in cached_cursor:
+        cached_results[doc['ticker']] = doc['data']
+
+    # --- Identify Cache Misses ---
+    cached_tickers = set(cached_results.keys())
+    missed_tickers = [t for t in tickers if t not in cached_tickers]
+    
+    print(f"DATA-SERVICE: Batch request. Cache hits: {len(cached_tickers)}, Cache misses: {len(missed_tickers)}")
+
+    # --- Fetch Data for Cache Misses ---
+    newly_fetched_data = {}
+    failed_tickers = []
+
+    if missed_tickers:
+        if source == 'yfinance':
+            # The yfinance provider now supports batch fetching
+            fetched_data = yfinance_provider.get_stock_data(missed_tickers)
+            if fetched_data:
+                for ticker, data in fetched_data.items():
+                    if data:
+                        newly_fetched_data[ticker] = data
+                    else:
+                        failed_tickers.append(ticker)
+        else:
+            # For other sources, fetch one by one (or implement batch in their providers)
+            for ticker in missed_tickers:
+                data = None
+                if source == 'finnhub':
+                    data = finnhub_provider.get_stock_data(ticker)
+                
+                if data:
+                    newly_fetched_data[ticker] = data
+                else:
+                    failed_tickers.append(ticker)
+
+    # --- Store Newly Fetched Data in Cache ---
+    if newly_fetched_data:
+        new_cache_entries = []
+        for ticker, data in newly_fetched_data.items():
+            new_cache_entries.append({
+                "ticker": ticker,
+                "source": source,
+                "data": data,
+                "createdAt": datetime.now(timezone.utc)
+            })
+        if new_cache_entries:
+            price_cache.insert_many(new_cache_entries)
+            print(f"DATA-SERVICE: Cached {len(new_cache_entries)} new entries.")
+
+    # --- Combine Results and Return ---
+    successful_data = list(cached_results.values()) + list(newly_fetched_data.values())
+    
+    # The data is nested inside a list for each ticker, so we need to flatten it
+    flat_successful_data = [item for sublist in successful_data for item in sublist]
+
+    return jsonify({
+        "success": flat_successful_data,
+        "failed": failed_tickers
+    }), 200
+
 @app.route('/news/<string:ticker>', methods=['GET'])
 def get_news(ticker: str):
     # Check cache

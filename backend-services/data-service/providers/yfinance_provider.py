@@ -48,11 +48,31 @@ def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
         print(f"Error transforming Yahoo Finance data for {ticker}: {e}")
         return None
 
-def get_stock_data(ticker: str, start_date: dt.date = None) -> list | None:
+def get_stock_data(tickers: str | list[str], start_date: dt.date = None) -> dict | list | None:
     """
     Fetches historical stock data from Yahoo Finance using curl_cffi
     and formats it into the application's standard list-of-dictionaries format.
-    Accepts an optional start_date for incremental fetches.
+    Accepts an optional start_date for incremental fetches for single tickers.
+    Handles both single ticker (str) and multiple tickers (list).
+    """
+    if isinstance(tickers, str):
+        return _get_single_ticker_data(tickers, start_date)
+    
+    if isinstance(tickers, list):
+        results = {}
+        for ticker in tickers:
+            # Note: start_date is ignored for batch requests for simplicity.
+            # Each ticker is fetched individually.
+            results[ticker] = _get_single_ticker_data(ticker, start_date=None)
+        return results
+    
+    # Invalid input type
+    return None
+
+
+def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | None:
+    """
+    Fetches historical stock data for a single ticker from Yahoo Finance.
     """
     #  Introduce request throttling to avoid rate-limiting.
     time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds

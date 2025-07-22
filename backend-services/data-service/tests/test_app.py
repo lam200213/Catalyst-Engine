@@ -154,6 +154,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json, {"error": f"Could not retrieve price data for {ticker} from yfinance."})
         mock_get_stock_data.assert_called_once_with(ticker, start_date=None)
+
     def test_clear_cache_endpoint(self, mock_init_db):
         """Tests that the POST /cache/clear endpoint works."""
         response = self.app.post('/cache/clear')
@@ -162,5 +163,142 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.mock_news_cache.drop.assert_called_once()
         # The real init_db should be called after dropping
         mock_init_db.assert_called_once()
+
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_batch_endpoint_success(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests the /data/batch endpoint for successfully fetching data for a mix
+        of cached and uncached tickers.
+        """
+        # --- Arrange ---
+        # 1. Mock the data from the external provider for the uncached tickers
+        uncached_ticker_data = {"formatted_date": "2025-07-21", "close": 200.0}
+        mock_get_stock_data.return_value = {
+            "UNCACHED": [uncached_ticker_data],
+            "FAILED": None # Simulate a failure for one ticker
+        }
+
+        # 2. Mock the data found in the cache
+        cached_ticker_data = {"formatted_date": "2025-07-21", "close": 100.0}
+        cached_db_records = [
+            {
+                "ticker": "CACHED",
+                "source": "yfinance",
+                "data": [cached_ticker_data],
+                "createdAt": datetime.now(timezone.utc)
+            }
+        ]
+        # The 'find' method on a cursor returns an iterable
+        self.mock_price_cache.find.return_value = cached_db_records
+
+        # 3. Define the payload for the batch request
+        request_payload = {
+            'tickers': ['CACHED', 'UNCACHED', 'FAILED'],
+            'source': 'yfinance'
+        }
+
+        # --- Act ---
+        response = self.app.post('/data/batch', json=request_payload)
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+        
+        # Verify the structure and content of the response
+        self.assertIn('success', response_data)
+        self.assertIn('failed', response_data)
+        self.assertEqual(response_data['failed'], ['FAILED'])
+        
+        # Check that the success list contains the correct data points
+        self.assertIn(cached_ticker_data, response_data['success'])
+        self.assertIn(uncached_ticker_data, response_data['success'])
+        self.assertEqual(len(response_data['success']), 2)
+
+        # Verify cache was queried for all tickers
+        self.mock_price_cache.find.assert_called_once_with({
+            'ticker': {'$in': ['CACHED', 'UNCACHED', 'FAILED']},
+            'source': 'yfinance'
+        })
+
+        # Verify the data provider was only called for tickers NOT in the cache
+        mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'])
+        
+        # Verify that the newly fetched data was inserted into the cache
+        self.mock_price_cache.insert_many.assert_called_once()
+
+    def test_batch_endpoint_handles_empty_ticker_list(self, mock_init_db):
+        """
+        Ensures the system handles an empty ticker list gracefully and returns a
+        valid, empty response.
+        """
+        # --- Arrange ---
+        request_payload = {'tickers': [], 'source': 'yfinance'}
+
+        # --- Act ---
+        response = self.app.post('/data/batch', json=request_payload)
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+        self.assertEqual(response_data['success'], [])
+        self.assertEqual(response_data['failed'], [])
+        
+        # Ensure no database or external calls were made
+        self.mock_price_cache.find.assert_not_called()
+
+    def test_batch_endpoint_handles_invalid_input(self, mock_init_db):
+        """
+        Confirms that malformed requests are rejected with a 400 Bad Request.
+        """
+        # --- Arrange ---
+        # Test case 1: Missing 'tickers' key
+        payload1 = {'source': 'yfinance'}
+        # Test case 2: 'tickers' is not a list
+        payload2 = {'tickers': 'AAPL', 'source': 'yfinance'}
+        # Test case 3: Empty payload
+        payload3 = {}
+
+        # --- Act & Assert ---
+        for payload in [payload1, payload2, payload3]:
+            with self.subTest(payload=payload):
+                response = self.app.post('/data/batch', json=payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('error', response.json)
+        
+        # Ensure no database or external calls were made
+        self.mock_price_cache.find.assert_not_called()
+
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_batch_endpoint_all_tickers_cached(self, mock_get_stock_data, mock_init_db):
+        """
+        Verifies that the external data provider is not called if all
+        requested data is already in the cache.
+        """
+        # --- Arrange ---
+        cached_records = [
+            {"ticker": "AAPL", "source": "yfinance", "data": [{"close": 150}]},
+            {"ticker": "MSFT", "source": "yfinance", "data": [{"close": 300}]}
+        ]
+        self.mock_price_cache.find.return_value = cached_records
+        request_payload = {'tickers': ['AAPL', 'MSFT'], 'source': 'yfinance'}
+
+        # --- Act ---
+        response = self.app.post('/data/batch', json=request_payload)
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+        self.assertEqual(len(response_data['success']), 2)
+        self.assertEqual(response_data['failed'], [])
+        
+        # Crucially, the external provider should not have been called
+        mock_get_stock_data.assert_not_called()
+        
+        # Verify the cache was queried
+        self.mock_price_cache.find.assert_called_once_with({
+            'ticker': {'$in': ['AAPL', 'MSFT']},
+            'source': 'yfinance'
+        })
+
 if __name__ == '__main__':
     unittest.main()
