@@ -37,7 +37,7 @@ services:
     environment:
       MONGO_URI: ${MONGO_URI}
       PORT: 3004
-      TICKER_SERVICE_URL: http://ticker-service:5000
+      TICKER_SERVICE_URL: http://ticker-service:5001
       SCREENING_SERVICE_URL: http://screening-service:3002
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
     depends_on:
@@ -91,7 +91,9 @@ services:
     build: ./backend-services/ticker-service
     container_name: ticker-service
     ports:
-      - "5001:5000"
+      - "${TICKER_SERVICE_PORT:-5001}:5001"
+    environment:
+      PORT: 5001
     networks:
       - app-network
     # for development  
@@ -110,7 +112,7 @@ services:
       SCREENING_SERVICE_URL: http://screening-service:3002
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
       SCHEDULER_SERVICE_URL: http://scheduler-service:3004
-      TICKER_SERVICE_URL: http://ticker-service:5000
+      TICKER_SERVICE_URL: http://ticker-service:5001
     depends_on:
       - screening-service
       - analysis-service

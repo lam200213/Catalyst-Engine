@@ -1,7 +1,6 @@
 # data-service/app.py
 import os
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
 from pymongo import MongoClient
 from datetime import date, datetime, timedelta, timezone
 from pymongo.errors import OperationFailure
@@ -9,10 +8,8 @@ from pymongo.errors import OperationFailure
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
 
-# Load environment variables
-load_dotenv()
-
 app = Flask(__name__)
+PORT = int(os.environ.get('PORT', 3001))
 
 # Global variables for MongoDB client and collections
 client = None
@@ -212,5 +209,4 @@ def clear_cache():
 
 if __name__ == '__main__':
     init_db() # Initialize the database connection
-    port = int(os.environ.get('PORT', 3001))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=PORT)

@@ -12,7 +12,7 @@ app = Flask(__name__)
 # --- Configuration ---
 PORT = int(os.getenv("PORT", 3004))
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
-TICKER_SERVICE_URL = os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5000")
+TICKER_SERVICE_URL = os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001")
 SCREENING_SERVICE_URL = os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002")
 ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003")
 

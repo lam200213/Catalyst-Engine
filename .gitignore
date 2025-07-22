@@ -44,8 +44,11 @@ Thumbs.db
 .windsurf/
 .roo/
 .roomodes
+.gemini/
+.claude/
 AGENTS.md
 CLAUDE.md
+GEMINI.md
 
 # IDE & Editor specific
 .idea/

@@ -9,7 +9,7 @@ import requests
 # Set environment variables before importing the app
 os.environ['SCREENING_SERVICE_URL'] = 'http://screening-service:3002'
 os.environ['ANALYSIS_SERVICE_URL'] = 'http://analysis-service:3003'
-os.environ['TICKER_SERVICE_URL'] = 'http://ticker-service:5000'
+os.environ['TICKER_SERVICE_URL'] = 'http://ticker-service:5001'
 os.environ['DATA_SERVICE_URL'] = 'http://data-service:3001'
 os.environ['SCHEDULER_SERVICE_URL'] = 'http://scheduler-service:3004'
 
@@ -58,7 +58,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, ["AAPL", "GOOG", "TSLA"])
-        mock_get.assert_called_once_with('http://ticker-service:5000/tickers', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=20)
 
     @patch('requests.post')
     def test_routes_post_to_cache_clear_endpoint(self, mock_post):
@@ -108,6 +108,11 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json['error'], "Service unavailable: screen")
 
+    def test_malicious_path_traversal(self):
+        """Test that a malicious path traversal attempt is handled correctly."""
+        response = self.app.get('/screen/../../etc/passwd')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json, {"error": "Malicious path detected"})
     def test_invalid_service_route(self):
         """Verify that a request to an unknown service returns a 404 error."""
         response = self.app.get('/nonexistentservice/somepath')
