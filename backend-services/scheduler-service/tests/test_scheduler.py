@@ -68,11 +68,13 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(len(args[0]), 1)
         self.assertEqual(args[0][0]['ticker'], 'PASS_TICKER')
 
-        mock_jobs_collection.insert_one.assert_called_once()
-        summary_doc = mock_jobs_collection.insert_one.call_args[0][0]
+        mock_jobs_collection.update_one.assert_called_once()
+        pos_args, _ = mock_jobs_collection.update_one.call_args
+        update_document = pos_args[1]
+        summary_doc = update_document['$set']
+
         self.assertIn('job_id', summary_doc)
         self.assertEqual(summary_doc['final_candidates_count'], 1)
-
 
     #  Corrected patching for this test
     @patch('app.get_db_collections')
@@ -160,9 +162,9 @@ class TestScheduler(unittest.TestCase):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 500)
-        self.assertIn("Failed to write to database", response.get_json()['error'])
+        self.assertIn("Failed to write candidate results to database", response.get_json()['error'])
         mock_results_collection.insert_many.assert_called_once()
-        mock_jobs_collection.insert_one.assert_not_called()
+        mock_jobs_collection.update_one.assert_called_once()
 
     #  Corrected patching for this test
     @patch('builtins.print')
@@ -210,7 +212,7 @@ class TestScheduler(unittest.TestCase):
         self.assertTrue(any("Fetched 3 total tickers." in call for call in log_calls))
         self.assertTrue(any("Stage 1 (Trend Screen) passed: 2 tickers." in call for call in log_calls))
         self.assertTrue(any("Stage 2 (VCP Screen) passed: 1 tickers." in call for call in log_calls))
-        self.assertTrue(any("Inserted 1 candidate documents into the database." in call for call in log_calls))
+        self.assertTrue(any("Inserted 1 documents into the database." in call for call in log_calls))
 
     #  Corrected patching for this test
     @patch('builtins.print')

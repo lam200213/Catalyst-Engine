@@ -10,6 +10,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from app import (
     prepare_historical_data,
     calculate_sma_series,
+)
+
+from vcp_logic import (
     find_one_contraction,
     find_volatility_contraction_pattern
 )
@@ -97,7 +100,7 @@ class TestVCPAlgorithm(unittest.TestCase):
     """Tests for the core VCP detection algorithm."""
     def test_find_one_contraction_success(self):
         _, prices, _ = get_vcp_test_data()
-        with patch('app.COUNTER_THRESHOLD', 2):
+        with patch('vcp_logic.COUNTER_THRESHOLD', 2):
             contraction = find_one_contraction(prices, 0)
             self.assertIsNotNone(contraction)
             self.assertEqual(contraction, (3, 108, 8, 98))

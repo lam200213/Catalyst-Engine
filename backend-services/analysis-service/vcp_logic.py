@@ -1,8 +1,112 @@
 import numpy as np
 from typing import List, Any
 
+# --- Constants ---
+# For VCP detection: number of consecutive windows without a new high/low to define a peak/trough.
+COUNTER_THRESHOLD = 5
+
 # For VCP screening: the maximum allowable percentage for a pivot's contraction depth.
 PIVOT_PRICE_PERC = 0.2
+
+
+# --- VCP (Volatility Contraction Pattern) Logic ---
+
+# --- VCP Pattern Detection ---
+
+def find_one_contraction(prices, start_index):
+    """
+    Finds a single volatility contraction pattern (VCP) from a given start index.
+    It searches for a local high (peak) followed by a local low (trough).
+    A peak/trough is identified when a new high/low is not found for `COUNTER_THRESHOLD` consecutive 5-day windows.
+    
+    Returns:
+        tuple: (high_idx, high_price, low_idx, low_price) or None if no contraction is found.
+    """
+    if start_index < 0 or start_index >= len(prices):
+        return None
+
+    # --- Find Local High (Peak) ---
+    local_highest_price = -float('inf')
+    local_highest_idx = -1
+    no_new_high_count = 0
+
+    # Iterate from start_index to find a peak
+    for i in range(start_index, len(prices)):
+        window_end = min(i + 5, len(prices))
+        if i >= window_end: break
+
+        window_prices = prices[i : window_end]
+        if not window_prices: continue
+
+        current_window_high = max(window_prices)
+        current_window_high_relative_idx = window_prices.index(current_window_high)
+        current_window_high_global_idx = i + current_window_high_relative_idx
+
+        if current_window_high > local_highest_price:
+            local_highest_price = current_window_high
+            local_highest_idx = current_window_high_global_idx
+            no_new_high_count = 0
+        else:
+            no_new_high_count += 1
+        
+        if no_new_high_count >= COUNTER_THRESHOLD:
+            break
+    
+    if no_new_high_count < COUNTER_THRESHOLD or local_highest_idx == -1:
+        return None
+
+    # --- Find Local Low (Trough) ---
+    local_lowest_price = float('inf')
+    local_lowest_idx = -1
+    no_new_low_count = 0
+
+    # Iterate from the local_highest_idx to find a trough
+    for j in range(local_highest_idx, len(prices)):
+        window_end = min(j + 5, len(prices))
+        if j >= window_end: break
+
+        window_prices = prices[j : window_end]
+        if not window_prices: continue
+
+        current_window_low = min(window_prices)
+        current_window_low_relative_idx = window_prices.index(current_window_low)
+        current_window_low_global_idx = j + current_window_low_relative_idx
+
+        if current_window_low < local_lowest_price:
+            local_lowest_price = current_window_low
+            local_lowest_idx = current_window_low_global_idx
+            no_new_low_count = 0
+        else:
+            no_new_low_count += 1
+        
+        if no_new_low_count >= COUNTER_THRESHOLD:
+            break
+    
+    if no_new_low_count < COUNTER_THRESHOLD or local_lowest_idx == -1:
+        return None
+
+    if local_highest_idx >= local_lowest_idx or local_highest_price == local_lowest_price:
+        return None
+
+    return (local_highest_idx, local_highest_price, local_lowest_idx, local_lowest_price)
+
+def find_volatility_contraction_pattern(prices):
+    """
+    Main function to detect VCPs by iteratively calling find_one_contraction.
+    Collects all detected contractions to form the complete pattern.
+    """
+    contractions = []
+    start_index = 0
+    while start_index < len(prices):
+        result = find_one_contraction(prices, start_index)
+        if result:
+            contractions.append(result)
+            # Advance start_index past the found contraction's low point to search for the next one.
+            start_index = result[2] + 1
+        else:
+            # If no more contractions are found, advance by one to avoid an infinite loop.
+            start_index += 1
+    return contractions
 
 
 def is_pivot_good(vcp_results: List[Any], current_price: float) -> bool:

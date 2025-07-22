@@ -9,7 +9,7 @@ import requests
 # Set environment variables before importing the app
 os.environ['SCREENING_SERVICE_URL'] = 'http://screening-service:3002'
 os.environ['ANALYSIS_SERVICE_URL'] = 'http://analysis-service:3003'
-os.environ['TICKER_SERVICE_URL'] = 'http://ticker-service:5000'
+os.environ['TICKER_SERVICE_URL'] = 'http://ticker-service:5001'
 os.environ['DATA_SERVICE_URL'] = 'http://data-service:3001'
 os.environ['SCHEDULER_SERVICE_URL'] = 'http://scheduler-service:3004'
 
@@ -58,7 +58,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, ["AAPL", "GOOG", "TSLA"])
-        mock_get.assert_called_once_with('http://ticker-service:5000/tickers', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=20)
 
     @patch('requests.post')
     def test_routes_post_to_cache_clear_endpoint(self, mock_post):

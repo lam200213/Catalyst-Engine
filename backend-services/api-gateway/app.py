@@ -5,6 +5,7 @@ from flask_cors import CORS
 import requests
 
 app = Flask(__name__)
+PORT = int(os.getenv("PORT", 3000))
 
 # Secure CORS Configuration: Only allow requests from the frontend's origin
 # This replaces the overly permissive CORS(app)
@@ -17,7 +18,7 @@ SERVICES = {
     "news": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "screen": os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002"),
     "analyze": os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003"),
-    "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5000"),
+    "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001"),
     "cache": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "jobs": os.getenv("SCHEDULER_SERVICE_URL", "http://scheduler-service:3004"),
 }
@@ -76,4 +77,4 @@ def gateway(service, path=""):
         return jsonify({"error": "An internal error occurred in the gateway", "details": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+    app.run(host='0.0.0.0', port=PORT)

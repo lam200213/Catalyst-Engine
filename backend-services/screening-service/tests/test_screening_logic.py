@@ -3,12 +3,12 @@ import unittest
 import numpy as np
 import os
 import sys
-#  Import 'app' for the test client and 'patch' for mocking
 from unittest.mock import patch
+from app import app
+from screening_logic import apply_screening_criteria, calculate_sma
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app import app, apply_screening_criteria, calculate_sma #  import app
 
 # --- Deterministic Test Data Generation ---
 def create_ideal_passing_data():

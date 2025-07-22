@@ -4,6 +4,7 @@ import requests
 import os
 
 app = Flask(__name__)
+PORT = int(os.getenv("PORT", 5001))
 
 def get_all_us_tickers():
     """
@@ -50,4 +51,4 @@ def get_tickers_endpoint():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=PORT)
