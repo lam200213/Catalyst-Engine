@@ -18,7 +18,7 @@ price_cache = None
 news_cache = None
 
 # Cache expiration times in seconds
-PRICE_CACHE_TTL = 172800 # 2 days
+PRICE_CACHE_TTL = 342800 # 2 days = 172800
 NEWS_CACHE_TTL = 14400
 
 # A helper function to make index creation robust
@@ -35,10 +35,8 @@ def _create_ttl_index(collection, field, ttl_seconds, name):
         if e.code == 85:
             print(f"Index conflict on '{collection.name}'. Dropping old index and recreating.")
             
-            # drop the OLD, default-named index.
-            # The default name for an index on a single field is 'field_1'.
-            old_index_name = f"{field}_1"
-            collection.drop_index(old_index_name)
+            # Drop the index by its actual name, which caused the conflict.
+            collection.drop_index(name)
             
             # Re-create the index with the correct TTL and new name
             collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
@@ -228,13 +226,13 @@ def get_batch_data():
             print(f"DATA-SERVICE: Cached {len(new_cache_entries)} new entries.")
 
     # --- Combine Results and Return ---
-    successful_data = list(cached_results.values()) + list(newly_fetched_data.values())
+    successful_data = {**cached_results, **newly_fetched_data}
     
     # The data is nested inside a list for each ticker, so we need to flatten it
-    flat_successful_data = [item for sublist in successful_data for item in sublist]
+    # flat_successful_data = [item for sublist in successful_data for item in sublist]
 
     return jsonify({
-        "success": flat_successful_data,
+        "success": successful_data,
         "failed": failed_tickers
     }), 200
 

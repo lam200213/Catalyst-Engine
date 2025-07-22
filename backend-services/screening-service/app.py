@@ -13,6 +13,7 @@ app = Flask(__name__)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 3002))
+CHUNK_SIZE = 200 # Number of tickers to process at once for batch processing
 
 # This class teaches Flask's JSON encoder how to handle NumPy's specific data types.
 class NumpyJSONEncoder(json.JSONEncoder):
@@ -37,6 +38,7 @@ class CustomJSONProvider(JSONProvider):
 # Register the custom JSON provider with our Flask app instance.
 app.json = CustomJSONProvider(app)
 
+# Endpoint to screen a single ticker
 @app.route('/screen/<ticker>')
 def screen_ticker_endpoint(ticker):
     try:
@@ -119,11 +121,49 @@ def _process_ticker(ticker):
     
     return None
 
+# Endpoint to screen a batch of tickers
+def _process_chunk(chunk):
+    """
+    Helper function to process a single chunk of tickers.
+    Returns a list of tickers that passed the screening.
+    """
+    passing_in_chunk = []
+    try:
+        # 1. Fetch data for the entire chunk from the data-service's batch endpoint
+        data_service_url = f"{DATA_SERVICE_URL}/data/batch"
+        resp = requests.post(data_service_url, json={"tickers": chunk, "source": "yfinance"}, timeout=120)
+        
+        if resp.status_code != 200:
+            print(f"Warning: Chunk failed with status {resp.status_code}. Details: {resp.text}")
+            return []
+
+        batch_data = resp.json()
+        successful_data = batch_data.get('success', {})
+        failed_tickers = batch_data.get('failed', [])
+
+        if failed_tickers:
+            print(f"Warning: Data could not be fetched for the following tickers: {failed_tickers}")
+
+        # 2. Apply screening logic to the successfully fetched data
+        # The data is already fetched, so this part is just CPU-bound.
+        for ticker, historical_data in successful_data.items():
+            result = apply_screening_criteria(ticker, historical_data)
+            if result.get("passes", False):
+                passing_in_chunk.append(ticker)
+                
+    except requests.exceptions.RequestException as e:
+        print(f"Warning: Request for chunk failed: {e}")
+    except Exception as e:
+        print(f"Warning: Unexpected error processing chunk: {e}")
+        
+    return passing_in_chunk
+
 @app.route('/screen/batch', methods=['POST'])
 def screen_batch_endpoint():
     """
-    Receives a list of tickers and returns a sub-list containing only
-    the tickers that pass all screening criteria.
+    Receives a list of tickers, splits them into chunks, processes each
+    chunk against the data-service's batch endpoint, and returns a final
+    list of tickers that pass all screening criteria.
     """
     try:
         data = request.get_json()
@@ -133,14 +173,15 @@ def screen_batch_endpoint():
         incoming_tickers = data['tickers']
         passing_tickers = []
         
+        # Split the incoming tickers into chunks of CHUNK_SIZE
+        ticker_chunks = [incoming_tickers[i:i + CHUNK_SIZE] for i in range(0, len(incoming_tickers), CHUNK_SIZE)]
+
         with ThreadPoolExecutor() as executor:
-            # Submit all tickers to the executor
-            future_to_ticker = {executor.submit(_process_ticker, ticker) for ticker in incoming_tickers}
+            # Submit each chunk to be processed in parallel
+            future_to_chunk = {executor.submit(_process_chunk, chunk) for chunk in ticker_chunks}
             
-            for future in future_to_ticker:
-                result = future.result()
-                if result:
-                    passing_tickers.append(result)
+            for future in future_to_chunk:
+                passing_tickers.extend(future.result())
 
         return jsonify(passing_tickers), 200
 

@@ -4,8 +4,9 @@ import numpy as np
 import os
 import sys
 from unittest.mock import patch
-from app import app
+from app import app, DATA_SERVICE_URL
 from screening_logic import apply_screening_criteria, calculate_sma
+import requests
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -115,43 +116,178 @@ class TestScreeningLogic(unittest.TestCase):
         self.assertAlmostEqual(calculate_sma(prices, 10), 5.5)  # (1+..+10)/10
         self.assertIsNone(calculate_sma(prices, 11))  # Insufficient data
 
-#  New integration test class for endpoints
+#  Integration test class for endpoints
 class TestScreeningEndpoint(unittest.TestCase):
     def setUp(self):
         self.app = app.test_client()
         self.app.testing = True
 
-    @patch('app.requests.get')
-    def test_batch_screen_endpoint(self, mock_get):
+    @patch('app.requests.post')
+    def test_batch_endpoint_uses_chunking(self, mock_post):
         """
-        Tests the batch screening endpoint. Mocks the call to the data-service
-        and verifies that only passing tickers are returned.
+        Tests that the batch screening endpoint uses chunking to call the data-service.
+        Verifies that for a list of 25 tickers with a chunk size of 10, the data-service is called 3 times.
         """
-        # Arrange: Configure the mock to return different data based on the ticker
-        def mock_data_service_response(*args, **kwargs):
-            url = args[0]
-            if "PASS_TICKER" in url:
-                return unittest.mock.MagicMock(
-                    status_code=200,
-                    json=lambda: create_ideal_passing_data()
-                )
-            elif "FAIL_TICKER" in url:
-                return unittest.mock.MagicMock(
-                    status_code=200,
-                    json=lambda: create_failing_high_price_data()
-                )
-            return unittest.mock.MagicMock(status_code=404)
+        # --- Arrange ---
+        # Define a chunk size consistent with what we will implement
+        CHUNK_SIZE = 10
+        # Create a list of 25 dummy tickers
+        tickers = [f"TICKER_{i}" for i in range(25)] 
+        
+        # The data-service will return a successful response.
+        # For this test, we assume all tickers are valid and have data.
+        mock_post.return_value = unittest.mock.MagicMock(
+            status_code=200,
+            json=lambda: {"success": {"TICKER_0": [{"close": 150.0}]}, "failed": []}
+        )
 
-        mock_get.side_effect = mock_data_service_response
+        # --- Act ---
+        # We need to patch the CHUNK_SIZE constant in the app module for this test
+        with patch('app.CHUNK_SIZE', CHUNK_SIZE):
+            response = self.app.post('/screen/batch', # Use the actual endpoint
+                                     json={"tickers": tickers})
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        
+        # The crucial assertion: was the data-service called the correct number of times?
+        # 25 tickers with a chunk size of 10 should result in 3 calls (10, 10, 5).
+        self.assertEqual(mock_post.call_count, 3)
+
+        # Optional: verify the content of the last call's payload
+        last_call_payload = mock_post.call_args.kwargs['json']
+        self.assertEqual(len(last_call_payload['tickers']), 5)
+
+    @patch('app.requests.post')
+    def test_batch_screen_endpoint(self, mock_post):
+        """
+        Tests the batch screening endpoint with the new chunking logic.
+        Mocks the POST call to the data-service and verifies that tickers from the
+        'success' payload are screened correctly and 'failed' tickers are ignored.
+        """
+        # Arrange: Configure the mock to return a response similar to the data-service's batch endpoint
+        mock_post.return_value = unittest.mock.MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "PASS_TICKER": create_ideal_passing_data(),
+                    "FAIL_TICKER": create_failing_high_price_data()
+                },
+                "failed": ["DATA_UNAVAILABLE_TICKER"]
+            }
+        )
 
         # Act: Make a POST request to the batch endpoint
         response = self.app.post('/screen/batch',
-                                 json={"tickers": ["PASS_TICKER", "FAIL_TICKER"]})
+                                 json={"tickers": ["PASS_TICKER", "FAIL_TICKER", "DATA_UNAVAILABLE_TICKER"]})
 
         # Assert
         self.assertEqual(response.status_code, 200)
+        # Only the ticker with passing data should be returned
+        self.assertEqual(response.get_json(), ["PASS_TICKER"])
+        # Ensure the data-service was called via POST
+        mock_post.assert_called_once()
+
+    @patch('app.requests.get')
+    def test_single_ticker_success_case(self, mock_get):
+        """
+        Integration Test: Mocks a successful 200 OK response from data-service
+        and asserts that /screen/AAPL returns 200 OK with correct screening result.
+        """
+        # Arrange
+        mock_get.return_value = unittest.mock.MagicMock(
+            status_code=200,
+            json=lambda: create_ideal_passing_data()
+        )
+
+        # Act
+        response = self.app.get('/screen/AAPL')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        json_data = response.get_json()
+        self.assertIsNotNone(json_data)
+        self.assertEqual(json_data['ticker'], 'AAPL')
+        self.assertTrue(json_data['passes'])
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/AAPL")
+
+    @patch('app.requests.get')
+    def test_single_ticker_not_found_case(self, mock_get):
+        """
+        Integration Test: Mocks data-service returning 404 Not Found for a non-existent ticker.
+        Asserts screening-service returns 502 Bad Gateway.
+        """
+        # Arrange
+        mock_get.return_value = unittest.mock.MagicMock(
+            status_code=404,
+            json=lambda: {"error": "Ticker not found"},
+            text="Ticker not found"
+        )
+
+        # Act
+        response = self.app.get('/screen/NONEXISTENT')
+
+        # Assert
+        self.assertEqual(response.status_code, 502)
+        json_data = response.get_json()
+        self.assertIsNotNone(json_data)
+        self.assertIn("Invalid or non-existent ticker", json_data['error'])
+        self.assertEqual(json_data['details'], "Ticker not found")
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/NONEXISTENT")
+
+    @patch('app.requests.get', side_effect=requests.exceptions.ConnectionError("Mocked connection error"))
+    def test_single_ticker_service_unavailable_case(self, mock_get):
+        """
+        Integration Test: Simulates requests.exceptions.ConnectionError when calling data-service.
+        Asserts screening-service returns 503 Service Unavailable.
+        """
+        # Arrange is handled by the patch decorator
+
+        # Act
+        response = self.app.get('/screen/AAPL')
+
+        # Assert
+        self.assertEqual(response.status_code, 503)
+        json_data = response.get_json()
+        self.assertIsNotNone(json_data)
+        self.assertIn("Error connecting to the data-service.", json_data['error'])
+        self.assertIn("Mocked connection error", json_data['details'])
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/AAPL")
+
+    @patch('app.requests.post')
+    @patch('builtins.print')
+    def test_batch_endpoint_handles_failed_tickers(self, mock_print, mock_post):
+        """
+        Ensures that tickers returned in the 'failed' key from the data-service
+        are logged and not processed further.
+        """
+        # --- Arrange ---
+        tickers = ["PASS_TICKER", "FAIL_TICKER"]
+
+        # Mock the data-service to return one success and one failure
+        mock_post.return_value = unittest.mock.MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "PASS_TICKER": create_ideal_passing_data() # This ticker will pass screening
+                },
+                "failed": ["FAIL_TICKER"]
+            }
+        )
+
+        # --- Act ---
+        response = self.app.post('/screen/batch', json={"tickers": tickers})
+        
+        # --- Assert ---
+        # The overall request should succeed
+        self.assertEqual(response.status_code, 200)
+        
+        # Only the passing ticker should be in the final result
         self.assertEqual(response.get_json(), ["PASS_TICKER"])
 
+        # A warning should be logged for the failed ticker
+        log_calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Data could not be fetched for the following tickers: ['FAIL_TICKER']" in call for call in log_calls))
 
 if __name__ == '__main__':
     unittest.main()

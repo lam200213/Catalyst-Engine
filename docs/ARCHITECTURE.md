@@ -80,3 +80,19 @@
 | **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI, Axios |
 | **Test** | Pytest, requests-mock, Vitest, React Testing Library |
 | **Local Orchestration** | Docker, Docker Compose |
+## Communication Flow
+
+The system is designed with a microservices architecture. The `api-gateway` is the single entry point for the frontend application. It routes requests to the appropriate backend service.
+
+### Screening-Service and Data-Service Communication
+
+A key interaction is between the `screening-service` and the `data-service`. When a screening request is received, the `screening-service` needs to fetch historical price data for a list of tickers.
+
+To optimize this process, the `screening-service` now communicates with the `data-service` using a batch endpoint:
+
+*   **Endpoint:** `/data/batch`
+*   **Method:** `POST`
+*   **Payload:** A JSON object containing a list of stock tickers.
+*   **Response:** A JSON object containing the historical price data for all requested tickers.
+
+This batching mechanism significantly reduces the number of HTTP requests between the services, improving performance and efficiency, especially when screening a large number of tickers. The `screening-service` processes the tickers in chunks to avoid overwhelming the `data-service` with a single, massive request.

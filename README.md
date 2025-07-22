@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-23
-Implemented the POST /data/batch endpoint in the data-service
+Implemented Chunking Logic
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -17,14 +17,6 @@ Implemented the POST /data/batch endpoint in the data-service
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
 
 ## Architecture Overview
-**- Frontend App: The user interface...**
-**- API Gateway: Routes all incoming...**
-**- Scheduler Service: The Scheduler Service automates...**
-**- Ticker Service: Provides the list...**
-**- Data Service: The single source...**
-**- Screening Service: Applies the 8...**
-**- Analysis Service: Performs the VCP...**
-**- MongoDB: Caching layer...**
 ```mermaid
 graph LR
     subgraph User Interaction
@@ -49,7 +41,8 @@ graph LR
 
         subgraph Data Layer
             APIGateway --> DataService[Data Service];
-            ScreeningService --> DataService;
+            ScreeningService -- "Requests data in chunks" --> DataService;
+            DataService -- "Responds via /data/batch" --> ScreeningService;
             AnalysisService --> DataService;
             DataService <--> MongoDB[(MongoDB Cache)];
         end
@@ -59,6 +52,8 @@ graph LR
     style APIGateway fill:#60a5fa,stroke:#1e40af,stroke-width:2px,color:#fff
     style Scheduler fill:#facc15,stroke:#713f12,stroke-width:2px,color:#000
 ```
+
+**Screening & Data Service Communication:** The `screening-service` fetches data from the `data-service` in chunks using the `/data/batch` endpoint. This batching approach is more efficient than requesting data for each ticker individually, especially when screening a large number of stocks.
 
 ### Screenshots
 ![Sample](docs/images/homepage.png)
