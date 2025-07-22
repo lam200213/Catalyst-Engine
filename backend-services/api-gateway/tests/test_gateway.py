@@ -108,6 +108,11 @@ class TestGateway(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json['error'], "Service unavailable: screen")
 
+    def test_malicious_path_traversal(self):
+        """Test that a malicious path traversal attempt is handled correctly."""
+        response = self.app.get('/screen/../../etc/passwd')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json, {"error": "Malicious path detected"})
     def test_invalid_service_route(self):
         """Verify that a request to an unknown service returns a 404 error."""
         response = self.app.get('/nonexistentservice/somepath')

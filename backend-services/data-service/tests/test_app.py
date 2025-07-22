@@ -136,6 +136,24 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response.json, fresh_record['data'])
         mock_get_stock_data.assert_not_called() # Crucially, the provider was not hit
 
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_data_not_found_from_provider_and_cache(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests the scenario where the data provider returns None and no data is in cache,
+        expecting a 404 Not Found response.
+        """
+        ticker = "GOOG"
+        # Arrange: Simulate no data from provider and no data in cache
+        mock_get_stock_data.return_value = None
+        self.mock_price_cache.find_one.return_value = None
+
+        # Act
+        response = self.app.get(f'/data/{ticker}?source=yfinance')
+
+        # Assert
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json, {"error": f"Could not retrieve price data for {ticker} from yfinance."})
+        mock_get_stock_data.assert_called_once_with(ticker, start_date=None)
     def test_clear_cache_endpoint(self, mock_init_db):
         """Tests that the POST /cache/clear endpoint works."""
         response = self.app.post('/cache/clear')

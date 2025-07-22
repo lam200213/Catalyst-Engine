@@ -116,6 +116,36 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(json_data['trend_screen_survivors_count'], 0)
         self.assertEqual(json_data['final_candidates_count'], 0)
         mock_get_db_collections.return_value[0].insert_many.assert_not_called()
+    @patch('builtins.print')
+    @patch('app.get_db_collections')
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_ticker_service_returns_non_list(self, mock_requests_get, mock_requests_post, mock_get_db_collections, mock_print):
+        """
+        Tests that _get_all_tickers handles a non-list response from the ticker service
+        gracefully by returning an empty list and logging a warning.
+        """
+        # --- Arrange ---
+        mock_get_db_collections.return_value = (MagicMock(), MagicMock())
+        # Simulate ticker service returning a dictionary instead of a list
+        mock_requests_get.return_value = MagicMock(status_code=200, json=lambda: {'data': ['AAPL', 'GOOG']})
+
+        # Act
+        response = self.app.post('/jobs/screening/start')
+        json_data = response.get_json()
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json_data['total_tickers_fetched'], 0)
+        self.assertEqual(json_data['trend_screen_survivors_count'], 0)
+        self.assertEqual(json_data['final_candidates_count'], 0)
+        
+        # Verify that a warning was logged
+        log_calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(any("Ticker service returned non-list format" in call for call in log_calls))
+        
+        mock_requests_post.assert_not_called()
+        mock_get_db_collections.return_value[0].insert_many.assert_not_called()
 
     @patch('app.requests.get')
     def test_service_failure_ticker_service(self, mock_requests_get):

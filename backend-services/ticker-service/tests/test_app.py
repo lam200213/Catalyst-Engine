@@ -101,5 +101,29 @@ class TickerServiceTest(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(data, {"error": "Failed to retrieve any tickers."})
 
+    @patch('requests.get')
+    def test_get_tickers_empty_rows(self, mock_get):
+        """
+        Test the /tickers endpoint when the NASDAQ API returns a 200 OK with empty "rows".
+        - Mocks a successful response with an empty "rows" list.
+        - Confirms the endpoint returns a 500 status code.
+        - Verifies the error message is correct.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": {
+                "headers": {},
+                "rows": [],
+            },
+            "message": None
+        }
+        mock_get.return_value = mock_response
+
+        response = self.app.get('/tickers')
+        data = json.loads(response.data)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data, {"error": "Failed to retrieve any tickers."})
 if __name__ == '__main__':
     unittest.main() 

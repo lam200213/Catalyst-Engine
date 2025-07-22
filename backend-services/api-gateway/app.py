@@ -32,6 +32,10 @@ def gateway(service, path=""):
     if service not in SERVICES:
         return jsonify({"error": "Service not found"}), 404
 
+    # Security check to prevent path traversal
+    if '..' in path:
+        return jsonify({"error": "Malicious path detected"}), 400
+
     # Construct the full URL for the target service
     # The target service already knows its endpoint structure (e.g., /data/, /news/, /screen/)
     # Handle the specific path for the jobs service, as it doesn't follow the /service/path pattern.
