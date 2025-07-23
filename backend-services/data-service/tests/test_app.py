@@ -318,7 +318,7 @@ class TestFinancialsEndpoint(unittest.TestCase):
     def tearDown(self):
         self.financials_cache_patcher.stop()
 
-    # Latest Add: Corrected patch path
+     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_endpoint(self, mock_get_core_financials, mock_init_db):
         """Test the happy path for the /financials/core/:ticker endpoint."""
@@ -335,7 +335,7 @@ class TestFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json['marketCap'], 2500000000)
 
-    # Latest Add: Corrected patch path
+     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials, mock_init_db):
         """Test the endpoint returns 404 for a ticker with no data."""
@@ -344,7 +344,7 @@ class TestFinancialsEndpoint(unittest.TestCase):
         response = self.app.get('/financials/core/NONEXISTENTTICKER')
         self.assertEqual(response.status_code, 404)
 
-    # Latest Add: Corrected patch path
+     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_with_incomplete_provider_data(self, mock_get_core_financials, mock_init_db):
         """Test graceful degradation when provider is missing a key."""
