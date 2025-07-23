@@ -25,6 +25,7 @@ class TestDataServiceDbInit(unittest.TestCase):
         # --- Arrange ---
         mock_price_collection = MagicMock()
         mock_news_collection = MagicMock()
+        mock_financials_collection = MagicMock()
         
         # Simulate the conflict: the first call to create_index fails
         conflict_error = OperationFailure("Index conflict", code=85)
@@ -36,6 +37,7 @@ class TestDataServiceDbInit(unittest.TestCase):
         mock_db = MagicMock()
         mock_db.price_cache = mock_price_collection
         mock_db.news_cache = mock_news_collection
+        mock_db.financials_cache = mock_financials_collection
         mock_mongo_client.return_value.stock_analysis = mock_db
 
         # --- Act ---
@@ -56,12 +58,14 @@ class TestDataServiceDbInit(unittest.TestCase):
         """
         # --- Arrange ---
         mock_price_collection = MagicMock()
+        mock_financials_collection = MagicMock()
         # Simulate a different, unexpected database error
         other_error = OperationFailure("Some other error", code=12345)
         mock_price_collection.create_index.side_effect = other_error
 
         mock_db = MagicMock()
         mock_db.price_cache = mock_price_collection
+        mock_db.financials_cache = mock_financials_collection
         mock_mongo_client.return_value.stock_analysis = mock_db
 
         # --- Act & Assert ---
@@ -210,8 +214,10 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response_data['failed'], ['FAILED'])
         
         # Check that the success list contains the correct data points
-        self.assertIn(cached_ticker_data, response_data['success'])
-        self.assertIn(uncached_ticker_data, response_data['success'])
+        self.assertIn('CACHED', response_data['success'])
+        self.assertEqual(response_data['success']['CACHED'][0], cached_ticker_data)
+        self.assertIn('UNCACHED', response_data['success'])
+        self.assertEqual(response_data['success']['UNCACHED'][0], uncached_ticker_data)
         self.assertEqual(len(response_data['success']), 2)
 
         # Verify cache was queried for all tickers
@@ -299,6 +305,60 @@ class TestDataServiceCacheLogic(unittest.TestCase):
             'ticker': {'$in': ['AAPL', 'MSFT']},
             'source': 'yfinance'
         })
+
+# Tests for the /financials/core endpoint
+@patch('app.init_db')
+class TestFinancialsEndpoint(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.app = app.test_client()
+        self.financials_cache_patcher = patch('app.financials_cache', MagicMock())
+        self.mock_financials_cache = self.financials_cache_patcher.start()
+
+    def tearDown(self):
+        self.financials_cache_patcher.stop()
+
+    # Latest Add: Corrected patch path
+    @patch('app.yfinance_provider.get_core_financials')
+    def test_get_core_financials_endpoint(self, mock_get_core_financials, mock_init_db):
+        """Test the happy path for the /financials/core/:ticker endpoint."""
+        self.mock_financials_cache.find_one.return_value = None
+        mock_get_core_financials.return_value = {
+            'marketCap': 2500000000,
+            'sharesOutstanding': 100000000,
+            'floatShares': 80000000,
+            'ipoDate': '2020-01-01',
+            'quarterly_earnings': [{'date': '3Q2024', 'revenue': 5000, 'earnings': 1000}],
+            'quarterly_financials': [{'date': '3Q2024', 'eps': 1.25}]
+        }
+        response = self.app.get('/financials/core/AAPL')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['marketCap'], 2500000000)
+
+    # Latest Add: Corrected patch path
+    @patch('app.yfinance_provider.get_core_financials')
+    def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials, mock_init_db):
+        """Test the endpoint returns 404 for a ticker with no data."""
+        self.mock_financials_cache.find_one.return_value = None
+        mock_get_core_financials.return_value = None
+        response = self.app.get('/financials/core/NONEXISTENTTICKER')
+        self.assertEqual(response.status_code, 404)
+
+    # Latest Add: Corrected patch path
+    @patch('app.yfinance_provider.get_core_financials')
+    def test_get_core_financials_with_incomplete_provider_data(self, mock_get_core_financials, mock_init_db):
+        """Test graceful degradation when provider is missing a key."""
+        self.mock_financials_cache.find_one.return_value = None
+        mock_get_core_financials.return_value = {'marketCap': 2500000000} # Missing ipoDate
+        response = self.app.get('/financials/core/AAPL')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('marketCap', response.json)
+        self.assertIsNone(response.json.get('ipoDate'))
+
+    def test_get_core_financials_handles_path_traversal_attack(self, mock_init_db):
+        """Test endpoint rejects malicious input."""
+        response = self.app.get('/financials/core/../../etc/passwd')
+        self.assertEqual(response.status_code, 400)
 
 if __name__ == '__main__':
     unittest.main()

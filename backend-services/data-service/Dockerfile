@@ -8,7 +8,12 @@ WORKDIR /app
 RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
 
 #  Install curl development headers needed for curl_cffi
-RUN apt-get update && apt-get install -y libcurl4-openssl-dev libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy and install dependencies
 COPY requirements.txt .

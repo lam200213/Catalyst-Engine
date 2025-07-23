@@ -4,6 +4,7 @@ from flask import Flask, request, jsonify
 from pymongo import MongoClient
 from datetime import date, datetime, timedelta, timezone
 from pymongo.errors import OperationFailure
+import re
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -16,6 +17,7 @@ client = None
 db = None
 price_cache = None
 news_cache = None
+financials_cache = None
 
 # Cache expiration times in seconds
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
@@ -53,12 +55,14 @@ def init_db():
 
     price_cache = db.price_cache # Collection for price data
     news_cache = db.news_cache   # Collection for news data
+    financials_cache = db.financials_cache # Collection for financial data
 
     # Use the robust helper function to create/update TTL indexes
     _create_ttl_index(price_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index")
     _create_ttl_index(news_cache, "createdAt", NEWS_CACHE_TTL, "createdAt_ttl_index")
+    _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
 
-@app.route('/data/<string:ticker>', methods=['GET'])
+@app.route('/data/<path:ticker>', methods=['GET'])
 def get_data(ticker: str):
     source = request.args.get('source', 'yfinance').lower()
     print(f"Received request for ticker: {ticker}, source: {source}")
@@ -271,7 +275,7 @@ def get_news(ticker: str):
     except Exception as e:
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
-#  New endpoint to manually clear the cache
+# Endpoint to manually clear the cache
 @app.route('/cache/clear', methods=['POST'])
 def clear_cache():
     """
@@ -295,6 +299,40 @@ def clear_cache():
         print(f"Error clearing cache: {e}")
         return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
 
+# Endpoint for core financial data
+@app.route('/financials/core/<path:ticker>', methods=['GET'])
+def get_core_financials(ticker):
+    """
+    Provides core financial data for a given ticker, with caching.
+    """
+    # Input validation
+    if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
+        return jsonify({"error": "Invalid ticker format"}), 400
+
+    # Check cache first using the global financials_cache variable
+    cached_data = financials_cache.find_one({'ticker': ticker})
+    if cached_data:
+        print(f"DATA-SERVICE: Cache HIT for financials: {ticker}")
+        # Refresh TTL
+        financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        return jsonify(cached_data['data'])
+
+    print(f"DATA-SERVICE: Cache MISS for financials: {ticker}")
+    # If not in cache, fetch from provider
+    data = yfinance_provider.get_core_financials(ticker)
+
+    if data:
+        # Cache the new data
+        financials_cache.insert_one({
+            "ticker": ticker,
+            "data": data,
+            "createdAt": datetime.now(timezone.utc)
+        })
+        print(f"DATA-SERVICE: CACHE INSERT for financials: {ticker}")
+        return jsonify(data)
+    else:
+        return jsonify({"error": "Data not found for ticker"}), 404
+    
 if __name__ == '__main__':
     init_db() # Initialize the database connection
     app.run(host='0.0.0.0', port=PORT)

@@ -108,6 +108,29 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       }
     }
     ```
+- **GET `/financials/core/:ticker`**  
+  - Purpose: Retrieves core fundamental data required for the Leadership Profile screening. Data is cached to improve performance.
+  - **Example Response (`GET /financials/core/AAPL`):**
+  ```json
+  {
+    "marketCap": 2800000000000,
+    "sharesOutstanding": 15500000000,
+    "floatShares": 15400000000,
+    "ipoDate": "1980-12-12",
+    "quarterly_earnings": [
+      {
+        "date": "3Q2024",
+        "revenue": 90000000000,
+        "earnings": 25000000000
+      }
+    ],
+    "quarterly_financials": [
+        {
+            "date": "2024-06-30",
+            "Basic EPS": 1.53
+        }
+    ]
+  }
 
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`

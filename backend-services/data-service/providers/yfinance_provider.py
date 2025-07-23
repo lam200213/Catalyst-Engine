@@ -2,6 +2,10 @@ from curl_cffi import requests
 import datetime as dt
 import time # Add time for throttling
 import random # Add random for throttling
+import yfinance as yf
+import pandas as pd
+import logging
+import time
 
 # A list of user-agents to rotate through
 USER_AGENTS = [
@@ -116,4 +120,35 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         return None
     except Exception as e:
         print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
+        return None
+    
+# Function to fetch core financial data for Leadership screening
+def get_core_financials(ticker_symbol):
+    """
+    Fetches core financial data points required for Leadership Profile screening.
+    """
+    try:
+        start_time = time.time()
+        ticker = yf.Ticker(ticker_symbol)
+        info = ticker.info
+        duration = time.time() - start_time
+        logging.info(f"yfinance call for {ticker_symbol} took {duration:.2f} seconds.")
+
+        # Gracefully handle missing data using .get()
+        data = {
+            'marketCap': info.get('marketCap'),
+            'sharesOutstanding': info.get('sharesOutstanding'),
+            'floatShares': info.get('floatShares'),
+            'ipoDate': info.get('ipoDate'),
+            'quarterly_earnings': ticker.quarterly_earnings.reset_index().to_dict('records') if not ticker.quarterly_earnings.empty else [],
+            'quarterly_financials': ticker.quarterly_financials.reset_index().to_dict('records') if not ticker.quarterly_financials.empty else [],
+        }
+
+        # Convert timestamp ipoDate to string if it exists
+        if data['ipoDate'] is not None:
+            data['ipoDate'] = pd.to_datetime(data['ipoDate'], unit='s').strftime('%Y-%m-%d')
+
+        return data
+    except Exception as e:
+        print(f"Error fetching core financials for {ticker_symbol}: {e}")
         return None

@@ -1,6 +1,10 @@
 Flask
+Flask-PyMongo
+numpy
+pandas
 requests
 pymongo
+PyMongo[srv]
 yfinance
 finnhub-python
 pytest
