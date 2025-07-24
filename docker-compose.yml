@@ -139,24 +139,24 @@ services:
   #   networks:
   #     - app-network
 
-  # Development configuration for local development
-  frontend-app:
-    build:
-      context: ./frontend-app
-      dockerfile: Dockerfile.dev
-    container_name: frontend-app
+  leadership-service:
+    build: ./backend-services/leadership-service
+    container_name: leadership-service
     ports:
-      - "5173:5173" # Vite dev server runs on 5173
+      - "3005:3005"
     environment:
-      - VITE_API_BASE_URL=http://localhost:3000
+      PORT: 3005
+      DATA_SERVICE_URL: http://data-service:3001
     depends_on:
-      - api-gateway
+      - data-service
     networks:
       - app-network
     volumes:
-      - ./frontend-app:/app
-      - /app/node_modules 
+      - ./backend-services/leadership-service:/app
+      - /app/node_modules
       # Prevents local node_modules from overwriting container's
+
+  # Remove duplicate leadership-service
 
 
 volumes:
@@ -165,3 +165,5 @@ volumes:
 networks:
   app-network:
     driver: bridge
+
+# Remove duplicate services block

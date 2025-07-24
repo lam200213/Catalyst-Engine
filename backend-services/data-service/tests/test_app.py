@@ -5,7 +5,6 @@ import sys
 from datetime import date, datetime, timezone, timedelta
 from app import app, price_cache, news_cache, PRICE_CACHE_TTL, NEWS_CACHE_TTL, init_db
 from pymongo.errors import OperationFailure
-from app import app, init_db, PRICE_CACHE_TTL, NEWS_CACHE_TTL
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -318,7 +317,6 @@ class TestFinancialsEndpoint(unittest.TestCase):
     def tearDown(self):
         self.financials_cache_patcher.stop()
 
-     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_endpoint(self, mock_get_core_financials, mock_init_db):
         """Test the happy path for the /financials/core/:ticker endpoint."""
@@ -335,7 +333,6 @@ class TestFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json['marketCap'], 2500000000)
 
-     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials, mock_init_db):
         """Test the endpoint returns 404 for a ticker with no data."""
@@ -344,7 +341,6 @@ class TestFinancialsEndpoint(unittest.TestCase):
         response = self.app.get('/financials/core/NONEXISTENTTICKER')
         self.assertEqual(response.status_code, 404)
 
-     Corrected patch path
     @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_with_incomplete_provider_data(self, mock_get_core_financials, mock_init_db):
         """Test graceful degradation when provider is missing a key."""

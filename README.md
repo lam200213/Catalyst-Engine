@@ -104,3 +104,31 @@ Follow these steps to set up and run the application locally:
 - [🔗 Detailed Architecture & Tech Stack](./docs/ARCHITECTURE.md)
 - [📖 API Reference Guide](./docs/API_REFERENCE.md)
 - [⚙️ Troubleshooting Guide](./docs/TROUBLESHOOTING.md)
+
+## Leadership Service API
+
+### Endpoints
+
+#### GET /check_market_cap
+
+**Description**: Checks if a company is a small to mid-cap based on its market cap.
+
+**Parameters**:
+- `market_cap` (float, required): The market cap of the company.
+
+**Response**:
+- `is_small_to_mid_cap` (bool): Indicates whether the company is a small to mid-cap.
+- `details` (str): Additional details about the market cap range.
+
+**Example Request**:
+```
+GET /check_market_cap?market_cap=5000000000
+```
+
+**Example Response**:
+```json
+{
+  "is_small_to_mid_cap": true,
+  "details": "The company is a small to mid-cap with a market cap of 5 billion."
+}
+```

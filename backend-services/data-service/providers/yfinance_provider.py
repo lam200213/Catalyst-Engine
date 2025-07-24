@@ -126,6 +126,8 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
 def get_core_financials(ticker_symbol):
     """
     Fetches core financial data points required for Leadership Profile screening.
+    For S&P 500 (^GSPC), returns market data including current price, SMAs, and 52-week highs/lows.
+    For other tickers, returns standard financial data.
     """
     try:
         start_time = time.time()
@@ -134,19 +136,43 @@ def get_core_financials(ticker_symbol):
         duration = time.time() - start_time
         logging.info(f"yfinance call for {ticker_symbol} took {duration:.2f} seconds.")
 
-        # Gracefully handle missing data using .get()
-        data = {
-            'marketCap': info.get('marketCap'),
-            'sharesOutstanding': info.get('sharesOutstanding'),
-            'floatShares': info.get('floatShares'),
-            'ipoDate': info.get('ipoDate'),
-            'quarterly_earnings': ticker.quarterly_earnings.reset_index().to_dict('records') if not ticker.quarterly_earnings.empty else [],
-            'quarterly_financials': ticker.quarterly_financials.reset_index().to_dict('records') if not ticker.quarterly_financials.empty else [],
-        }
+        # Special handling for major indices
+        if ticker_symbol in ['^GSPC', '^DJI', 'QQQ']:
+            # Get historical data for calculating SMAs and 52-week ranges
+            hist = ticker.history(period="1y")  # Get 1 year of data
+            
+            if hist.empty:
+                return None
+                
+            # Calculate required data points
+            current_price = float(info.get('previousClose', hist['Close'].iloc[-1]))
+            sma_50 = float(hist['Close'].tail(50).mean())
+            sma_200 = float(hist['Close'].tail(200).mean()) if len(hist) >= 200 else sma_50
+            high_52_week = float(hist['High'].max())
+            low_52_week = float(hist['Low'].min())
+            
+            data = {
+                'current_price': current_price,
+                'sma_50': sma_50,
+                'sma_200': sma_200,
+                'high_52_week': high_52_week,
+                'low_52_week': low_52_week
+            }
+        else:
+            # Gracefully handle missing data using .get()
+            data = {
+                'marketCap': info.get('marketCap'),
+                'sharesOutstanding': info.get('sharesOutstanding'),
+                'floatShares': info.get('floatShares'),
+                'ipoDate': info.get('ipoDate'),
+                'quarterly_earnings': ticker.quarterly_earnings.reset_index().to_dict('records') if not ticker.quarterly_earnings.empty else [],
+                'quarterly_financials': ticker.quarterly_financials.reset_index().to_dict('records') if not ticker.quarterly_financials.empty else [],
+                'annual_earnings': ticker.earnings.reset_index().to_dict('records') if not ticker.earnings.empty else [],
+            }
 
-        # Convert timestamp ipoDate to string if it exists
-        if data['ipoDate'] is not None:
-            data['ipoDate'] = pd.to_datetime(data['ipoDate'], unit='s').strftime('%Y-%m-%d')
+            # Convert timestamp ipoDate to string if it exists
+            if data['ipoDate'] is not None:
+                data['ipoDate'] = pd.to_datetime(data['ipoDate'], unit='s').strftime('%Y-%m-%d')
 
         return data
     except Exception as e:

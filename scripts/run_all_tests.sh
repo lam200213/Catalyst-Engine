@@ -9,6 +9,7 @@ SERVICES=(
     "screening-service"
     "analysis-service"
     "scheduler-service"
+    "leadership-service"
 )
 
 echo "🚀 Starting tests for all services..."
