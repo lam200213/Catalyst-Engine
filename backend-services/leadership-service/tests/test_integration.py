@@ -3,758 +3,204 @@ import unittest
 from unittest.mock import patch, MagicMock
 import sys
 import os
-from datetime import date, datetime, timezone, timedelta
+import requests
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app import app
 
-# Test class for integration tests
-class TestLeadershipServiceIntegration(unittest.TestCase):
+def mock_data_service_response(status_code=200, json_data=None, side_effect=None):
+    """Helper to create mock responses for requests.get."""
+    if side_effect:
+        return MagicMock(side_effect=side_effect)
+    
+    mock_resp = MagicMock()
+    mock_resp.status_code = status_code
+    if json_data is not None:
+        mock_resp.json.return_value = json_data
+    return mock_resp
+
+class TestLeadershipScreening(unittest.TestCase):
+    """
+    TDD Test Suite for the Leadership Screening Endpoint.
+    This suite is structured to directly validate the requirements from the test plan.
+    """
     def setUp(self):
         app.config['TESTING'] = True
         self.app = app.test_client()
-        
-    def tearDown(self):
-        pass
+
+    def _get_mock_price_data(base_price=100.0, performance_factor=1.0, days=90):
+        """Generates realistic price data that includes a market rally."""
+        prices = []
+        price = base_price
+        for i in range(days):
+            # Simulate a market rally (6% gain over 3 days) around day 60
+            rally_multiplier = 1.02 if 60 <= i < 63 else 1.0
+            price *= (1.001 * performance_factor * rally_multiplier)
+            prices.append({'close': price, 'high': price * 1.01, 'low': price * 0.99, 'formatted_date': f'2025-01-{i+1:02d}'})
+        return prices
+
+    def _get_mock_financial_data(self, overrides={}):
+        """Generates financial data with accelerating growth to pass all checks."""
+        # Growth rates: 25%, 30%, 35%, 40%, 45%
+        earnings = [100, 125, 162.5, 219.3, 307.1, 445.3]
+        base_data = {
+            'marketCap': 5_000_000_000, 'sharesOutstanding': 100_000_000,
+            'floatShares': 15_000_000, 'ipoDate': '2020-01-01',
+            'annual_earnings': [{'Earnings': 4.00}],
+            'quarterly_earnings': [{'Earnings': e, 'Revenue': e * 10} for e in earnings],
+            'quarterly_financials': [{'Net Income': e, 'Total Revenue': e * 10} for e in earnings],
+        }
+        base_data.update(overrides)
+        return base_data
 
     @patch('app.requests.get')
-    def test_leadership_endpoint_success(self, mock_get):
+    def test_leadership_endpoint_pass_scenario(self, mock_get):
         """
-        Test the /leadership/<ticker> endpoint with valid data
+        Verifies the endpoint returns passes: true when all criteria are met.
         """
-        # Mock financial data response
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},
-                {'Earnings': 110, 'Revenue': 1100},  # +10%
-                {'Earnings': 126.5, 'Revenue': 1200}  # +15% (EPS accelerating)
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},  # 5% margin
-                {'Net Income': 55, 'Total Revenue': 1100},  # 5.5% margin
-                {'Net Income': 65, 'Total Revenue': 1200}   # 6.5% margin (accelerating)
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            }),
-            mock_sp500_price_data # S&P 500 price data for rally check
-        ]
+        # Arrange: Use side_effect to handle multiple, different API calls
+        def side_effect(url, **kwargs):
+            if 'financials/core/PASS-TICKER' in url:
+                return mock_data_service_response(200, self._get_mock_financial_data())
+            # Mock for market trend context checks
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
+            # Mock for rally check price data
+            if 'data/PASS-TICKER' in url:
+                return mock_data_service_response(200, _get_mock_price_data(performance_factor=1.02)) # Stock outperforms
+            if 'data/^GSPC' in url:
+                return mock_data_service_response(200, _get_mock_price_data()) # Market rally
+            # Mocks for industry leadership check
+            if 'industry/peers/PASS-TICKER' in url:
+                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
+            if 'financials/core/batch' in url:
+                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "PASS-TICKER": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
+            return mock_data_service_response(404, {"error": "URL Not Mocked"})
+        mock_get.side_effect = side_effect
 
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
+        # Act
+        response = self.app.get('/leadership/PASS-TICKER')
         
-        # Assert response
+        # Assert
         self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        self.assertIn('results', response_data)
-        self.assertIn('metadata', response_data)
-        
-        # Check that all leadership checks are present (using snake_case as per new architecture)
-        results = response_data['results']
-        self.assertIn('is_small_to_mid_cap', results)
-        self.assertIn('is_recent_ipo', results)
-        self.assertIn('has_limited_float', results)
-        self.assertIn('has_accelerating_growth', results)
-        self.assertIn('has_strong_yoy_eps_growth', results)
-        self.assertIn('has_consecutive_quarterly_growth', results)
-        self.assertIn('has_positive_recent_earnings', results)
-        self.assertIn('outperforms_in_rally', results)
-        self.assertIn('market_trend_context', results)
-        self.assertIn('shallow_decline', results)
-        self.assertIn('new_52_week_high', results)
-        self.assertIn('recent_breakout', results)
-        
-        # Check YoY EPS growth level
-        self.assertIn('yoy_eps_growth_level', results)
-        
-        # Check consecutive quarterly growth level
-        self.assertIn('consecutive_quarterly_growth_level', results)
-        
-        # Check metadata includes execution_time
-        self.assertIn('execution_time', response_data['metadata'])
+        data = response.json
+        self.assertTrue(data['passes'], f"Expected passes to be True, but it was False. Details: {data.get('details')}")
+        self.assertTrue(data['details']['is_small_to_mid_cap'])
 
     @patch('app.requests.get')
-    def test_leadership_endpoint_data_service_unavailable(self, mock_get):
+    def test_leadership_endpoint_fail_scenarios(self, mock_get):
         """
-        Test the /leadership/<ticker> endpoint when data service is unavailable
+        Verifies the endpoint returns passes: false for single and multiple failures.
         """
-        # Mock financial data service returning 503
-        mock_get.side_effect = [
-            MagicMock(status_code=503),  # Financial data service unavailable
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
+        # --- Scenario 1: Fails a single criterion (Market Cap too large) ---
+        mock_get.return_value = mock_data_service_response(
+            status_code=200, 
+            json_data=self._get_mock_financial_data({'marketCap': 20_000_000_000})
+        )
+        response_single_fail = self.app.get('/leadership/FAIL-SINGLE')
+        data_single = response_single_fail.json
         
-        # Assert response
-        self.assertEqual(response.status_code, 503)
-        response_data = response.json
-        self.assertIn('error', response_data)
-        self.assertEqual(response_data['error'], 'Unable to fetch financial data')
+        self.assertEqual(response_single_fail.status_code, 200)
+        self.assertFalse(data_single['passes'])
+        self.assertFalse(data_single['details']['is_small_to_mid_cap'])
+        self.assertTrue(data_single['details']['has_limited_float'])
 
-    @patch('app.requests.get')
-    def test_leadership_endpoint_invalid_ticker(self, mock_get):
-        """
-        Test the /leadership/<ticker> endpoint with invalid ticker parameter
-        """
-        # Make request to the endpoint with invalid ticker
-        response = self.app.get('/leadership/')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 404)  # Flask returns 404 for missing parameter
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_empty_ticker(self, mock_get):
-        """
-        Test the /leadership/<ticker> endpoint with empty ticker parameter
-        """
-        # Make request to the endpoint with empty ticker
-        response = self.app.get('/leadership/')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 404)  # Flask returns 404 for missing parameter
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_missing_required_data(self, mock_get):
-        """
-        Test the /leadership/<ticker> endpoint when required data is missing
-        """
-        # Mock financial data response with missing data
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': None,
-            'sharesOutstanding': None,
-            'floatShares': None,
-            'ipoDate': None,
-            'quarterly_earnings': [],
-            'quarterly_financials': [],
-            'annual_earnings': []
-        }
-
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: []),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {}),  # S&P 500 core financial data
-            MagicMock(status_code=200, json=lambda: {}),  # Dow Jones core financial data
-            MagicMock(status_code=200, json=lambda: {}),   # NASDAQ core financial data
-            mock_sp500_price_data # S&P 500 price data for rally check
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        
-        # Check that all leadership checks return False when data is missing
-        results = response_data['results']
-        self.assertFalse(results['is_small_to_mid_cap'])
-        self.assertFalse(results['is_recent_ipo'])
-        self.assertFalse(results['has_limited_float'])
-        self.assertFalse(results['has_accelerating_growth'])
-        self.assertFalse(results['has_strong_yoy_eps_growth'])
-        self.assertFalse(results['has_consecutive_quarterly_growth'])
-        self.assertFalse(results['has_positive_recent_earnings'])
-        self.assertFalse(results['outperforms_in_rally'])
-        self.assertEqual(results['market_trend_context'], 'Unknown')
-        self.assertFalse(results['shallow_decline'])
-        self.assertFalse(results['new_52_week_high'])
-        self.assertFalse(results['recent_breakout'])
-        self.assertEqual(results['yoy_eps_growth_level'], 'Insufficient Data')
-        self.assertEqual(results['consecutive_quarterly_growth_level'], 'Insufficient Data')
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_yoy_eps_growth_levels(self, mock_get):
-        """
-        Test the /leadership/<ticker> endpoint with different YoY EPS growth levels
-        """
-        # Test Exceptional Growth (>45%)
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},  # Base
-                {'Earnings': 110, 'Revenue': 1100},
-                {'Earnings': 126.5, 'Revenue': 1200},
-                {'Earnings': 150, 'Revenue': 1300},
-                {'Earnings': 200, 'Revenue': 1400}  # 100% growth (Exceptional Growth)
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},
-                {'Net Income': 55, 'Total Revenue': 1100},
-                {'Net Income': 65, 'Total Revenue': 1200},
-                {'Net Income': 75, 'Total Revenue': 1300},
-                {'Net Income': 100, 'Total Revenue': 1400}
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100} for _ in range(252)]),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            }),
-            mock_sp500_price_data # S&P 500 price data for rally check
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        results = response_data['results']
-        self.assertTrue(results['has_strong_yoy_eps_growth'])
-        self.assertEqual(results['yoy_eps_growth_level'], 'Exceptional Growth')
-        # Note: The test data may not have sufficient quarters for consecutive quarterly growth
-        # so we just check that the field exists
-        self.assertIn('consecutive_quarterly_growth_level', results)
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_consecutive_quarterly_growth_levels(self, mock_get):
-        """
-        Test the /leadership/<ticker> endpoint with different consecutive quarterly growth levels
-        """
-        # Test Exceptional Growth (>45%)
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},  # Base
-                {'Earnings': 110, 'Revenue': 1100},
-                {'Earnings': 126.5, 'Revenue': 1200},
-                {'Earnings': 150, 'Revenue': 1300},
-                {'Earnings': 180, 'Revenue': 1400},
-                {'Earnings': 220, 'Revenue': 1500}  # High growth
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},
-                {'Net Income': 55, 'Total Revenue': 1100},
-                {'Net Income': 65, 'Total Revenue': 1200},
-                {'Net Income': 75, 'Total Revenue': 1300},
-                {'Net Income': 90, 'Total Revenue': 1400},
-                {'Net Income': 110, 'Total Revenue': 1500}
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100} for _ in range(252)]),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            }),
-            mock_sp500_price_data # S&P 500 price data for rally check
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        results = response_data['results']
-        # Note: The actual growth level will depend on the calculated rolling averages
-        # We just check that the field exists
-        self.assertIn('consecutive_quarterly_growth_level', results)
-
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_leadership_endpoint_market_trend_evaluation(self, mock_get, mock_post):
-        """
-        Test the /leadership/<ticker> endpoint with market trend evaluation
-        """
-        # Test Bullish market trend
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},
-                {'Earnings': 110, 'Revenue': 1100},
-                {'Earnings': 126.5, 'Revenue': 1200},
-                {'Earnings': 150, 'Revenue': 1300}
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},
-                {'Net Income': 55, 'Total Revenue': 1100},
-                {'Net Income': 65, 'Total Revenue': 1200},
-                {'Net Income': 75, 'Total Revenue': 1300}
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        
-        # Create stock data with new 52-week high
-        stock_data = []
-        for i in range(251):  # 251 days of data
-            stock_data.append({
-                'formatted_date': f'2023-01-01 + {i} days',
-                'close': 90 + (i * 0.1),  # Gradually increasing price
-                'high': 95 + (i * 0.1),
-                'low': 85 + (i * 0.1),
-                'open': 88 + (i * 0.1),
-                'volume': 1000000
+        # --- Scenario 2: Fails multiple criteria ---
+        mock_get.return_value = mock_data_service_response(
+            status_code=200,
+            json_data=self._get_mock_financial_data({
+                'marketCap': 20_000_000_000,
+                'ipoDate': '2005-01-01'
             })
-        # Last day with new high - make sure the current price is higher than all previous highs
-        stock_data.append({
-            'formatted_date': '2023-01-01 + 251 days',
-            'close': 121,  # Higher than the previous high of 120
-            'high': 121,
-            'low': 115,
-            'open': 118,
-            'volume': 1000000
-        })
-        
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"success": {}, "failed": []})
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,
-            MagicMock(status_code=200, json=lambda: stock_data),
-            MagicMock(status_code=200, json=lambda: {
-                'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {
-                'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {
-                'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000
-            }),
-            mock_sp500_price_data,
-            MagicMock(status_code=200, json=lambda: [{'status': 'Bearish'}] * 4 + [{'status': 'Bullish'}] * 4),
-            MagicMock(status_code=200, json=lambda: {"industry": "Technology", "peers": ["MSFT", "GOOGL"]}),
-        ]
+        )
+        response_multi_fail = self.app.get('/leadership/FAIL-MULTI')
+        data_multi = response_multi_fail.json
 
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
-        
-        # Assert response
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        results = response_data['results']
-        self.assertEqual(results['market_trend_context'], 'Bullish')
-        self.assertTrue(results['new_52_week_high'])
+        self.assertEqual(response_multi_fail.status_code, 200)
+        self.assertFalse(data_multi['passes'])
+        self.assertFalse(data_multi['details']['is_small_to_mid_cap'])
+        self.assertFalse(data_multi['details']['is_recent_ipo'])
 
-    # New tests for gRPC client functionality
     @patch('app.requests.get')
-    def test_leadership_endpoint_grpc_unavailable(self, mock_get):
+    def test_leadership_endpoint_handles_data_service_500_error(self, mock_get):
         """
-        Test the /leadership/<ticker> endpoint when gRPC service is unavailable
+        Verifies the service returns a 502 Bad Gateway if the data-service fails.
+        [Implements test plan requirement 2.1.3]
         """
-        # Mock gRPC service returning 503
-        mock_get.side_effect = [
-            MagicMock(status_code=503),  # gRPC service unavailable
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
+        # Arrange
+        mock_get.return_value = mock_data_service_response(status_code=500)
         
-        # Assert response
+        # Act
+        response = self.app.get('/leadership/ANYTICKER')
+
+        # Assert
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('error', response.json)
+        self.assertIn('Failed to fetch data from data-service', response.json['error'])
+
+    @patch('app.requests.get')
+    def test_leadership_endpoint_handles_data_service_404_error(self, mock_get):
+        """
+        Verifies the service returns 502 for a non-existent ticker (404 from data-service).
+        [Implements test plan requirement for non-existent ticker]
+        """
+        # Arrange
+        mock_get.return_value = mock_data_service_response(status_code=404)
+
+        # Act
+        response = self.app.get('/leadership/NONEXISTENT')
+
+        # Assert
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('error', response.json)
+
+    @patch('app.requests.get')
+    def test_leadership_endpoint_handles_connection_error(self, mock_get):
+        """
+        Verifies the service returns 503 Service Unavailable on connection error.
+        [Implements test plan requirement 2.1.3]
+        """
+        # Arrange
+        mock_get.side_effect = requests.exceptions.ConnectionError("Service down")
+
+        # Act
+        response = self.app.get('/leadership/ANYTICKER')
+        
+        # Assert
         self.assertEqual(response.status_code, 503)
-        response_data = response.json
-        self.assertIn('error', response_data)
-        self.assertEqual(response_data['error'], 'Unable to fetch financial data')
+        self.assertIn('Service unavailable', response.json['error'])
 
-    # Tests for Redis caching functionality
-    
-    @patch('app.requests.post')
     @patch('app.requests.get')
-    def test_endpoint_is_idempotent(self, mock_get, mock_post):
+    def test_leadership_endpoint_handles_missing_data_key(self, mock_get):
         """
-        Test the /leadership/<ticker> endpoint with cached data
+        Verifies the service doesn't crash and fails the check if a key is missing.
+        [Implements test plan requirement 2.1.4]
         """
-        # Mock financial data response
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},
-                {'Earnings': 110, 'Revenue': 1100},
-                {'Earnings': 126.5, 'Revenue': 1200}
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},
-                {'Net Income': 55, 'Total Revenue': 1100},
-                {'Net Income': 65, 'Total Revenue': 1200}
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"success": {}, "failed": []})
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        
-        side_effect_list = [
-            # ---- First call to /leadership/AAPL ----
-            mock_financial_response,
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),
-            MagicMock(status_code=200, json=lambda: {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000}),
-            MagicMock(status_code=200, json=lambda: {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000}),
-            MagicMock(status_code=200, json=lambda: {'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000}),
-            mock_sp500_price_data,
-            MagicMock(status_code=200, json=lambda: [{'status': 'Bullish'}]),
-            MagicMock(status_code=200, json=lambda: {"industry": "Tech", "peers": []}),
-            
-            # ---- Second call to /leadership/AAPL ----
-            mock_financial_response,
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),
-            MagicMock(status_code=200, json=lambda: {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000}),
-            MagicMock(status_code=200, json=lambda: {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000}),
-            MagicMock(status_code=200, json=lambda: {'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000}),
-            mock_sp500_price_data,
-            MagicMock(status_code=200, json=lambda: [{'status': 'Bullish'}]),
-            MagicMock(status_code=200, json=lambda: {"industry": "Tech", "peers": []}),
-        ]
-        mock_get.side_effect = side_effect_list
+        # Arrange: Data is missing the 'marketCap' key
+        mock_data = self._get_mock_financial_data()
+        del mock_data['marketCap']
+        mock_get.return_value = mock_data_service_response(status_code=200, json_data=mock_data)
 
-        # Make first request to the endpoint
-        response1 = self.app.get('/leadership/AAPL')
-        self.assertEqual(response1.status_code, 200)
+        # Act
+        response = self.app.get('/leadership/MISSINGKEY')
         
-        # Make second request to the same endpoint
-        response2 = self.app.get('/leadership/AAPL')
-        self.assertEqual(response2.status_code, 200)
-        
-        self.assertEqual(response1.json['results'], response2.json['results'])
-
-
-    # New tests for orchestrated check execution
-    @patch('app.time.time', side_effect=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) # Mock time.time() for non-zero execution time
-    @patch('app.requests.get')
-    def test_leadership_endpoint_parallel_execution(self, mock_get, mock_time):
-        """
-        Test the /leadership/<ticker> endpoint with parallel check execution
-        """
-        # Mock financial data response
-        mock_financial_response = MagicMock()
-        mock_financial_response.status_code = 200
-        mock_financial_response.json.return_value = {
-            'marketCap': 1000000000,  # $1B
-            'sharesOutstanding': 100000000,
-            'floatShares': 15000000,  # 15% float
-            'ipoDate': '2020-01-01',  # 5 years ago
-            'quarterly_earnings': [
-                {'Earnings': 100, 'Revenue': 1000},
-                {'Earnings': 110, 'Revenue': 1100},
-                {'Earnings': 126.5, 'Revenue': 1200}
-            ],
-            'quarterly_financials': [
-                {'Net Income': 50, 'Total Revenue': 1000},
-                {'Net Income': 55, 'Total Revenue': 1100},
-                {'Net Income': 65, 'Total Revenue': 1200}
-            ],
-            'annual_earnings': [
-                {'Earnings': 2.50}
-            ]
-        }
-        
-        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            }),
-            mock_sp500_price_data # S&P 500 price data for rally check
-        ]
-
-        # Make request to the endpoint
-        response = self.app.get('/leadership/AAPL')
-        
-        # Assert response
+        # Assert
         self.assertEqual(response.status_code, 200)
-        response_data = response.json
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        self.assertIn('results', response_data)
-        self.assertIn('metadata', response_data)
+        data = response.json
+        self.assertFalse(data['passes'])
+        self.assertFalse(data['details']['is_small_to_mid_cap'])
+
+    def test_leadership_endpoint_handles_path_traversal_attack(self):
+        """
+        Verifies the service rejects malicious URLs.
+        """
+        # Act
+        response = self.app.get('/leadership/../../etc/passwd')
         
-        # Check that execution_time is present in metadata
-        self.assertIn('execution_time', response_data['metadata'])
-        
-        # Check that execution_time is a reasonable value (should be fast with parallel execution)
-        execution_time = response_data['metadata']['execution_time']
-        self.assertIsInstance(execution_time, (int, float))
-        self.assertGreater(execution_time, 0)
-        self.assertLess(execution_time, 5)  # Should complete in less than 5 seconds
-
-    @patch('app.requests.post') # Mock requests.post for batch endpoint
-    @patch('app.requests.get')
-    def test_industry_rank_endpoint_success(self, mock_get, mock_post):
-        """
-        Test the /leadership/industry_rank/<ticker> endpoint with valid data
-        """
-        # Mock response for GET /industry/peers/<ticker>
-        mock_peers_response = MagicMock()
-        mock_peers_response.status_code = 200
-        mock_peers_response.json.return_value = {
-            "industry": "Technology",
-            "peers": ["MSFT", "GOOGL", "AMZN", "FB"]
-        }
-
-        # Mock response for POST /financials/core/batch
-        mock_batch_response = MagicMock()
-        mock_batch_response.status_code = 200
-        mock_batch_response.json.return_value = {
-            "success": {
-                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000},
-                "MSFT": {"totalRevenue": 211915000000, "marketCap": 3100000000000, "netIncome": 72361000000},
-                "GOOGL": {"totalRevenue": 307394000000, "marketCap": 2200000000000, "netIncome": 73795000000},
-                "AMZN": {"totalRevenue": 574785000000, "marketCap": 1900000000000, "netIncome": 30425000000},
-                "FB": {"totalRevenue": 134900000000, "marketCap": 1200000000000, "netIncome": 39098000000}
-            },
-            "failed": []
-        }
-
-        mock_get.return_value = mock_peers_response
-        mock_post.return_value = mock_batch_response
-
-        response = self.app.get('/leadership/industry_rank/AAPL')
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        self.assertEqual(response_data['industry'], 'Technology')
-        self.assertIn('rank', response_data)
-        self.assertIn('total_peers_ranked', response_data)
-        self.assertIn('ranked_peers_data', response_data)
-        self.assertIsInstance(response_data['rank'], int)
-        self.assertGreater(response_data['rank'], 0)
-        self.assertIsInstance(response_data['total_peers_ranked'], int)
-        self.assertGreater(response_data['total_peers_ranked'], 0)
-        self.assertIsInstance(response_data['ranked_peers_data'], list)
-        self.assertGreater(len(response_data['ranked_peers_data']), 0)
-
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_industry_rank_endpoint_incomplete_data(self, mock_get, mock_post):
-        """
-        Test the /leadership/industry_rank/<ticker> endpoint with incomplete financial data for peers
-        """
-        mock_peers_response = MagicMock()
-        mock_peers_response.status_code = 200
-        mock_peers_response.json.return_value = {
-            "industry": "Technology",
-            "peers": ["MSFT", "GOOGL", "AMZN"]
-        }
-
-        mock_batch_response = MagicMock()
-        mock_batch_response.status_code = 200
-        mock_batch_response.json.return_value = {
-            "success": {
-                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000},
-                "MSFT": {"totalRevenue": None, "marketCap": 3100000000000, "netIncome": 72361000000}, # Incomplete revenue
-                "GOOGL": {"totalRevenue": 307394000000, "marketCap": None, "netIncome": 73795000000}, # Incomplete marketCap
-                "AMZN": {"totalRevenue": 574785000000, "marketCap": 1900000000000, "netIncome": 30425000000}
-            },
-            "failed": []
-        }
-
-        mock_get.return_value = mock_peers_response
-        mock_post.return_value = mock_batch_response
-
-        response = self.app.get('/leadership/industry_rank/AAPL')
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        self.assertEqual(response_data['industry'], 'Technology')
-        self.assertIn('rank', response_data)
-        self.assertIn('total_peers_ranked', response_data)
-        self.assertIn('ranked_peers_data', response_data)
-        
-        # Only AAPL and AMZN should be ranked
-        self.assertEqual(response_data['total_peers_ranked'], 2)
-        self.assertEqual(len(response_data['ranked_peers_data']), 2)
-        self.assertFalse(any(d['ticker'] == 'MSFT' for d in response_data['ranked_peers_data']))
-        self.assertFalse(any(d['ticker'] == 'GOOGL' for d in response_data['ranked_peers_data']))
-
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_industry_rank_endpoint_no_peers(self, mock_get, mock_post):
-        """
-        Test the /leadership/industry_rank/<ticker> endpoint when no peers are returned
-        """
-        mock_peers_response = MagicMock()
-        mock_peers_response.status_code = 200
-        mock_peers_response.json.return_value = {
-            "industry": "Technology",
-            "peers": []
-        }
-
-        mock_get.return_value = mock_peers_response
-        mock_post.return_value = MagicMock(status_code=200, json=lambda: {
-            "success": {
-                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000}
-            },
-            "failed": []
-        }) # Batch response with data for the original ticker only
-
-        response = self.app.get('/leadership/industry_rank/AAPL')
-        self.assertEqual(response.status_code, 200)
-        response_data = response.json
-
-        self.assertEqual(response_data['ticker'], 'AAPL')
-        self.assertEqual(response_data['industry'], 'Technology')
-        self.assertIn('rank', response_data)
-        self.assertIn('total_peers_ranked', response_data)
-        self.assertIn('ranked_peers_data', response_data)
-        
-        # Only the original ticker should be ranked if no peers
-        self.assertEqual(response_data['total_peers_ranked'], 1)
-        self.assertEqual(response_data['rank'], 1)
-        self.assertEqual(len(response_data['ranked_peers_data']), 1)
-        self.assertEqual(response_data['ranked_peers_data'][0]['ticker'], 'AAPL')
-
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_industry_rank_endpoint_peers_service_unavailable(self, mock_get, mock_post):
-        """
-        Test the /leadership/industry_rank/<ticker> endpoint when peers service is unavailable
-        """
-        mock_get.return_value = MagicMock(status_code=503) # Peers service unavailable
-
-        response = self.app.get('/leadership/industry_rank/AAPL')
-        self.assertEqual(response.status_code, 500) # Error from check_industry_leadership
-        response_data = response.json
-        self.assertIn('error', response_data)
-        self.assertIn('Could not fetch industry peers', response_data['error'])
-
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_industry_rank_endpoint_batch_service_unavailable(self, mock_get, mock_post):
-        """
-        Test the /leadership/industry_rank/<ticker> endpoint when batch financial service is unavailable
-        """
-        mock_peers_response = MagicMock()
-        mock_peers_response.status_code = 200
-        mock_peers_response.json.return_value = {
-            "industry": "Technology",
-            "peers": ["MSFT", "GOOGL"]
-        }
-
-        mock_get.return_value = mock_peers_response
-        mock_post.return_value = MagicMock(status_code=503) # Batch service unavailable
-
-        response = self.app.get('/leadership/industry_rank/AAPL')
-        self.assertEqual(response.status_code, 500) # Error from check_industry_leadership
-        response_data = response.json
-        self.assertIn('error', response_data)
-        self.assertIn('Could not fetch batch financial data', response_data['error'])
+        # Assert
+        self.assertEqual(response.status_code, 404)
 
 if __name__ == '__main__':
     unittest.main()

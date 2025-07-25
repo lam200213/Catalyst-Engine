@@ -2,7 +2,6 @@ from curl_cffi import requests
 import datetime as dt
 import time # Add time for throttling
 import random # Add random for throttling
-import yfinance as yf
 import pandas as pd
 import logging
 import time
@@ -61,7 +60,7 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None) -> dict
     """
     if isinstance(tickers, str):
         return _get_single_ticker_data(tickers, start_date)
-    
+
     if isinstance(tickers, list):
         results = {}
         for ticker in tickers:
@@ -69,10 +68,9 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None) -> dict
             # Each ticker is fetched individually.
             results[ticker] = _get_single_ticker_data(ticker, start_date=None)
         return results
-    
+
     # Invalid input type
     return None
-
 
 def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | None:
     """
@@ -121,7 +119,7 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
     except Exception as e:
         print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
         return None
-    
+
 # Function to fetch core financial data for Leadership screening
 def get_core_financials(ticker_symbol):
     """
@@ -131,26 +129,22 @@ def get_core_financials(ticker_symbol):
     """
     try:
         start_time = time.time()
-        ticker = yf.Ticker(ticker_symbol)
-        info = ticker.info
-        duration = time.time() - start_time
-        logging.info(f"yfinance call for {ticker_symbol} took {duration:.2f} seconds.")
 
         # Special handling for major indices
         if ticker_symbol in ['^GSPC', '^DJI', 'QQQ']:
             # Get historical data for calculating SMAs and 52-week ranges
-            hist = ticker.history(period="1y")  # Get 1 year of data
-            
-            if hist.empty:
+            hist = _get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
+
+            if not hist:
                 return None
-                
+
             # Calculate required data points
-            current_price = float(info.get('previousClose', hist['Close'].iloc[-1]))
-            sma_50 = float(hist['Close'].tail(50).mean())
-            sma_200 = float(hist['Close'].tail(200).mean()) if len(hist) >= 200 else sma_50
-            high_52_week = float(hist['High'].max())
-            low_52_week = float(hist['Low'].min())
-            
+            current_price = float(hist[-1]['close'])
+            sma_50 = float(pd.DataFrame(hist)['close'].tail(50).mean())
+            sma_200 = float(pd.DataFrame(hist)['close'].tail(200).mean()) if len(hist) >= 200 else sma_50
+            high_52_week = float(pd.DataFrame(hist)['high'].max())
+            low_52_week = float(pd.DataFrame(hist)['low'].min())
+
             data = {
                 'current_price': current_price,
                 'sma_50': sma_50,
@@ -159,20 +153,38 @@ def get_core_financials(ticker_symbol):
                 'low_52_week': low_52_week
             }
         else:
+            # Fetch financial data from Yahoo Finance API
+            url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}?modules=summaryDetail,assetProfile,financialData,defaultKeyStatistics,incomeStatementHistory,balanceSheetHistory,cashflowStatementHistory"
+            headers = {'User-Agent': _get_random_user_agent()}
+            proxy = _get_random_proxy()
+
+            response = requests.get(
+                url,
+                headers=headers,
+                proxies=proxy,
+                impersonate="chrome110",
+                timeout=10
+            )
+
+            if response.status_code != 200:
+                print(f"Yahoo Finance API returned status {response.status_code} for {ticker_symbol}")
+                return None
+
+            info = response.json()['quoteSummary']['result'][0]
+
             # Gracefully handle missing data using .get()
             data = {
-                'marketCap': info.get('marketCap'),
-                'sharesOutstanding': info.get('sharesOutstanding'),
-                'floatShares': info.get('floatShares'),
-                'ipoDate': info.get('ipoDate'),
-                'quarterly_earnings': ticker.quarterly_earnings.reset_index().to_dict('records') if not ticker.quarterly_earnings.empty else [],
-                'quarterly_financials': ticker.quarterly_financials.reset_index().to_dict('records') if not ticker.quarterly_financials.empty else [],
-                'annual_earnings': ticker.earnings.reset_index().to_dict('records') if not ticker.earnings.empty else [],
+                'marketCap': info['summaryDetail'].get('marketCap', {}).get('raw'),
+                'sharesOutstanding': info['summaryDetail'].get('sharesOutstanding', {}).get('raw'),
+                'floatShares': info['defaultKeyStatistics'].get('floatShares', {}).get('raw'),
+                'ipoDate': info['assetProfile'].get('ipoDate', {}).get('fmt'),
+                'quarterly_earnings': info.get('incomeStatementHistory', {}).get('incomeStatementHistory', []),
+                'quarterly_financials': info.get('cashflowStatementHistory', {}).get('cashflowStatements', []),
+                'annual_earnings': info.get('incomeStatementHistory', {}).get('incomeStatementHistory', []),
             }
 
-            # Convert timestamp ipoDate to string if it exists
-            if data['ipoDate'] is not None:
-                data['ipoDate'] = pd.to_datetime(data['ipoDate'], unit='s').strftime('%Y-%m-%d')
+        duration = time.time() - start_time
+        logging.info(f"Yahoo Finance API call for {ticker_symbol} took {duration:.2f} seconds.")
 
         return data
     except Exception as e:
@@ -182,10 +194,10 @@ def get_core_financials(ticker_symbol):
 def get_batch_core_financials(tickers: list[str]) -> dict:
     """
     Fetches core financial data for a list of tickers.
-    
+
     Args:
         tickers: A list of stock symbols to fetch data for.
-        
+
     Returns:
         A dictionary where keys are tickers and values are their core financial data.
         If a ticker's data cannot be fetched, its value will be None.

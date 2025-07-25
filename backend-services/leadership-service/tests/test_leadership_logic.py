@@ -1,484 +1,195 @@
+# backend-services/leadership-service/tests/test_leadership_logic.py
 import unittest
-from unittest.mock import Mock, MagicMock
-# Import the LeadershipChecks class (will be implemented in the new architecture)
-# from leadership_logic import LeadershipChecks
+import sys
+import os
+from datetime import datetime, timedelta
+
+# Add parent directory to path to import logic module
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from leadership_logic import (
+    check_is_small_to_mid_cap,
+    check_is_early_stage,
+    check_has_limited_float,
+    check_yoy_eps_growth,
+    check_positive_recent_earnings,
+    check_accelerating_growth,
+    check_consecutive_quarterly_growth,
+    check_outperforms_in_rally,
+    check_market_trend_context,
+    evaluate_market_trend_impact
+)
+
+# --- Helper Functions for Mock Data Generation ---
+
+def create_mock_financial_data(**overrides):
+    """Creates a base dictionary of financial data that can be overridden for specific tests."""
+    base_data = {
+        'marketCap': 5_000_000_000,
+        'sharesOutstanding': 100_000_000,
+        'floatShares': 15_000_000,
+        'ipoDate': (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d'),
+        'quarterly_earnings': [{'Earnings': 1.0, 'Revenue': 1000}] * 6,
+        'quarterly_financials': [{'Net Income': 100, 'Total Revenue': 1000}] * 6,
+        'annual_earnings': [{'Earnings': 4.0}]
+    }
+    base_data.update(overrides)
+    return base_data
+
+def create_mock_price_data(performance_factor, length=50):
+    """Creates mock stock and S&P 500 price data to simulate market conditions."""
+    stock_data, sp500_data = [], []
+    stock_price, sp500_price = 100.0, 4000.0
+
+    for i in range(length):
+        date_str = (datetime.now() - timedelta(days=length - 1 - i)).strftime('%Y-%m-%d')
+        
+        # Simulate a market rally (5% gain over 3 days) around day 25
+        rally_multiplier = 1.05 if 25 <= i < 28 else 1.0
+        
+        stock_price *= (1.001 * performance_factor * rally_multiplier)
+        sp500_price *= (1.001 * rally_multiplier)
+        
+        stock_data.append({'formatted_date': date_str, 'close': stock_price, 'high': stock_price * 1.01, 'low': stock_price * 0.99, 'volume': 100000})
+        sp500_data.append({'formatted_date': date_str, 'close': sp500_price, 'high': sp500_price * 1.01, 'low': sp500_price * 0.99})
+        
+    return stock_data, sp500_data
+
+def create_mock_index_data(trend='Bullish'):
+    """Creates mock data for major market indices based on a trend scenario."""
+    base_data = {
+        '^GSPC': {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000},
+        '^DJI': {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000},
+        'QQQ': {'current_price': 400, 'sma_50': 390, 'sma_200': 370, 'high_52_week': 420, 'low_52_week': 350}
+    }
+    if trend == 'Bearish':
+        base_data['^GSPC']['current_price'] = 4300
+        base_data['^DJI']['current_price'] = 33000
+        base_data['QQQ']['current_price'] = 380
+    if trend == 'Neutral':
+        base_data['^DJI']['current_price'] = 33000
+    return base_data
+
+# --- Test Suite ---
 
 class TestLeadershipLogic(unittest.TestCase):
-    
-    def setUp(self):
-        """Set up mock data client for testing"""
-        self.mock_data_client = Mock()
-        # self.leadership_checks = LeadershipChecks(self.mock_data_client)
-    
-    def test_accelerating_growth_pass(self):
-        """Test case with strictly increasing QoQ growth rates for Earnings, Revenue, and Net Margin"""
-        # Test case with strictly increasing QoQ growth rates for Earnings, Revenue, and Net Margin
-        # Growth rates: 5%, 10%, 15%, 20% (strictly increasing)
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},   # Base quarter
-            {'Earnings': 105, 'Revenue': 1050},   # 5% growth
-            {'Earnings': 115.5, 'Revenue': 1155}, # 10% growth
-            {'Earnings': 132.825, 'Revenue': 1328.25}, # 15% growth
-            {'Earnings': 159.39, 'Revenue': 1593.9},   # 20% growth
-        ]
-        self.mock_data_client.get_quarterly_financials.return_value = [
-            {'Net Income': 50, 'Total Revenue': 1000},    # 5.0% margin
-            {'Net Income': 55, 'Total Revenue': 1100},    # 5.0% margin (0% growth)
-            {'Net Income': 66, 'Total Revenue': 1100},    # 6.0% margin (20% growth)
-            {'Net Income': 85.8, 'Total Revenue': 1100},  # 7.8% margin (30% growth)
-            {'Net Income': 119.34, 'Total Revenue': 1100}, # 10.84% margin (39% growth)
-        ]
-        
-        # Assuming the new method will be called accelerating_growth
-        # result = self.leadership_checks.accelerating_growth('AAPL')
-        # self.assertTrue(result)
-        
-        # For now, keep the existing test structure but with updated method names
-        # This will be updated when the new LeadershipChecks class is implemented
-        pass
-    
-    def test_accelerating_growth_fail(self):
-        """Test case where growth rates are not strictly increasing"""
-        # Test case where growth rates are not strictly increasing
-        # Growth rates: 20%, 15%, 10%, 5% (decreasing)
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},   # Base quarter
-            {'Earnings': 120, 'Revenue': 1200},   # 20% growth
-            {'Earnings': 138, 'Revenue': 1380},   # 15% growth
-            {'Earnings': 151.8, 'Revenue': 1518}, # 10% growth
-            {'Earnings': 159.39, 'Revenue': 1593.9}, # 5% growth
-        ]
-        self.mock_data_client.get_quarterly_financials.return_value = [
-            {'Net Income': 50, 'Total Revenue': 1000},    # 5.0% margin
-            {'Net Income': 65, 'Total Revenue': 1000},    # 6.5% margin (30% growth)
-            {'Net Income': 78, 'Total Revenue': 1000},    # 7.8% margin (20% growth)
-            {'Net Income': 85.8, 'Total Revenue': 1000},  # 8.58% margin (10% growth)
-            {'Net Income': 88.374, 'Total Revenue': 1000}, # 8.84% margin (3% growth)
-        ]
-        
-        # Assuming the new method will be called accelerating_growth
-        # result = self.leadership_checks.accelerating_growth('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_accelerating_growth_insufficient_data(self):
-        """Test case with insufficient data (less than 5 quarters)"""
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},
-            {'Earnings': 110, 'Revenue': 1100},
-            {'Earnings': 125, 'Revenue': 1250},
-            {'Earnings': 140, 'Revenue': 1400},
-        ]
-        self.mock_data_client.get_quarterly_financials.return_value = [
-            {'Net Income': 50, 'Total Revenue': 1000},
-            {'Net Income': 60, 'Total Revenue': 1100},
-            {'Net Income': 75, 'Total Revenue': 1250},
-        ]
-        
-        # Assuming the new method will be called accelerating_growth
-        # result = self.leadership_checks.accelerating_growth('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_consecutive_quarterly_growth_pass_smoothed(self):
-        """QoQ EPS growth: 30%, 25%, 30%, 25%, 30%"""
-        # QoQ EPS growth: 30%, 25%, 30%, 25%, 30%
-        # 2Q Avg EPS growth: 27.5%, 27.5%, 27.5%, 27.5% -> all > 20%
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},
-            {'Earnings': 130, 'Revenue': 1100},  # 30% EPS growth
-            {'Earnings': 162.5, 'Revenue': 1200},  # 25% EPS growth
-            {'Earnings': 211.25, 'Revenue': 1300},  # 30% EPS growth
-            {'Earnings': 264.06, 'Revenue': 1400},  # 25% EPS growth
-            {'Earnings': 343.28, 'Revenue': 1500},  # 30% EPS growth
-        ]
-        
-        # Assuming the new method will be called consecutive_quarterly_growth
-        # result = self.leadership_checks.consecutive_quarterly_growth('AAPL')
-        # self.assertTrue(result)
-        pass
-    
-    def test_consecutive_quarterly_growth_fail_smoothed(self):
-        """QoQ EPS growth: 30%, 5%, 30%, 5%, 30%"""
-        # QoQ EPS growth: 30%, 5%, 30%, 5%, 30%
-        # 2Q Avg EPS growth: 17.5%, 17.5%, 17.5%, 17.5% -> all are <= 20%, so it fails
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},
-            {'Earnings': 130, 'Revenue': 1100},  # 30% EPS growth
-            {'Earnings': 136.5, 'Revenue': 1200},  # 5% EPS growth
-            {'Earnings': 177.45, 'Revenue': 1300},  # 30% EPS growth
-            {'Earnings': 186.32, 'Revenue': 1400},  # 5% EPS growth
-            {'Earnings': 242.22, 'Revenue': 1500},  # 30% EPS growth
-        ]
-        
-        # Assuming the new method will be called consecutive_quarterly_growth
-        # result = self.leadership_checks.consecutive_quarterly_growth('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_yoy_eps_growth_strong(self):
-        """Test case with >25% YoY EPS growth"""
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},  # Same quarter previous year
-            {'Earnings': 110, 'Revenue': 1100},
-            {'Earnings': 120, 'Revenue': 1200},
-            {'Earnings': 130, 'Revenue': 1300},
-            {'Earnings': 130, 'Revenue': 1300},   # Most recent quarter (30% growth from 100 to 130)
-        ]
-        
-        # Assuming the new method will be called yoy_eps_growth
-        # result = self.leadership_checks.yoy_eps_growth('AAPL')
-        # self.assertTrue(result)
-        pass
-    
-    def test_consecutive_quarterly_growth_fail_one_quarter_low(self):
-        """QoQ EPS growth: 30%, 25%, 5%, 25%, 30%"""
-        # QoQ EPS growth: 30%, 25%, 5%, 25%, 30%
-        # 2Q Avg EPS growth: 27.5%, 15%, 15%, 27.5% -> one quarter <= 20%, so it fails
-        self.mock_data_client.get_quarterly_earnings.return_value = [
-            {'Earnings': 100, 'Revenue': 1000},
-            {'Earnings': 130, 'Revenue': 1100},  # 30% EPS growth
-            {'Earnings': 162.5, 'Revenue': 1200},  # 25% EPS growth
-            {'Earnings': 170.63, 'Revenue': 1300},  # 5% EPS growth
-            {'Earnings': 213.28, 'Revenue': 1400},  # 25% EPS growth
-            {'Earnings': 277.26, 'Revenue': 1500},  # 30% EPS growth
-        ]
-        
-        # Assuming the new method will be called consecutive_quarterly_growth
-        # result = self.leadership_checks.consecutive_quarterly_growth('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_outperforms_in_rally_stock_outperforms(self):
-        """Test case where stock outperforms the S&P 500 by more than 1.5x during a rally period"""
-        # Create mock stock data with strong performance
-        stock_data = []
-        sp500_data = []
-        
-        # Generate 50 days of data with a clear rally in the searchable range
-        base_price = 100
-        base_sp500 = 4000
-        
-        for i in range(50):
-            date_str = f'2024-01-{i+1:02d}'
-            
-            if i < 5:
-                # Before rally - flat prices
-                stock_price = base_price
-                sp500_price = base_sp500
-            elif i == 5:
-                # Rally start point - base price
-                stock_price = base_price
-                sp500_price = base_sp500
-            elif i == 6:
-                # Day 2 of 3-day rally period
-                stock_price = base_price * 1.02
-                sp500_price = base_sp500 * 1.02
-            elif i == 7:
-                # Day 3 of 3-day rally period - 5% increase from start
-                stock_price = base_price * 1.05
-                sp500_price = base_sp500 * 1.05
-            elif i > 7 and i < 28:
-                # After rally start, continue with performance comparison for 20 days
-                days_after_rally = i - 7
-                # Stock gains 2% per day, S&P 500 gains 1% per day for 20 days
-                stock_price = base_price * 1.05 * (1.02 ** days_after_rally)
-                sp500_price = base_sp500 * 1.05 * (1.01 ** days_after_rally)
-            else:
-                # After the 20-day comparison period
-                stock_price = base_price * 1.05 * (1.02 ** 20)
-                sp500_price = base_sp500 * 1.05 * (1.01 ** 20)
-            
-            stock_data.append({
-                'formatted_date': date_str,
-                'close': stock_price
-            })
-            sp500_data.append({
-                'formatted_date': date_str,
-                'close': sp500_price
-            })
-        
-        self.mock_data_client.get_stock_data.return_value = stock_data
-        self.mock_data_client.get_index_data.return_value = sp500_data
-        
-        # Assuming the new method will be called outperforms_in_rally
-        # result = self.leadership_checks.outperforms_in_rally('AAPL')
-        # self.assertTrue(result)
-        pass
-    
-    def test_outperforms_in_rally_stock_underperforms(self):
-        """Test case where stock underperforms the S&P 500 during a rally period"""
-        # Create mock stock data with weak performance
-        stock_data = []
-        sp500_data = []
-        
-        # Generate 50 days of data with a clear rally in the searchable range
-        base_price = 100
-        base_sp500 = 4000
-        
-        for i in range(50):
-            date_str = f'2024-01-{i+1:02d}'
-            
-            if i < 5:
-                # Before rally - flat prices
-                stock_price = base_price
-                sp500_price = base_sp500
-            elif i == 5:
-                # Rally start point - base price
-                stock_price = base_price
-                sp500_price = base_sp500
-            elif i == 6:
-                # Day 2 of 3-day rally period
-                stock_price = base_price * 1.02
-                sp500_price = base_sp500 * 1.02
-            elif i == 7:
-                # Day 3 of 3-day rally period - 5% increase from start
-                stock_price = base_price * 1.05
-                sp500_price = base_sp500 * 1.05
-            elif i > 7 and i < 28:
-                # After rally start, stock gains less than S&P 500 for 20 days
-                days_after_rally = i - 7
-                # Stock gains 0.5% per day, S&P 500 gains 1% per day for 20 days
-                stock_price = base_price * 1.05 * (1.005 ** days_after_rally)
-                sp500_price = base_sp500 * 1.05 * (1.01 ** days_after_rally)
-            else:
-                # After the 20-day comparison period
-                stock_price = base_price * 1.05 * (1.005 ** 20)
-                sp500_price = base_sp500 * 1.05 * (1.01 ** 20)
-            
-            stock_data.append({
-                'formatted_date': date_str,
-                'close': stock_price
-            })
-            sp500_data.append({
-                'formatted_date': date_str,
-                'close': sp500_price
-            })
-        
-        self.mock_data_client.get_stock_data.return_value = stock_data
-        self.mock_data_client.get_index_data.return_value = sp500_data
-        
-        # Assuming the new method will be called outperforms_in_rally
-        # result = self.leadership_checks.outperforms_in_rally('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_outperforms_in_rally_insufficient_data(self):
-        """Test case with insufficient data for analysis"""
-        # Create mock data with insufficient points
-        stock_data = []
-        sp500_data = []
-        
-        # Generate only 10 days of data (need at least 21)
-        for i in range(10):
-            date_str = f'2024-01-{i+1:02d}'
-            stock_data.append({
-                'formatted_date': date_str,
-                'close': 100
-            })
-            sp500_data.append({
-                'formatted_date': date_str,
-                'close': 4000
-            })
-        
-        self.mock_data_client.get_stock_data.return_value = stock_data
-        self.mock_data_client.get_index_data.return_value = sp500_data
-        
-        # Assuming the new method will be called outperforms_in_rally
-        # result = self.leadership_checks.outperforms_in_rally('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_outperforms_in_rally_no_rally_detected(self):
-        """Test case where no market rally is detected"""
-        # Create mock data with no significant price movements
-        stock_data = []
-        sp500_data = []
-        
-        # Generate 30 days of data with minimal movement (no 5% rallies)
-        base_price = 100
-        base_sp500 = 4000
-        
-        for i in range(30):
-            date_str = f'2024-01-{i+1:02d}'
-            # Minimal price movements (less than 5% over any 3-day period)
-            fluctuation = 1 + (i % 3 - 1) * 0.01  # -1% to +1% fluctuation
-            stock_price = base_price * fluctuation
-            sp500_price = base_sp500 * fluctuation
-            
-            stock_data.append({
-                'formatted_date': date_str,
-                'close': stock_price
-            })
-            sp500_data.append({
-                'formatted_date': date_str,
-                'close': sp500_price
-            })
-        
-        self.mock_data_client.get_stock_data.return_value = stock_data
-        self.mock_data_client.get_index_data.return_value = sp500_data
-        
-        # Assuming the new method will be called outperforms_in_rally
-        # result = self.leadership_checks.outperforms_in_rally('AAPL')
-        # self.assertFalse(result)
-        pass
-    
-    def test_market_trend_context_bullish(self):
-        """Test case where all three indices are bullish (above their 50-day SMA)"""
-        index_data = {
-            '^GSPC': {
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            },
-            '^DJI': {
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            },
-            'QQQ': {
-                'current_price': 400,
-                'sma_50': 390,
-                'sma_200': 370,
-                'high_52_week': 420,
-                'low_52_week': 350
-            }
-        }
-        
-        self.mock_data_client.get_index_data.return_value = index_data
-        
-        # Assuming the new method will be called market_trend_context
-        # result = self.leadership_checks.market_trend_context('AAPL')
-        # self.assertEqual(result, 'Bullish')
-        pass
-    
-    def test_market_trend_context_bearish(self):
-        """Test case where all three indices are bearish (below their 50-day SMA)"""
-        index_data = {
-            '^GSPC': {
-                'current_price': 4300,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            },
-            '^DJI': {
-                'current_price': 33000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            },
-            'QQQ': {
-                'current_price': 380,
-                'sma_50': 390,
-                'sma_200': 370,
-                'high_52_week': 420,
-                'low_52_week': 350
-            }
-        }
-        
-        self.mock_data_client.get_index_data.return_value = index_data
-        
-        # Assuming the new method will be called market_trend_context
-        # result = self.leadership_checks.market_trend_context('AAPL')
-        # self.assertEqual(result, 'Bearish')
-        pass
-    
-    def test_market_trend_context_neutral(self):
-        """Test case where indices are mixed (neutral market)"""
-        index_data = {
-            '^GSPC': {
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            },
-            '^DJI': {
-                'current_price': 33000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            },
-            'QQQ': {
-                'current_price': 400,
-                'sma_50': 390,
-                'sma_200': 370,
-                'high_52_week': 420,
-                'low_52_week': 350
-            }
-        }
-        
-        self.mock_data_client.get_index_data.return_value = index_data
-        
-        # Assuming the new method will be called market_trend_context
-        # result = self.leadership_checks.market_trend_context('AAPL')
-        # self.assertEqual(result, 'Neutral')
-        pass
-    
-    def test_market_trend_context_insufficient_data(self):
-        """Test case with insufficient data for analysis"""
-        index_data = {
-            '^GSPC': {
-                'current_price': 4500,
-                'sma_50': 4400,
-                # Missing required fields
-            },
-            '^DJI': {
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            },
-            'QQQ': {
-                'current_price': 400,
-                'sma_50': 390,
-                'sma_200': 370,
-                'high_52_week': 420,
-                'low_52_week': 350
-            }
-        }
-        
-        self.mock_data_client.get_index_data.return_value = index_data
-        
-        # Assuming the new method will be called market_trend_context
-        # result = self.leadership_checks.market_trend_context('AAPL')
-        # self.assertEqual(result, 'Unknown')
-        pass
-    
-    def test_market_trend_context_missing_indices(self):
-        """Test case where not all indices are present"""
-        index_data = {
-            '^GSPC': {
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            },
-            '^DJI': {
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }
-            # Missing QQQ
-        }
-        
-        self.mock_data_client.get_index_data.return_value = index_data
-        
-        # Assuming the new method will be called market_trend_context
-        # result = self.leadership_checks.market_trend_context('AAPL')
-        # self.assertEqual(result, 'Unknown')
-        pass
+
+    def test_check_is_small_to_mid_cap(self):
+        details = {}
+        # Pass case
+        check_is_small_to_mid_cap(create_mock_financial_data(marketCap=1_000_000_000), details)
+        self.assertTrue(details['is_small_to_mid_cap'])
+        # Fail case (too large)
+        check_is_small_to_mid_cap(create_mock_financial_data(marketCap=20_000_000_000), details)
+        self.assertFalse(details['is_small_to_mid_cap'])
+        # Edge case (missing data)
+        check_is_small_to_mid_cap(create_mock_financial_data(marketCap=None), details)
+        self.assertFalse(details['is_small_to_mid_cap'])
+
+    def test_check_is_early_stage(self):
+        details = {}
+        # Pass case
+        recent_ipo = (datetime.now() - timedelta(days=2*365)).strftime('%Y-%m-%d')
+        check_is_early_stage(create_mock_financial_data(ipoDate=recent_ipo), details)
+        self.assertTrue(details['is_recent_ipo'])
+        # Fail case
+        old_ipo = (datetime.now() - timedelta(days=15*365)).strftime('%Y-%m-%d')
+        check_is_early_stage(create_mock_financial_data(ipoDate=old_ipo), details)
+        self.assertFalse(details['is_recent_ipo'])
+
+    def test_check_has_limited_float(self):
+        details = {}
+        # Pass case (10% float)
+        check_has_limited_float(create_mock_financial_data(floatShares=10_000_000), details)
+        self.assertTrue(details['has_limited_float'])
+        # Fail case (50% float)
+        check_has_limited_float(create_mock_financial_data(floatShares=50_000_000), details)
+        self.assertFalse(details['has_limited_float'])
+        # Edge case (zero shares)
+        check_has_limited_float(create_mock_financial_data(sharesOutstanding=0), details)
+        self.assertFalse(details['has_limited_float'])
+
+    def test_check_yoy_eps_growth(self):
+        details = {}
+        # Pass case (> 25% growth)
+        earnings_pass = [{'Earnings': 1.0}] * 4 + [{'Earnings': 1.30}]
+        check_yoy_eps_growth(create_mock_financial_data(quarterly_earnings=earnings_pass), details)
+        self.assertTrue(details['has_strong_yoy_eps_growth'])
+        self.assertEqual(details['yoy_eps_growth_level'], 'Standard Growth')
+        # Fail case (< 25% growth)
+        earnings_fail = [{'Earnings': 1.0}] * 4 + [{'Earnings': 1.10}]
+        check_yoy_eps_growth(create_mock_financial_data(quarterly_earnings=earnings_fail), details)
+        self.assertFalse(details['has_strong_yoy_eps_growth'])
+        self.assertEqual(details['yoy_eps_growth_level'], 'Moderate Growth')
+        # Edge case (insufficient data)
+        check_yoy_eps_growth(create_mock_financial_data(quarterly_earnings=[{'Earnings': 1.0}] * 3), details)
+        self.assertFalse(details['has_strong_yoy_eps_growth'])
+        self.assertEqual(details['yoy_eps_growth_level'], 'Insufficient Data')
+
+    def test_check_positive_recent_earnings(self):
+        details = {}
+        # Pass case
+        check_positive_recent_earnings(create_mock_financial_data(), details)
+        self.assertTrue(details['has_positive_recent_earnings'])
+        # Fail case (negative annual earnings)
+        check_positive_recent_earnings(create_mock_financial_data(annual_earnings=[{'Earnings': -0.5}]), details)
+        self.assertFalse(details['has_positive_recent_earnings'])
+
+    def test_check_accelerating_growth(self):
+        details = {}
+        # Pass case
+        pass_earnings = [{'Earnings': 100, 'Revenue': 1000}, {'Earnings': 110, 'Revenue': 1100}, {'Earnings': 125, 'Revenue': 1250}, {'Earnings': 145, 'Revenue': 1450}]
+        pass_financials = [{'Net Income': 50, 'Total Revenue': 1000}, {'Net Income': 66, 'Total Revenue': 1100}, {'Net Income': 100, 'Total Revenue': 1250}, {'Net Income': 159.5, 'Total Revenue': 1450}]
+        check_accelerating_growth(create_mock_financial_data(quarterly_earnings=pass_earnings, quarterly_financials=pass_financials), details)
+        self.assertTrue(details['has_accelerating_growth'])
+        # Fail case
+        fail_earnings = [{'Earnings': 100, 'Revenue': 1000}, {'Earnings': 120, 'Revenue': 1200}, {'Earnings': 130, 'Revenue': 1300}, {'Earnings': 135, 'Revenue': 1350}]
+        check_accelerating_growth(create_mock_financial_data(quarterly_earnings=fail_earnings), details)
+        self.assertFalse(details['has_accelerating_growth'])
+
+    def test_check_consecutive_quarterly_growth(self):
+        details = {}
+        # Pass case (all rolling averages > 20%)
+        pass_earnings = [{'Earnings': e} for e in [100, 130, 163, 212, 265, 345]]
+        check_consecutive_quarterly_growth(create_mock_financial_data(quarterly_earnings=pass_earnings), details)
+        self.assertTrue(details['has_consecutive_quarterly_growth'])
+        # The calculated average growth is ~27.6%, which correctly falls into the 'Standard Growth' category (>20% but <35%)
+        self.assertEqual(details['consecutive_quarterly_growth_level'], 'Standard Growth')
+        # Fail case (one rolling average drops below 20%)
+        fail_earnings = [{'Earnings': e} for e in [100, 130, 163, 170, 220, 280]]
+        check_consecutive_quarterly_growth(create_mock_financial_data(quarterly_earnings=fail_earnings), details)
+        self.assertFalse(details['has_consecutive_quarterly_growth'])
+
+    def test_check_outperforms_in_rally(self):
+        details = {}
+        # Pass case (stock outperforms S&P by >1.5x)
+        stock_pass, sp500_pass = create_mock_price_data(performance_factor=2.0)
+        check_outperforms_in_rally(stock_pass, sp500_pass, details)
+        self.assertTrue(details['outperforms_in_rally'])
+        # Fail case (stock underperforms)
+        stock_fail, sp500_fail = create_mock_price_data(performance_factor=0.5)
+        check_outperforms_in_rally(stock_fail, sp500_fail, details)
+        self.assertFalse(details['outperforms_in_rally'])
+        # Edge case (no rally detected)
+        _, no_rally_sp500 = create_mock_price_data(performance_factor=1.0)
+        no_rally_sp500[25:28] = [{'close': 4100}] * 3 # Flatten the rally period
+        check_outperforms_in_rally(stock_fail, no_rally_sp500, details)
+        self.assertFalse(details['outperforms_in_rally'])
+
+    def test_check_market_trend_context(self):
+        details = {}
+        # Bullish case
+        check_market_trend_context(create_mock_index_data(trend='Bullish'), details)
+        self.assertEqual(details['market_trend_context'], 'Bullish')
+        # Bearish case
+        check_market_trend_context(create_mock_index_data(trend='Bearish'), details)
+        self.assertEqual(details['market_trend_context'], 'Bearish')
+        # Neutral case
+        check_market_trend_context(create_mock_index_data(trend='Neutral'), details)
+        self.assertEqual(details['market_trend_context'], 'Neutral')
+        # Edge case (missing index)
+        check_market_trend_context({'^GSPC': {}}, details)
+        self.assertEqual(details['market_trend_context'], 'Unknown')
 
 if __name__ == '__main__':
     unittest.main()

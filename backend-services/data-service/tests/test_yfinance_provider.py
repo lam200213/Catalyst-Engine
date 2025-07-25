@@ -1,4 +1,5 @@
 # backend-services/data-service/tests/test_yfinance_provider.py
+# Tests the price history fetching (get_stock_data)
 import unittest
 from unittest.mock import patch, MagicMock
 import os

@@ -2,6 +2,7 @@ import time
 import requests
 from flask import Flask, jsonify
 import os
+import re # regex import for input validation
 from leadership_logic import (
     check_accelerating_growth,
     check_yoy_eps_growth,
@@ -15,7 +16,6 @@ from leadership_logic import (
     evaluate_market_trend_impact,
     check_industry_leadership
 )
-
 app = Flask(__name__)
 
 # Configuration
@@ -23,20 +23,21 @@ DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 5000))
 
 def fetch_financial_data(ticker):
-    """Fetch financial data from data service"""
+    """
+    Fetch financial data from data service, handling errors gracefully.
+    Returns a tuple of (data, status_code).
+    """
     try:
-        # Fetch core financial data
         financials_url = f"{DATA_SERVICE_URL}/financials/core/{ticker}"
         financials_response = requests.get(financials_url, timeout=10)
         
         if financials_response.status_code != 200:
-            return None
+            return None, financials_response.status_code
             
-        financial_data = financials_response.json()
-        return financial_data
-    except Exception as e:
+        return financials_response.json(), 200
+    except requests.exceptions.RequestException as e:
         print(f"Error fetching financial data for {ticker}: {e}")
-        return None
+        return None, 503 # Service Unavailable
 
 def fetch_price_data(ticker):
     """Fetch price data from data service"""
@@ -80,15 +81,18 @@ def leadership_analysis(ticker):
     """Main endpoint for leadership screening analysis"""
     start_time = time.time()
     
-    # Validate ticker parameter
-    if not ticker or not isinstance(ticker, str):
-        return jsonify({'error': 'Invalid ticker parameter'}), 400
+    # Input validation to prevent path traversal
+    if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()):
+        return jsonify({'error': 'Invalid ticker format'}), 400
     
-    # Fetch all required data
-    financial_data = fetch_financial_data(ticker)
+    # Refactored data fetching and error handling
+    financial_data, status = fetch_financial_data(ticker)
     if not financial_data:
-        return jsonify({'error': 'Unable to fetch financial data'}), 503
-    
+        if status == 503:
+            return jsonify({'error': 'Service unavailable: data-service'}), 503
+        else:
+            return jsonify({'error': f'Failed to fetch data from data-service (status {status})'}), 502
+
     stock_data = fetch_price_data(ticker)
     if stock_data is None:
         return jsonify({'error': 'Failed to fetch price data due to a connection or service error'}), 503
@@ -157,11 +161,13 @@ def leadership_analysis(ticker):
     
     # Calculate execution time
     execution_time = time.time() - start_time
+    passes_check = all(value for key, value in results.items() if isinstance(value, bool))
     
     # Prepare response
     response = {
         'ticker': ticker,
-        'results': results,
+        'passes': passes_check,
+        'details': results, # Rename 'results' to 'details' for consistency with plan
         'metadata': {
             'execution_time': round(execution_time, 3)
         }
@@ -170,7 +176,7 @@ def leadership_analysis(ticker):
     # Check industry leadership
     leadership_result = check_industry_leadership(ticker)
     if "rank" in leadership_result:
-        response['results']['is_industry_leader'] = leadership_result['rank'] <= 3
+        response['details']['is_industry_leader'] = leadership_result['rank'] <= 3
     
     return jsonify(response)
 
