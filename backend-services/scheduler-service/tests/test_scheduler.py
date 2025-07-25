@@ -26,7 +26,7 @@ class TestScheduler(unittest.TestCase):
 
         def get_side_effect(url, **kwargs):
             mock_resp = MagicMock()
-            #  Corrected endpoint check for ticker-service
+
             if 'ticker-service' in url:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = ['PASS_TICKER', 'FAIL_VCP_TICKER', 'FAIL_TREND_TICKER']
@@ -38,6 +38,16 @@ class TestScheduler(unittest.TestCase):
                 self.assertEqual(kwargs.get('params'), {'mode': 'fast'})
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = {"vcp_pass": False, "ticker": "FAIL_VCP_TICKER"}
+            elif 'industry/peers/PASS_TICKER' in url: # For _count_unique_industries
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"industry": "Tech"}
+            elif 'leadership/PASS_TICKER' in url: # For _run_leadership_screening
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"results": {
+                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
+                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
+                    'outperforms_in_rally': True
+                }}
             else:
                 mock_resp.status_code = 404
                 mock_resp.json.return_value = {"error": "URL not mocked"}
@@ -76,7 +86,6 @@ class TestScheduler(unittest.TestCase):
         self.assertIn('job_id', summary_doc)
         self.assertEqual(summary_doc['final_candidates_count'], 1)
 
-    #  Corrected patching for this test
     @patch('app.get_db_collections')
     @patch('app.requests.post')
     @patch('app.requests.get')
@@ -96,7 +105,6 @@ class TestScheduler(unittest.TestCase):
         #  Check that insert_many was not called on the results collection mock
         mock_get_db_collections.return_value[0].insert_many.assert_not_called()
 
-    #  Corrected patching for this test
     @patch('app.get_db_collections')
     @patch('app.requests.post')
     @patch('app.requests.get')
@@ -112,7 +120,6 @@ class TestScheduler(unittest.TestCase):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        #  Corrected assertion key
         self.assertEqual(json_data['trend_screen_survivors_count'], 0)
         self.assertEqual(json_data['final_candidates_count'], 0)
         mock_get_db_collections.return_value[0].insert_many.assert_not_called()
@@ -177,6 +184,16 @@ class TestScheduler(unittest.TestCase):
             elif 'analyze/DB_FAIL_TICKER' in url:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = {"vcp_pass": True, "ticker": "DB_FAIL_TICKER"}
+            elif 'industry/peers/DB_FAIL_TICKER' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"industry": "Finance"}
+            elif 'leadership/DB_FAIL_TICKER' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"results": {
+                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
+                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
+                    'outperforms_in_rally': True
+                }}
             else:
                 mock_resp.status_code = 404
             return mock_resp
@@ -196,7 +213,6 @@ class TestScheduler(unittest.TestCase):
         mock_results_collection.insert_many.assert_called_once()
         mock_jobs_collection.update_one.assert_called_once()
 
-    #  Corrected patching for this test
     @patch('builtins.print')
     @patch('app.get_db_collections')
     @patch('app.requests.post')
@@ -218,6 +234,16 @@ class TestScheduler(unittest.TestCase):
             elif 'analyze/LOG_FAIL_VCP' in url:
                 mock_resp.status_code = 200
                 mock_resp.json.return_value = {"vcp_pass": False, "ticker": "LOG_FAIL_VCP"}
+            elif f'industry/peers/{PASS_TICKER}' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"industry": "Logging"}
+            elif f'leadership/{PASS_TICKER}' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"results": {
+                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
+                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
+                    'outperforms_in_rally': True
+                }}
             else:
                 mock_resp.status_code = 404
             return mock_resp
@@ -244,7 +270,6 @@ class TestScheduler(unittest.TestCase):
         self.assertTrue(any("Stage 2 (VCP Screen) passed: 1 tickers." in call for call in log_calls))
         self.assertTrue(any("Inserted 1 documents into the database." in call for call in log_calls))
 
-    #  Corrected patching for this test
     @patch('builtins.print')
     @patch('app.get_db_collections')
     @patch('app.requests.post')
@@ -265,6 +290,16 @@ class TestScheduler(unittest.TestCase):
             elif '/analyze/BAD_JSON_TICKER' in url:
                 mock_resp.status_code = 200
                 mock_resp.json.side_effect = requests.exceptions.JSONDecodeError("Expecting value", "doc", 0)
+            elif '/industry/peers/PASS_TICKER' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"industry": "Tech"}
+            elif '/leadership/PASS_TICKER' in url:
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"results": {
+                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
+                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
+                    'outperforms_in_rally': True
+                }}
             else:
                 mock_resp.status_code = 404
                 mock_resp.json.return_value = {"error": "URL not mocked"}

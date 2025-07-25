@@ -1,6 +1,7 @@
 import time
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
+import os
 from leadership_logic import (
     check_accelerating_growth,
     check_yoy_eps_growth,
@@ -17,8 +18,9 @@ from leadership_logic import (
 
 app = Flask(__name__)
 
-# Data service URL from environment or default
-DATA_SERVICE_URL = "http://data-service:3001"
+# Configuration
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
+PORT = int(os.getenv("PORT", 5000))
 
 def fetch_financial_data(ticker):
     """Fetch financial data from data service"""
@@ -181,8 +183,7 @@ def industry_rank_analysis(ticker):
     if "error" in result:
         status_code = result.get("status_code", 500)
         return jsonify({"error": result["error"]}), status_code
-    
     return jsonify(result), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=PORT)

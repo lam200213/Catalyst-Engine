@@ -529,7 +529,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         self.assertEqual(response2.status_code, 200)
         
         # Both responses should be identical
-        self.assertEqual(response1.json, response2.json)
+        # Compare only the 'results' part of the JSON, ignoring the volatile 'metadata'
+        self.assertEqual(response1.json['results'], response2.json['results'])
 
     # New tests for orchestrated check execution
     @patch('app.time.time', side_effect=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) # Mock time.time() for non-zero execution time

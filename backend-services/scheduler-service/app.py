@@ -118,6 +118,83 @@ def _run_vcp_analysis(job_id, tickers):
     print(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
     return final_candidates
 
+def _count_unique_industries(job_id, vcp_survivors):
+    """Count unique industries from VCP survivors."""
+    if not vcp_survivors:
+        print(f"Job {job_id}: No VCP survivors to process for industry counting.")
+        return 0
+    
+    unique_industries = set()
+    for candidate in vcp_survivors:
+        ticker = candidate.get('ticker')
+        if not ticker:
+            continue
+            
+        try:
+            # Call the data service to get industry information
+            resp = requests.get(f"{DATA_SERVICE_URL}/industry/peers/{ticker}", timeout=30)
+            if resp.status_code == 200:
+                try:
+                    industry_data = resp.json()
+                    industry = industry_data.get('industry')
+                    if industry:
+                        unique_industries.add(industry)
+                except requests.exceptions.JSONDecodeError as e:
+                    print(f"Warning: Job {job_id}: Could not decode JSON for industry data of {ticker}: {e}. Skipping.")
+                    continue
+        except requests.exceptions.RequestException as e:
+            print(f"Warning: Job {job_id}: Could not fetch industry data for {ticker}: {e}. Skipping.")
+            continue
+    
+    unique_count = len(unique_industries)
+    print(f"Job {job_id}: Counted {unique_count} unique industries from {len(vcp_survivors)} VCP survivors.")
+    return unique_count
+
+def _run_leadership_screening(job_id, vcp_survivors):
+    """Run leadership screening on VCP survivors."""
+    if not vcp_survivors:
+        print(f"Job {job_id}: Skipping leadership screening, no VCP survivors.")
+        return []
+    
+    leadership_candidates = []
+    for candidate in vcp_survivors:
+        ticker = candidate.get('ticker')
+        if not ticker:
+            continue
+            
+        try:
+            # Call the leadership service for screening
+            resp = requests.get(f"{LEADERSHIP_SERVICE_URL}/leadership/{ticker}", timeout=60)
+            if resp.status_code == 200:
+                try:
+                    result = resp.json()
+                    # Check if the candidate passes leadership criteria
+                    results = result.get('results', {})
+                    # A candidate passes if they meet several key leadership criteria
+                    passes_leadership = (
+                        results.get('is_small_to_mid_cap', False) and
+                        results.get('has_strong_yoy_eps_growth', False) and
+                        results.get('has_consecutive_quarterly_growth', False) and
+                        results.get('has_positive_recent_earnings', False) and
+                        results.get('outperforms_in_rally', False)
+                    )
+                    
+                    if passes_leadership:
+                        # Add the leadership results to the candidate info
+                        candidate['leadership_results'] = results
+                        leadership_candidates.append(candidate)
+                except requests.exceptions.JSONDecodeError as e:
+                    print(f"Warning: Job {job_id}: Could not decode JSON for leadership screening of {ticker}: {e}. Skipping.")
+                    continue
+            else:
+                print(f"Warning: Job {job_id}: Leadership service returned status {resp.status_code} for {ticker}. Skipping.")
+        except requests.exceptions.RequestException as e:
+            print(f"Warning: Job {job_id}: Could not screen {ticker} for leadership: {e}. Skipping.")
+            continue
+    
+    print(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(leadership_candidates)} tickers.")
+    return leadership_candidates
+
 # backend-services/scheduler-service/app.py
 
 def _store_results(job_id, candidates, funnel_summary):
@@ -162,7 +239,8 @@ def _store_results(job_id, candidates, funnel_summary):
 def run_screening_pipeline():
     """
     Orchestrates the multi-stage screening process.
-    Fetches all tickers, runs trend screening, then VCP analysis on survivors.
+    Fetches all tickers, runs trend screening, then VCP analysis on survivors,
+    followed by leadership screening.
     """
     # Generate a human-readable and chronological job ID
     now = datetime.now(timezone.utc)
@@ -170,37 +248,46 @@ def run_screening_pipeline():
     unique_part = shortuuid.uuid()[:8]
     job_id = f"{timestamp_str}-{unique_part}"
     print(f"Starting screening job ID: {job_id}")
-
+    
     # 1. Get all available tickers from the ticker service.
     all_tickers, error = _get_all_tickers(job_id)
     if error:
         return error
     print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
-
+    
     # 2. Run Stage 1 Trend Screening on the fetched tickers.
     trend_survivors, error = _run_trend_screening(job_id, all_tickers)
     if error:
         return error
     print(f"Job {job_id}: Funnel: After trend screening, {len(trend_survivors)} tickers remain.")
-
-    # 3. Run Stage 2 VCP Analysis on the tickers that survived trend screening.
-    final_candidates = _run_vcp_analysis(job_id, trend_survivors)
-    print(f"Job {job_id}: Funnel: After VCP analysis, {len(final_candidates)} final candidates found.")
     
-    # 4. Prepare and store results and summary
+    # 3. Run Stage 2 VCP Analysis on the tickers that survived trend screening.
+    vcp_survivors = _run_vcp_analysis(job_id, trend_survivors)
+    print(f"Job {job_id}: Funnel: After VCP analysis, {len(vcp_survivors)} VCP survivors found.")
+    
+    # 4. Run "How to Count Unique Industries" task
+    unique_industries_count = _count_unique_industries(job_id, vcp_survivors)
+    
+    # 5. Run Stage 3 Leadership Screening on VCP survivors
+    final_candidates = _run_leadership_screening(job_id, vcp_survivors)
+    print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
+    
+    # 6. Prepare and store results and summary
     job_summary = {
         "job_id": job_id,
         "processed_at": now,
         "total_tickers_fetched": len(all_tickers),
         "trend_screen_survivors_count": len(trend_survivors),
+        "vcp_survivors_count": len(vcp_survivors),
+        "unique_industries_count": unique_industries_count,
         "final_candidates_count": len(final_candidates)
     }
-
+    
     success, error_info = _store_results(job_id, final_candidates, job_summary)
     if not success:
         return error_info
-
-    # 5. Return a success response with job details.
+    
+    # 7. Return a success response with job details.
     print(f"Screening job {job_id} completed successfully.")
     return {
         "message": "Screening job completed successfully.",
