@@ -29,32 +29,6 @@ services:
       - ./backend-services/data-service:/app
     # Mount local directory to container's /app
 
-  scheduler-service:
-    build: ./backend-services/scheduler-service
-    container_name: scheduler-service
-    ports:
-      - "${SCHEDULER_SERVICE_PORT:-3004}:3004"
-    environment:
-      MONGO_URI: ${MONGO_URI}
-      PORT: 3004
-      TICKER_SERVICE_URL: http://ticker-service:5001
-      SCREENING_SERVICE_URL: http://screening-service:3002
-      ANALYSIS_SERVICE_URL: http://analysis-service:3003
-      LEADERSHIP_SERVICE_URL: http://leadership-service:3005
-    depends_on:
-      - mongodb
-      - ticker-service
-      - screening-service
-      - analysis-service
-      - leadership-service
-    networks:
-      - app-network
-    # for development  
-    volumes:
-      - ./backend-services/scheduler-service:/app
-    # Mount local directory to container's /app
-
-
   screening-service:
     build: ./backend-services/screening-service
     container_name: screening-service
@@ -89,11 +63,52 @@ services:
       - ./backend-services/analysis-service:/app 
     # Mount local directory to container's /app
  
+  scheduler-service:
+    build: ./backend-services/scheduler-service
+    container_name: scheduler-service
+    ports:
+      - "3004:3004"
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      PORT: 3004
+      TICKER_SERVICE_URL: http://ticker-service:5001
+      SCREENING_SERVICE_URL: http://screening-service:3002
+      ANALYSIS_SERVICE_URL: http://analysis-service:3003
+      LEADERSHIP_SERVICE_URL: http://leadership-service:3005
+    depends_on:
+      - mongodb
+      - ticker-service
+      - screening-service
+      - analysis-service
+      - leadership-service
+    networks:
+      - app-network
+    # for development  
+    volumes:
+      - ./backend-services/scheduler-service:/app
+    # Mount local directory to container's /app
+
+  leadership-service:
+    build: ./backend-services/leadership-service
+    container_name: leadership-service
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: 3005
+      DATA_SERVICE_URL: http://data-service:3001
+    depends_on:
+      - data-service
+    networks:
+      - app-network
+    volumes:
+      - ./backend-services/leadership-service:/app
+    # Mount local directory to container's /app
+
   ticker-service:
     build: ./backend-services/ticker-service
     container_name: ticker-service
     ports:
-      - "${TICKER_SERVICE_PORT:-5001}:5001"
+      - "5001:5001"
     environment:
       PORT: 5001
     networks:
@@ -143,21 +158,23 @@ services:
   #   networks:
   #     - app-network
 
-  leadership-service:
-    build: ./backend-services/leadership-service
-    container_name: leadership-service
+  # Development configuration for local development
+  frontend-app:
+    build:
+      context: ./frontend-app
+      dockerfile: Dockerfile.dev
+    container_name: frontend-app
     ports:
-      - "3005:3005"
+      - "5173:5173" # Vite dev server runs on 5173
     environment:
-      PORT: 3005
-      DATA_SERVICE_URL: http://data-service:3001
+      - VITE_API_BASE_URL=http://localhost:3000
     depends_on:
-      - data-service
+      - api-gateway
     networks:
       - app-network
     volumes:
-      - ./backend-services/leadership-service:/app
-      - /app/node_modules
+      - ./frontend-app:/app
+      - /app/node_modules 
       # Prevents local node_modules from overwriting container's
 
 volumes:

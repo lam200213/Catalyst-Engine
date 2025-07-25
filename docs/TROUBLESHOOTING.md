@@ -60,3 +60,47 @@ First, ensure the application stack is running with "docker-compose up -d". Then
    ```
 
 This script will test DNS resolution and HTTP connectivity from the gateway to all other services and print a PASS or FAIL status for each one, helping you quickly identify the point of failure.
+
+### **3.  Diagnosing Leadership Service 404 Errors**
+
+If you encounter the error {"error":"Failed to fetch data from data-service (status 404)"} when calling the /leadership/:ticker endpoint, it means the leadership-service is unable to get the data it needs from the data-service. This can be due to a network issue, a problem with the data-service itself, or an issue with fetching data from the external provider (Yahoo Finance).
+
+A dedicated diagnostic script is available to trace this specific data flow and pinpoint the problem.
+
+**When to Use**: When a call to GET /leadership/:ticker returns a 404 or 502 error related to the data-service.
+
+What to Expect:
+First, ensure the application stack is running with docker-compose up -d. Then, execute the script inside the api-gateway container:
+
+   ```Bash  
+   docker-compose exec api-gateway python diagnose_leadership_issue.py
+   ```
+**What to Expect**:
+The script tests the connection from within the Docker network to each of the critical data-service endpoints that the leadership-service relies on.
+
+A successful run will look like this, indicating the problem is likely within the leadership-service's own code:
+
+   ```Bash  
+   --- Starting Leadership Service Dependency Diagnosis ---
+   ...
+   [INFO] Testing Endpoint: Core Financials
+   [PASS] Successfully connected. Status Code: 200.
+   [PASS] Response contains valid JSON.
+   ...
+   --- Diagnosis Complete ---
+   ✅ All required data-service endpoints responded successfully...
+   ```
+
+A failed run will highlight the specific endpoint that is failing and provide next steps for debugging:
+
+   ```Bash  
+   --- Starting Leadership Service Dependency Diagnosis ---
+   ...
+   [INFO] Testing Endpoint: Core Financials
+   [FAIL] data-service returned a 404 Not Found.
+            This is the likely source of the error in leadership-service.
+            Next Steps: Check the 'data-service' logs...
+   ...
+   --- Diagnosis Complete ---
+   ❌ One or more checks failed. Review the output above...
+   ```

@@ -3,25 +3,36 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **GET `/tickers`** 
   - Retrieves a list of all US stock tickers from the ticker-service.  
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/tickers
+    ```
 
 * **GET `/data/:ticker`**
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker, with caching.
     * **Note:** The `source` parameter is handled by the `data-service` directly, not the gateway.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/data/AAPL?source=yfinance
+    ```
 
 * **GET `/news/:ticker`**
     * Proxies to: `data-service`
     * Retrieves recent news articles for a ticker, with caching.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/news/AAPL
+    ```
 
 - **POST `/data/batch`**
   - Proxies to: `data-service`
   - Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
-  - **Request Body (JSON):**
-    ```json
-    {
-      "tickers": ["AAPL", "GOOGL", "MSFT", "FAKETICKER"],
-      "source": "yfinance"
-    }
+  - **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:3000/data/batch \
+      -H "Content-Type: application/json" \
+      -d '{"tickers": ["AAPL", "GOOGL", "MSFT", "FAKETICKER"], "source": "yfinance"}'
     ```
   - **Response Body (JSON):**
     - Returns two lists: `success` for tickers where data was retrieved, and `failed` for tickers that could not be processed.
@@ -40,6 +51,10 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Proxies to the Screening Service.
   - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
   - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/screen/AAPL
+    ```
   - **Example Success Response:**
     ```json
     {
@@ -78,6 +93,11 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - **Query Parameters**:
     - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
   - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/screen/AAPL
+    curl http://localhost:3000/analyze/AAPL?mode=fast
+    ```
   - **Example Success Response (`full` mode):**
     ```json
     {
@@ -110,6 +130,10 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```
 - **GET `/financials/core/:ticker`**  
   - Purpose: Retrieves core fundamental data required for the Leadership Profile screening. Data is cached to improve performance.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/financials/core/AAPL
+    ```
   - **Example Response (`GET /financials/core/AAPL`):**
   ```json
   {
@@ -137,7 +161,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Purpose: Applies the 10 "Leadership Profile" criteria to the specified ticker.
   - **Example Usage:**
     ```bash
-    curl -X POST http://localhost:3000/leadership/AAPL
+    curl http://localhost:3000/leadership/AAPL
     ```
    - **Example Success Response:**
     ```json

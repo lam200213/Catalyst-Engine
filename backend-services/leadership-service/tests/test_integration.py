@@ -30,6 +30,7 @@ class TestLeadershipScreening(unittest.TestCase):
         app.config['TESTING'] = True
         self.app = app.test_client()
 
+    @staticmethod
     def _get_mock_price_data(base_price=100.0, performance_factor=1.0, days=90):
         """Generates realistic price data that includes a market rally."""
         prices = []
@@ -41,16 +42,24 @@ class TestLeadershipScreening(unittest.TestCase):
             prices.append({'close': price, 'high': price * 1.01, 'low': price * 0.99, 'formatted_date': f'2025-01-{i+1:02d}'})
         return prices
 
-    def _get_mock_financial_data(self, overrides={}):
+    @staticmethod
+    def _get_mock_financial_data(overrides={}):
         """Generates financial data with accelerating growth to pass all checks."""
-        # Growth rates: 25%, 30%, 35%, 40%, 45%
         earnings = [100, 125, 162.5, 219.3, 307.1, 445.3]
         base_data = {
             'marketCap': 5_000_000_000, 'sharesOutstanding': 100_000_000,
             'floatShares': 15_000_000, 'ipoDate': '2020-01-01',
             'annual_earnings': [{'Earnings': 4.00}],
             'quarterly_earnings': [{'Earnings': e, 'Revenue': e * 10} for e in earnings],
-            'quarterly_financials': [{'Net Income': e, 'Total Revenue': e * 10} for e in earnings],
+            # Make Net Income grow faster than revenue to ensure accelerating margin
+            'quarterly_financials': [
+                {'Net Income': 100, 'Total Revenue': 1000}, # Margin 0.100
+                {'Net Income': 125, 'Total Revenue': 1100}, # Margin 0.113, Growth 13%
+                {'Net Income': 162.5, 'Total Revenue': 1200},# Margin 0.135, Growth 19.4%
+                {'Net Income': 219.3, 'Total Revenue': 1300},# Margin 0.168, Growth 24.4%
+                {'Net Income': 307.1, 'Total Revenue': 1400},# Margin 0.219, Growth 30.3%
+                {'Net Income': 445.3, 'Total Revenue': 1500} # Margin 0.296, Growth 35.1%
+            ],
         }
         base_data.update(overrides)
         return base_data
@@ -63,15 +72,15 @@ class TestLeadershipScreening(unittest.TestCase):
         # Arrange: Use side_effect to handle multiple, different API calls
         def side_effect(url, **kwargs):
             if 'financials/core/PASS-TICKER' in url:
-                return mock_data_service_response(200, self._get_mock_financial_data())
+                return mock_data_service_response(200, TestLeadershipScreening._get_mock_financial_data())
             # Mock for market trend context checks
             if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
             # Mock for rally check price data
             if 'data/PASS-TICKER' in url:
-                return mock_data_service_response(200, _get_mock_price_data(performance_factor=1.02)) # Stock outperforms
+                return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data(performance_factor=1.02)) # Stock outperforms
             if 'data/^GSPC' in url:
-                return mock_data_service_response(200, _get_mock_price_data()) # Market rally
+                return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data()) # Market rally
             # Mocks for industry leadership check
             if 'industry/peers/PASS-TICKER' in url:
                 return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
@@ -97,7 +106,7 @@ class TestLeadershipScreening(unittest.TestCase):
         # --- Scenario 1: Fails a single criterion (Market Cap too large) ---
         mock_get.return_value = mock_data_service_response(
             status_code=200, 
-            json_data=self._get_mock_financial_data({'marketCap': 20_000_000_000})
+            json_data=TestLeadershipScreening._get_mock_financial_data({'marketCap': 20_000_000_000})
         )
         response_single_fail = self.app.get('/leadership/FAIL-SINGLE')
         data_single = response_single_fail.json
@@ -110,7 +119,7 @@ class TestLeadershipScreening(unittest.TestCase):
         # --- Scenario 2: Fails multiple criteria ---
         mock_get.return_value = mock_data_service_response(
             status_code=200,
-            json_data=self._get_mock_financial_data({
+            json_data=TestLeadershipScreening._get_mock_financial_data({
                 'marketCap': 20_000_000_000,
                 'ipoDate': '2005-01-01'
             })
@@ -179,7 +188,7 @@ class TestLeadershipScreening(unittest.TestCase):
         [Implements test plan requirement 2.1.4]
         """
         # Arrange: Data is missing the 'marketCap' key
-        mock_data = self._get_mock_financial_data()
+        mock_data = TestLeadershipScreening._get_mock_financial_data()
         del mock_data['marketCap']
         mock_get.return_value = mock_data_service_response(status_code=200, json_data=mock_data)
 
@@ -200,7 +209,72 @@ class TestLeadershipScreening(unittest.TestCase):
         response = self.app.get('/leadership/../../etc/passwd')
         
         # Assert
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Invalid ticker format', response.json['error'])
+
+    @patch('app.requests.get')
+    def test_happy_path_with_complete_data(self, mock_get):
+        """
+        Test 1: Verifies the leadership-service works correctly with a complete, well-formed payload.
+        """
+        # Arrange
+        def side_effect(url, **kwargs):
+            if 'financials/core/AAPL' in url:
+                return mock_data_service_response(200, self._get_mock_financial_data())
+            if 'data/AAPL' in url:
+                return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
+            if 'data/^GSPC' in url:
+                return mock_data_service_response(200, self._get_mock_price_data())
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
+            if 'industry/peers/AAPL' in url:
+                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
+            if 'financials/core/batch' in url:
+                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "AAPL": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
+            return mock_data_service_response(404, {"error": "URL Not Mocked"})
+        mock_get.side_effect = side_effect
+
+        # Act
+        response = self.app.get('/leadership/AAPL')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json
+        self.assertTrue(data['passes'], f"Expected passes to be True, but it was False. Details: {data.get('details')}")
+
+    @patch('app.requests.get')
+    def test_graceful_failure_with_incomplete_data(self, mock_get):
+        """
+        Test 2: Verifies the service handles a 200 OK with missing critical data gracefully.
+        """
+        # Arrange
+        mock_financials = self._get_mock_financial_data()
+        del mock_financials['annual_earnings'] # Remove a critical key
+
+        def side_effect(url, **kwargs):
+            if 'financials/core/AAPL' in url:
+                return mock_data_service_response(200, mock_financials)
+            if 'data/AAPL' in url:
+                return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
+            if 'data/^GSPC' in url:
+                return mock_data_service_response(200, self._get_mock_price_data())
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
+            if 'industry/peers/AAPL' in url:
+                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
+            if 'financials/core/batch' in url:
+                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "AAPL": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
+            return mock_data_service_response(404, {"error": "URL Not Mocked"})
+        mock_get.side_effect = side_effect
+
+        # Act
+        response = self.app.get('/leadership/AAPL')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json
+        self.assertFalse(data['passes'])
+        self.assertFalse(data['details']['has_positive_recent_earnings'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -76,13 +76,17 @@ def fetch_index_data():
         print(f"Error fetching index data: {e}")
         return {}
 
-@app.route('/leadership/<ticker>', methods=['GET'])
+@app.route('/leadership/<path:ticker>', methods=['GET'])
 def leadership_analysis(ticker):
     """Main endpoint for leadership screening analysis"""
     start_time = time.time()
     
     # Input validation to prevent path traversal
     if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()):
+        return jsonify({'error': 'Invalid ticker format'}), 400
+    
+    # Additional check for path traversal
+    if '../' in ticker:
         return jsonify({'error': 'Invalid ticker format'}), 400
     
     # Refactored data fetching and error handling
@@ -161,7 +165,28 @@ def leadership_analysis(ticker):
     
     # Calculate execution time
     execution_time = time.time() - start_time
-    passes_check = all(value for key, value in results.items() if isinstance(value, bool))
+    # Define core criteria that must always pass
+    core_criteria = [
+        'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
+        'has_accelerating_growth', 'has_strong_yoy_eps_growth',
+        'has_consecutive_quarterly_growth', 'has_positive_recent_earnings',
+        'outperforms_in_rally'
+    ]
+
+    # Check if all core criteria pass
+    passes_check = all(results.get(key, False) for key in core_criteria)
+
+    # Conditionally check market context criteria
+    market_context = results.get('market_trend_context')
+    if market_context == 'Bearish':
+        passes_check = passes_check and results.get('shallow_decline', False)
+    elif market_context in ['Bullish', 'Neutral']:
+        # In a recovery, a breakout OR a new high is a good sign
+        is_in_recovery = "Bearish" in details.get('recent_trends', [])
+        if is_in_recovery:
+            passes_check = passes_check and (results.get('recent_breakout', False) or results.get('new_52_week_high', False))
+        else: # In a standard bull/neutral market, look for a new high
+            passes_check = passes_check and results.get('new_52_week_high', False)
     
     # Prepare response
     response = {

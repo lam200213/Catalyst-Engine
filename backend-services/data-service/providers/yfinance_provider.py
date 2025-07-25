@@ -1,3 +1,4 @@
+# backend-services/data-service/providers/yfinance_provider.py
 from curl_cffi import requests
 import datetime as dt
 import time # Add time for throttling
@@ -120,6 +121,24 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
         return None
 
+def _transform_income_statements(statements):
+    """Helper to extract raw values and create the keys expected by the leadership logic."""
+    transformed = []
+    for s in statements:
+        # Ensure we handle cases where financial data might be missing
+        net_income = s.get('netIncome', {}).get('raw')
+        total_revenue = s.get('totalRevenue', {}).get('raw')
+        # Get EPS instead of using Net Income for "Earnings"
+        eps = (s.get('basicEps') or {}).get('raw')
+        
+        transformed.append({
+            'Earnings': eps, # Use EPS for earnings-related checks
+            'Revenue': total_revenue,
+            'Net Income': net_income, # Keep Net Income for margin checks
+            'Total Revenue': total_revenue,
+        })
+    return transformed
+
 # Function to fetch core financial data for Leadership screening
 def get_core_financials(ticker_symbol):
     """
@@ -165,22 +184,55 @@ def get_core_financials(ticker_symbol):
                 impersonate="chrome110",
                 timeout=10
             )
+            # --- START DEBUGGING BLOCK ---
+            print("--- YAHOO FINANCE API DEBUG ---")
+            print(f"Request URL: {url}")
+            print(f"Status Code: {response.status_code}")
+            try:
+                # Attempt to pretty-print the JSON response for readability
+                import json
+                print(f"Raw Response JSON: {json.dumps(response.json(), indent=2)}")
+            except Exception as json_e:
+                print(f"Could not decode JSON. Raw Text: {response.text}")
+                print(f"JSON Decode Error: {json_e}")
+            print("--- END DEBUGGING BLOCK ---")
+            # --- END DEBUGGING BLOCK ---
 
             if response.status_code != 200:
                 print(f"Yahoo Finance API returned status {response.status_code} for {ticker_symbol}")
                 return None
 
+            # Robust data extraction to prevent crashes on null values
             info = response.json()['quoteSummary']['result'][0]
 
-            # Gracefully handle missing data using .get()
+            # --- Safer Data Extraction ---
+            # This pattern (e.g., info.get('key') or {}) prevents crashes if the API
+            # returns a 'null' value for a key instead of an object.
+            summary_detail = info.get('summaryDetail') or {}
+            default_key_stats = info.get('defaultKeyStatistics') or {}
+            asset_profile = info.get('assetProfile') or {}
+            income_statement_history = info.get('incomeStatementHistory') or {}
+
+            # Correctly parse and separate the financial statements
+            income_statements = income_statement_history.get('incomeStatementHistory', [])
+            
+            # 1. Filter the raw statements first
+            raw_annual = [s for s in income_statements if s.get('periodType') == 'ANNUAL']
+            raw_quarterly = [s for s in income_statements if s.get('periodType') == 'QUARTERLY']
+            
+            # 2. Then transform the filtered lists
+            annual_earnings_list = _transform_income_statements(raw_annual)
+            quarterly_earnings_list = _transform_income_statements(raw_quarterly)
+            quarterly_financials_list = quarterly_earnings_list
+
             data = {
-                'marketCap': info['summaryDetail'].get('marketCap', {}).get('raw'),
-                'sharesOutstanding': info['summaryDetail'].get('sharesOutstanding', {}).get('raw'),
-                'floatShares': info['defaultKeyStatistics'].get('floatShares', {}).get('raw'),
-                'ipoDate': info['assetProfile'].get('ipoDate', {}).get('fmt'),
-                'quarterly_earnings': info.get('incomeStatementHistory', {}).get('incomeStatementHistory', []),
-                'quarterly_financials': info.get('cashflowStatementHistory', {}).get('cashflowStatements', []),
-                'annual_earnings': info.get('incomeStatementHistory', {}).get('incomeStatementHistory', []),
+                'marketCap': (summary_detail.get('marketCap') or {}).get('raw'),
+                'sharesOutstanding': (default_key_stats.get('sharesOutstanding') or {}).get('raw'),
+                'floatShares': (default_key_stats.get('floatShares') or {}).get('raw'),
+                'ipoDate': (asset_profile.get('ipoDate') or {}).get('fmt'),
+                'annual_earnings': annual_earnings_list,
+                'quarterly_earnings': quarterly_earnings_list,
+                'quarterly_financials': quarterly_financials_list
             }
 
         duration = time.time() - start_time

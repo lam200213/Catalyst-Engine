@@ -16,6 +16,8 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 SERVICES = {
     "data": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "news": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
+    "financials": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
+    "industry": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "screen": os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002"),
     "analyze": os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003"),
     "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001"),
@@ -38,17 +40,14 @@ def gateway(service, path=""):
         return jsonify({"error": "Malicious path detected"}), 400
 
     # Construct the full URL for the target service
-    # The target service already knows its endpoint structure (e.g., /data/, /news/, /screen/)
-    # Handle the specific path for the jobs service, as it doesn't follow the /service/path pattern.
-    if service == 'jobs':
-        target_url = f"{SERVICES[service]}/{service}/{path}"
-    elif service == 'cache' and path == 'clear':
-        target_url = f"{SERVICES[service]}/cache/clear"
-    elif service == 'tickers':
-        # Route to the /tickers endpoint
+    if service == 'tickers': # Specific override for the simple ticker service
         target_url = f"{SERVICES[service]}/tickers"
     else:
-        target_url = f"{SERVICES[service]}/{service}/{path}"
+        # For all other services, forward the original path structure
+        # e.g., /financials/core/AAPL -> http://data-service:3001/financials/core/AAPL
+        base_url = SERVICES[service]
+        full_path = f"{service}/{path}".rstrip('/')
+        target_url = f"{base_url}/{full_path}"
 
     try:
         # Conditional logic to handle POST vs. GET requests

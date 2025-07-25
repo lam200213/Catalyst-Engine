@@ -24,7 +24,7 @@ market_trends = None # New collection for market trends
 # Cache expiration times in seconds
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
 NEWS_CACHE_TTL = 14400
-INDUSTRY_CACHE_TTL = 86400 # 1 day
+INDUSTRY_CACHE_TTL = 86400 # 1 day = 86400
 
 # A helper function to make index creation robust
 def _create_ttl_index(collection, field, ttl_seconds, name):
@@ -68,93 +68,83 @@ def init_db():
     _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
     _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
 
-@app.route('/data/<path:ticker>', methods=['GET'])
-def get_data(ticker: str):
-    source = request.args.get('source', 'yfinance').lower()
-    print(f"Received request for ticker: {ticker}, source: {source}")
+@app.route('/financials/core/batch', methods=['POST'])
+def get_batch_core_financials_route():
+    """
+    Provides core financial data for a batch of tickers, with data contract enforcement.
+    """
+    payload = request.get_json()
+    if not payload or 'tickers' not in payload:
+        return jsonify({"error": "Invalid request payload. 'tickers' is required."}), 400
 
-    # --- Incremental Cache Logic ---
-    # This logic determines whether to perform a full data fetch or an incremental one.
-    # It checks for existing cached data and its freshness.
-    cached_data = price_cache.find_one({"ticker": ticker, "source": source})
-    new_start_date = None # This will be set if an incremental fetch is needed.
+    tickers = payload['tickers']
+    if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
+        return jsonify({"error": "'tickers' must be a list of strings."}), 400
 
-    if cached_data:
-        # Ensure createdAt is timezone-aware for accurate comparison.
-        created_at = cached_data['createdAt'].replace(tzinfo=timezone.utc) if cached_data['createdAt'].tzinfo is None else cached_data['createdAt']
+    if not tickers:
+        return jsonify({"success": {}, "failed": []}), 200
 
-        # Check if the cache entry is still within its Time-To-Live (TTL).
-        if (datetime.now(timezone.utc) - created_at).total_seconds() < PRICE_CACHE_TTL:
-            # If the cache is valid, check how recent the data is.
-            if cached_data.get('data'):
-                last_date_str = cached_data['data'][-1]['formatted_date']
-                last_date = date.fromisoformat(last_date_str)
+    # Fetch data from provider
+    raw_data = yfinance_provider.get_batch_core_financials(tickers)
 
-                # If the last data point is from yesterday or today, it's current enough.
-                if last_date >= (date.today() - timedelta(days=1)):
-                    print(f"DATA-SERVICE: Cache HIT and data is current for price: {ticker}")
-                    # Refresh the TTL to keep the entry alive.
-                    price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
-                    return jsonify(cached_data['data'])
+    processed_data = {}
+    failed_tickers = []
 
-                # If data is old, set the start date for an incremental fetch.
-                new_start_date = last_date + timedelta(days=1)
-        else:
-            # If the cache TTL has expired, treat it as a miss. A full fetch will occur.
-            print(f"Cache EXPIRED for price: {ticker} from {source}")
+    for ticker, data in raw_data.items():
+        if data:
+            # Enforce data contract
+            total_revenue = data.get('totalRevenue')
+            net_income = data.get('netIncome')
+            market_cap = data.get('marketCap')
 
-    # --- Data Fetching ---
-    # Based on the cache check, decide whether to fetch full or incremental data.
-    if new_start_date:
-        print(f"DATA-SERVICE: Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
-    else:
-        print(f"DATA-SERVICE: Full Cache MISS for price: {ticker} from {source}")
+            # Validate and substitute if not numerical
+            processed_total_revenue = total_revenue if isinstance(total_revenue, (int, float)) else 0
+            processed_net_income = net_income if isinstance(net_income, (int, float)) else 0
+            processed_market_cap = market_cap if isinstance(market_cap, (int, float)) else 0
 
-    data = None
-    if source == 'yfinance':
-        # yfinance supports incremental fetching via the `start_date` parameter.
-        data = yfinance_provider.get_stock_data(ticker, start_date=new_start_date)
-    elif source == 'finnhub':
-        # Finnhub provider currently only supports full fetches.
-        data = finnhub_provider.get_stock_data(ticker)
-    else:
-        return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
-
-    # --- Cache and Response Handling ---
-    if data:
-        if new_start_date and cached_data:
-            # If it was an incremental fetch, append the new data to the existing cache.
-            full_data = cached_data['data'] + data
-            price_cache.update_one(
-                {"_id": cached_data["_id"]},
-                {"$set": {"data": full_data, "createdAt": datetime.now(timezone.utc)}}
-            )
-            print(f"DATA-SERVICE: CACHE INCREMENTAL UPDATE for price: {ticker}")
-            return jsonify(full_data)
-        else:
-            # If it was a full fetch, replace the old cache entry or insert a new one.
-            update_data = {
-                "ticker": ticker,
-                "source": source,
-                "data": data,
-                "createdAt": datetime.now(timezone.utc)
+            processed_data[ticker] = {
+                "totalRevenue": processed_total_revenue,
+                "netIncome": processed_net_income,
+                "marketCap": processed_market_cap,
+                **{k: v for k, v in data.items() if k not in ['totalRevenue', 'netIncome', 'marketCap']} # Keep other fields
             }
-            price_cache.update_one(
-                {"ticker": ticker, "source": source},
-                {"$set": update_data},
-                upsert=True # Creates the document if it doesn't exist.
-            )
-            print(f"DATA-SERVICE: CACHE FULL REPLACE/INSERT for price: {ticker}")
-            return jsonify(data)
-    elif cached_data:
-        # If the provider returned no new data but we have old data, return the old data.
-        print(f"DATA-SERVICE: No new price data for {ticker}. Returning existing cached data.")
-        # Refresh the TTL to prevent the old data from being purged immediately.
-        price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        else:
+            failed_tickers.append(ticker)
+
+    return jsonify({"success": processed_data, "failed": failed_tickers}), 200
+
+@app.route('/financials/core/<path:ticker>', methods=['GET'])
+def get_core_financials(ticker):
+    """
+    Provides core financial data for a given ticker, with caching.
+    """
+    # Input validation
+    if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
+        return jsonify({"error": "Invalid ticker format"}), 400
+
+    # Check cache first using the global financials_cache variable
+    cached_data = financials_cache.find_one({'ticker': ticker})
+    if cached_data:
+        print(f"DATA-SERVICE: Cache HIT for financials: {ticker}")
+        # Refresh TTL
+        financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
+
+    print(f"DATA-SERVICE: Cache MISS for financials: {ticker}")
+    # If not in cache, fetch from provider
+    data = yfinance_provider.get_core_financials(ticker)
+
+    if data:
+        # Cache the new data
+        financials_cache.insert_one({
+            "ticker": ticker,
+            "data": data,
+            "createdAt": datetime.now(timezone.utc)
+        })
+        print(f"DATA-SERVICE: CACHE INSERT for financials: {ticker}")
+        return jsonify(data)
     else:
-        # If there's no data from the provider and no cache, return an error.
-        return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
+        return jsonify({"error": "Data not found for ticker"}), 404
 
 @app.route('/data/batch', methods=['POST'])
 def get_batch_data():
@@ -246,6 +236,94 @@ def get_batch_data():
         "failed": failed_tickers
     }), 200
 
+@app.route('/data/<string:ticker>', methods=['GET'])
+def get_data(ticker: str):
+    source = request.args.get('source', 'yfinance').lower()
+    print(f"Received request for ticker: {ticker}, source: {source}")
+
+    # --- Incremental Cache Logic ---
+    # This logic determines whether to perform a full data fetch or an incremental one.
+    # It checks for existing cached data and its freshness.
+    cached_data = price_cache.find_one({"ticker": ticker, "source": source})
+    new_start_date = None # This will be set if an incremental fetch is needed.
+
+    if cached_data:
+        # Ensure createdAt is timezone-aware for accurate comparison.
+        created_at = cached_data['createdAt'].replace(tzinfo=timezone.utc) if cached_data['createdAt'].tzinfo is None else cached_data['createdAt']
+
+        # Check if the cache entry is still within its Time-To-Live (TTL).
+        if (datetime.now(timezone.utc) - created_at).total_seconds() < PRICE_CACHE_TTL:
+            # If the cache is valid, check how recent the data is.
+            if cached_data.get('data'):
+                last_date_str = cached_data['data'][-1]['formatted_date']
+                last_date = date.fromisoformat(last_date_str)
+
+                # If the last data point is from yesterday or today, it's current enough.
+                if last_date >= (date.today() - timedelta(days=1)):
+                    print(f"DATA-SERVICE: Cache HIT and data is current for price: {ticker}")
+                    # Refresh the TTL to keep the entry alive.
+                    price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+                    return jsonify(cached_data['data'])
+
+                # If data is old, set the start date for an incremental fetch.
+                new_start_date = last_date + timedelta(days=1)
+        else:
+            # If the cache TTL has expired, treat it as a miss. A full fetch will occur.
+            print(f"Cache EXPIRED for price: {ticker} from {source}")
+
+    # --- Data Fetching ---
+    # Based on the cache check, decide whether to fetch full or incremental data.
+    if new_start_date:
+        print(f"DATA-SERVICE: Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
+    else:
+        print(f"DATA-SERVICE: Full Cache MISS for price: {ticker} from {source}")
+
+    data = None
+    if source == 'yfinance':
+        # yfinance supports incremental fetching via the `start_date` parameter.
+        data = yfinance_provider.get_stock_data(ticker, start_date=new_start_date)
+    elif source == 'finnhub':
+        # Finnhub provider currently only supports full fetches.
+        data = finnhub_provider.get_stock_data(ticker)
+    else:
+        return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
+
+    # --- Cache and Response Handling ---
+    if data:
+        if new_start_date and cached_data:
+            # If it was an incremental fetch, append the new data to the existing cache.
+            full_data = cached_data['data'] + data
+            price_cache.update_one(
+                {"_id": cached_data["_id"]},
+                {"$set": {"data": full_data, "createdAt": datetime.now(timezone.utc)}}
+            )
+            print(f"DATA-SERVICE: CACHE INCREMENTAL UPDATE for price: {ticker}")
+            return jsonify(full_data)
+        else:
+            # If it was a full fetch, replace the old cache entry or insert a new one.
+            update_data = {
+                "ticker": ticker,
+                "source": source,
+                "data": data,
+                "createdAt": datetime.now(timezone.utc)
+            }
+            price_cache.update_one(
+                {"ticker": ticker, "source": source},
+                {"$set": update_data},
+                upsert=True # Creates the document if it doesn't exist.
+            )
+            print(f"DATA-SERVICE: CACHE FULL REPLACE/INSERT for price: {ticker}")
+            return jsonify(data)
+    elif cached_data:
+        # If the provider returned no new data but we have old data, return the old data.
+        print(f"DATA-SERVICE: No new price data for {ticker}. Returning existing cached data.")
+        # Refresh the TTL to prevent the old data from being purged immediately.
+        price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        return jsonify(cached_data['data'])
+    else:
+        # If there's no data from the provider and no cache, return an error.
+        return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
+
 @app.route('/news/<string:ticker>', methods=['GET'])
 def get_news(ticker: str):
     # Check cache
@@ -304,40 +382,6 @@ def clear_cache():
     except Exception as e:
         print(f"Error clearing cache: {e}")
         return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
-
-# Endpoint for core financial data
-@app.route('/financials/core/<path:ticker>', methods=['GET'])
-def get_core_financials(ticker):
-    """
-    Provides core financial data for a given ticker, with caching.
-    """
-    # Input validation
-    if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
-        return jsonify({"error": "Invalid ticker format"}), 400
-
-    # Check cache first using the global financials_cache variable
-    cached_data = financials_cache.find_one({'ticker': ticker})
-    if cached_data:
-        print(f"DATA-SERVICE: Cache HIT for financials: {ticker}")
-        # Refresh TTL
-        financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
-        return jsonify(cached_data['data'])
-
-    print(f"DATA-SERVICE: Cache MISS for financials: {ticker}")
-    # If not in cache, fetch from provider
-    data = yfinance_provider.get_core_financials(ticker)
-
-    if data:
-        # Cache the new data
-        financials_cache.insert_one({
-            "ticker": ticker,
-            "data": data,
-            "createdAt": datetime.now(timezone.utc)
-        })
-        print(f"DATA-SERVICE: CACHE INSERT for financials: {ticker}")
-        return jsonify(data)
-    else:
-        return jsonify({"error": "Data not found for ticker"}), 404
     
 @app.route('/industry/peers/<path:ticker>', methods=['GET'])
 def get_industry_peers(ticker: str):
@@ -366,51 +410,6 @@ def get_industry_peers(ticker: str):
         return jsonify(data)
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
-
-@app.route('/financials/core/batch', methods=['POST'])
-def get_batch_core_financials_route():
-    """
-    Provides core financial data for a batch of tickers, with data contract enforcement.
-    """
-    payload = request.get_json()
-    if not payload or 'tickers' not in payload:
-        return jsonify({"error": "Invalid request payload. 'tickers' is required."}), 400
-
-    tickers = payload['tickers']
-    if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
-        return jsonify({"error": "'tickers' must be a list of strings."}), 400
-
-    if not tickers:
-        return jsonify({"success": {}, "failed": []}), 200
-
-    # Fetch data from provider
-    raw_data = yfinance_provider.get_batch_core_financials(tickers)
-
-    processed_data = {}
-    failed_tickers = []
-
-    for ticker, data in raw_data.items():
-        if data:
-            # Enforce data contract
-            total_revenue = data.get('totalRevenue')
-            net_income = data.get('netIncome')
-            market_cap = data.get('marketCap')
-
-            # Validate and substitute if not numerical
-            processed_total_revenue = total_revenue if isinstance(total_revenue, (int, float)) else 0
-            processed_net_income = net_income if isinstance(net_income, (int, float)) else 0
-            processed_market_cap = market_cap if isinstance(market_cap, (int, float)) else 0
-
-            processed_data[ticker] = {
-                "totalRevenue": processed_total_revenue,
-                "netIncome": processed_net_income,
-                "marketCap": processed_market_cap,
-                **{k: v for k, v in data.items() if k not in ['totalRevenue', 'netIncome', 'marketCap']} # Keep other fields
-            }
-        else:
-            failed_tickers.append(ticker)
-
-    return jsonify({"success": processed_data, "failed": failed_tickers}), 200
 
 @app.route('/market-trend', methods=['POST'])
 def post_market_trend():
