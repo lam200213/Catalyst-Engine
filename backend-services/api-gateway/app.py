@@ -21,6 +21,7 @@ SERVICES = {
     "tickers": os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001"),
     "cache": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "jobs": os.getenv("SCHEDULER_SERVICE_URL", "http://scheduler-service:3004"),
+    "leadership": os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005"),
 }
 
 @app.route('/<service>/<path:path>', methods=['GET', 'POST'])

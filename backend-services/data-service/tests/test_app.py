@@ -334,6 +334,31 @@ class TestFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(response.json['marketCap'], 2500000000)
 
     @patch('app.yfinance_provider.get_core_financials')
+    def test_get_core_financials_uses_cache_when_fresh(self, mock_get_core_financials, mock_init_db):
+        """Tests that the provider is not called if fresh data exists in the financials cache."""
+        ticker = "NVDA"
+        # Arrange: Create a mock record as if it were stored in MongoDB
+        mock_financial_data = {'marketCap': 3000000000000, 'ipoDate': '1999-01-22'}
+        fresh_record = {
+            "_id": "mock_financial_id_123",
+            "ticker": ticker,
+            "data": mock_financial_data,
+            "createdAt": datetime.now(timezone.utc) # Fresh timestamp
+        }
+        self.mock_financials_cache.find_one.return_value = fresh_record
+
+        # Act
+        response = self.app.get(f'/financials/core/{ticker}')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, mock_financial_data)
+        # Crucially, assert the external provider was NOT called
+        mock_get_core_financials.assert_not_called()
+        # Assert that the TTL was refreshed on cache hit
+        self.mock_financials_cache.update_one.assert_called_once()
+
+    @patch('app.yfinance_provider.get_core_financials')
     def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials, mock_init_db):
         """Test the endpoint returns 404 for a ticker with no data."""
         self.mock_financials_cache.find_one.return_value = None

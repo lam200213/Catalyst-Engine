@@ -132,6 +132,77 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ]
   }
 
+- **GET `/leadership/:ticker`**  
+  - Proxies to: `leadership-service`
+  - Purpose: Applies the 10 "Leadership Profile" criteria to the specified ticker.
+  - **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:3000/leadership/AAPL
+    ```
+   - **Example Success Response:**
+    ```json
+    {
+      "ticker": "AAPL",
+      "results": {
+        "is_small_to_mid_cap": true,
+        "is_recent_ipo": true,
+        "has_limited_float": true,
+        "has_accelerating_growth": true,
+        "has_strong_yoy_eps_growth": true,
+        "yoy_eps_growth_level": "High Growth",
+        "has_consecutive_quarterly_growth": true,
+        "consecutive_quarterly_growth_level": "Standard Growth",
+        "has_positive_recent_earnings": true,
+        "outperforms_in_rally": true,
+        "market_trend_context": "Bullish",
+        "shallow_decline": false,
+        "new_52_week_high": true,
+        "recent_breakout": false,
+        "is_industry_leader": true
+      },
+      "metadata": {
+        "execution_time": 0.458
+      }
+    }
+
+- **GET `/leadership/industry_rank/:ticker`**  
+  - Proxies to: `leadership-service`
+  - Purpose: Ranks the specified ticker against its industry peers based on revenue, market cap, and net income.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/leadership/industry_rank/NVDA
+    ```
+    - **Example Success Response:**
+    ```json
+    {
+      "ticker": "NVDA",
+      "industry": "Semiconductors",
+      "rank": 1,
+      "total_peers_ranked": 15,
+      "ranked_peers_data": [
+        {
+          "ticker": "NVDA",
+          "revenue": 60931000000,
+          "marketCap": 2220000000000,
+          "netIncome": 29760000000,
+          "revenue_rank": 1.0,
+          "market_cap_rank": 1.0,
+          "earnings_rank": 1.0,
+          "combined_rank": 3
+        },
+        {
+          "ticker": "AVGO",
+          "revenue": 35824000000,
+          "marketCap": 605000000000,
+          "netIncome": 11500000000,
+          "revenue_rank": 2.0,
+          "market_cap_rank": 2.0,
+          "earnings_rank": 2.0,
+          "combined_rank": 6
+        }
+      ]
+    }
+
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`
   - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.

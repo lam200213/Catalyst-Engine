@@ -31,6 +31,14 @@
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
+│   ├── leadership-service/  # Python/Flask - Applies leadership criteria
+│   │   ├── tests/
+│   │   │   ├── test_integration.py
+│   │   │   └── test_leadership_logic.py
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   ├── leadership_logic.py
+│   │   └── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
 │   │   ├── tests/
 │   │   │   └── test_screening_logic.py
@@ -72,13 +80,15 @@
 
 | Component | Technology |
 | :---- | :---- |
-| **API Gateway** | **Python, Flask, Requests, Flask-Cors** |
-| **Data Service** | **Python, Flask, PyMongo, Requests, yfinance, finnhub-python, python-dotenv** |
-| **Analysis & Screening Services** | **Python, Flask, NumPy, Requests** |
-| **Ticker Service** | **Python, Flask, Pandas, Requests** |
+| **API Gateway** | Python, Flask, Requests, Flask-Cors |
+| **Data Service** | Python, Flask, PyMongo, yfinance, finnhub-python, curl-cffi |
+| **Analysis & Screening Services** | Python, Flask, NumPy, Requests |
+| **Leadership Service** | Python, Flask, Pandas, NumPy, Requests |
+| **Scheduler Service** | Python, Flask, Requests, APScheduler |
+| **Ticker Service** | Python, Flask, Pandas, Requests |
 | **Data Caching** | MongoDB |
-| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI, Axios |
-| **Test** | Pytest, requests-mock, Vitest, React Testing Library |
+| **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
+| **Testing** | Pytest, Vitest, React Testing Library |
 | **Local Orchestration** | Docker, Docker Compose |
 ## Communication Flow
 

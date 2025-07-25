@@ -4,14 +4,15 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-07-23
-Enhancing the data-service with the core financials endpoint
+2025-07-25
+Added the new `leadership-service` to apply 10 leadership screening criteria.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
 - **Modular Data Acquisition and Cachin g**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
+- **Leadership Screening**: Evaluates stocks against 10 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
 * **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
@@ -30,6 +31,7 @@ graph LR
            Scheduler[Scheduler Service] --> TickerService;
            Scheduler --> ScreeningService;
            Scheduler --> AnalysisService;
+           Scheduler --> LeadershipService;
            Scheduler --> MongoDB;
         end
 
@@ -37,6 +39,7 @@ graph LR
             APIGateway --> TickerService[Ticker Service];
             APIGateway --> ScreeningService[Screening Service];
             APIGateway --> AnalysisService[Analysis Service];
+            APIGateway --> LeadershipService[Leadership Service];
         end
 
         subgraph Data Layer
@@ -44,6 +47,7 @@ graph LR
             ScreeningService -- "Requests data in chunks" --> DataService;
             DataService -- "Responds via /data/batch" --> ScreeningService;
             AnalysisService --> DataService;
+            LeadershipService --> DataService;
             DataService <--> MongoDB[(MongoDB Cache)];
         end
     end

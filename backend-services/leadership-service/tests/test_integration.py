@@ -1,3 +1,4 @@
+# backend-services/leadership-service/tests/test_integration.py
 import unittest
 from unittest.mock import patch, MagicMock
 import sys
@@ -45,6 +46,7 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 {'Earnings': 2.50}
             ]
         }
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
             mock_financial_response,  # Financial data
             MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
@@ -68,7 +70,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 'sma_200': 13500,
                 'high_52_week': 16000,
                 'low_52_week': 12000
-            })
+            }),
+            mock_sp500_price_data # S&P 500 price data for rally check
         ]
 
         # Make request to the endpoint
@@ -163,12 +166,15 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
             'quarterly_financials': [],
             'annual_earnings': []
         }
+
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
             mock_financial_response,  # Financial data
             MagicMock(status_code=200, json=lambda: []),  # Stock price data
             MagicMock(status_code=200, json=lambda: {}),  # S&P 500 core financial data
             MagicMock(status_code=200, json=lambda: {}),  # Dow Jones core financial data
-            MagicMock(status_code=200, json=lambda: {})   # NASDAQ core financial data
+            MagicMock(status_code=200, json=lambda: {}),   # NASDAQ core financial data
+            mock_sp500_price_data # S&P 500 price data for rally check
         ]
 
         # Make request to the endpoint
@@ -227,6 +233,7 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 {'Earnings': 2.50}
             ]
         }
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
             mock_financial_response,  # Financial data
             MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100} for _ in range(252)]),  # Stock price data
@@ -250,7 +257,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 'sma_200': 13500,
                 'high_52_week': 16000,
                 'low_52_week': 12000
-            })
+            }),
+            mock_sp500_price_data # S&P 500 price data for rally check
         ]
 
         # Make request to the endpoint
@@ -299,6 +307,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 {'Earnings': 2.50}
             ]
         }
+        
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
             mock_financial_response,  # Financial data
             MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100} for _ in range(252)]),  # Stock price data
@@ -322,7 +332,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 'sma_200': 13500,
                 'high_52_week': 16000,
                 'low_52_week': 12000
-            })
+            }),
+            mock_sp500_price_data # S&P 500 price data for rally check
         ]
 
         # Make request to the endpoint
@@ -336,8 +347,9 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         # We just check that the field exists
         self.assertIn('consecutive_quarterly_growth_level', results)
 
+    @patch('app.requests.post')
     @patch('app.requests.get')
-    def test_leadership_endpoint_market_trend_evaluation(self, mock_get):
+    def test_leadership_endpoint_market_trend_evaluation(self, mock_get, mock_post):
         """
         Test the /leadership/<ticker> endpoint with market trend evaluation
         """
@@ -387,30 +399,23 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
             'volume': 1000000
         })
         
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"success": {}, "failed": []})
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
-            mock_financial_response,  # Financial data
-            MagicMock(status_code=200, json=lambda: stock_data),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data (Bullish)
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
+            mock_financial_response,
+            MagicMock(status_code=200, json=lambda: stock_data),
+            MagicMock(status_code=200, json=lambda: {
+                'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000
             }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data (Bullish)
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
+            MagicMock(status_code=200, json=lambda: {
+                'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000
             }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data (Bullish)
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            })
+            MagicMock(status_code=200, json=lambda: {
+                'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000
+            }),
+            mock_sp500_price_data,
+            MagicMock(status_code=200, json=lambda: [{'status': 'Bearish'}] * 4 + [{'status': 'Bullish'}] * 4),
+            MagicMock(status_code=200, json=lambda: {"industry": "Technology", "peers": ["MSFT", "GOOGL"]}),
         ]
 
         # Make request to the endpoint
@@ -443,9 +448,11 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         self.assertIn('error', response_data)
         self.assertEqual(response_data['error'], 'Unable to fetch financial data')
 
-    # New tests for Redis caching functionality
+    # Tests for Redis caching functionality
+    
+    @patch('app.requests.post')
     @patch('app.requests.get')
-    def test_leadership_endpoint_cache_hit(self, mock_get):
+    def test_endpoint_is_idempotent(self, mock_get, mock_post):
         """
         Test the /leadership/<ticker> endpoint with cached data
         """
@@ -471,66 +478,42 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 {'Earnings': 2.50}
             ]
         }
-        mock_get.side_effect = [
-            mock_financial_response,  # Financial data for first call
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            }),
-            mock_financial_response,  # Financial data for second call (cache hit simulation)
-            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data for second call
-            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data for second call
-                'current_price': 4500,
-                'sma_50': 4400,
-                'sma_200': 4200,
-                'high_52_week': 4800,
-                'low_52_week': 4000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data for second call
-                'current_price': 35000,
-                'sma_50': 34000,
-                'sma_200': 32000,
-                'high_52_week': 38000,
-                'low_52_week': 30000
-            }),
-            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data for second call
-                'current_price': 15000,
-                'sma_50': 14500,
-                'sma_200': 13500,
-                'high_52_week': 16000,
-                'low_52_week': 12000
-            })
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"success": {}, "failed": []})
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
+        
+        side_effect_list = [
+            # ---- First call to /leadership/AAPL ----
+            mock_financial_response,
+            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),
+            MagicMock(status_code=200, json=lambda: {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000}),
+            MagicMock(status_code=200, json=lambda: {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000}),
+            MagicMock(status_code=200, json=lambda: {'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000}),
+            mock_sp500_price_data,
+            MagicMock(status_code=200, json=lambda: [{'status': 'Bullish'}]),
+            MagicMock(status_code=200, json=lambda: {"industry": "Tech", "peers": []}),
+            
+            # ---- Second call to /leadership/AAPL ----
+            mock_financial_response,
+            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),
+            MagicMock(status_code=200, json=lambda: {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000}),
+            MagicMock(status_code=200, json=lambda: {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000}),
+            MagicMock(status_code=200, json=lambda: {'current_price': 15000, 'sma_50': 14500, 'sma_200': 13500, 'high_52_week': 16000, 'low_52_week': 12000}),
+            mock_sp500_price_data,
+            MagicMock(status_code=200, json=lambda: [{'status': 'Bullish'}]),
+            MagicMock(status_code=200, json=lambda: {"industry": "Tech", "peers": []}),
         ]
+        mock_get.side_effect = side_effect_list
 
         # Make first request to the endpoint
         response1 = self.app.get('/leadership/AAPL')
         self.assertEqual(response1.status_code, 200)
         
-        # Make second request to the same endpoint (should hit cache)
+        # Make second request to the same endpoint
         response2 = self.app.get('/leadership/AAPL')
         self.assertEqual(response2.status_code, 200)
         
-        # Both responses should be identical
-        # Compare only the 'results' part of the JSON, ignoring the volatile 'metadata'
         self.assertEqual(response1.json['results'], response2.json['results'])
+
 
     # New tests for orchestrated check execution
     @patch('app.time.time', side_effect=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) # Mock time.time() for non-zero execution time
@@ -561,6 +544,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 {'Earnings': 2.50}
             ]
         }
+        
+        mock_sp500_price_data = MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 4500}])
         mock_get.side_effect = [
             mock_financial_response,  # Financial data
             MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
@@ -584,7 +569,8 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 'sma_200': 13500,
                 'high_52_week': 16000,
                 'low_52_week': 12000
-            })
+            }),
+            mock_sp500_price_data # S&P 500 price data for rally check
         ]
 
         # Make request to the endpoint
@@ -624,11 +610,14 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         mock_batch_response = MagicMock()
         mock_batch_response.status_code = 200
         mock_batch_response.json.return_value = {
-            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000},
-            "MSFT": {"revenue": 211915000000, "marketCap": 3100000000000},
-            "GOOGL": {"revenue": 307394000000, "marketCap": 2200000000000},
-            "AMZN": {"revenue": 574785000000, "marketCap": 1900000000000},
-            "FB": {"revenue": 134900000000, "marketCap": 1200000000000}
+            "success": {
+                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000},
+                "MSFT": {"totalRevenue": 211915000000, "marketCap": 3100000000000, "netIncome": 72361000000},
+                "GOOGL": {"totalRevenue": 307394000000, "marketCap": 2200000000000, "netIncome": 73795000000},
+                "AMZN": {"totalRevenue": 574785000000, "marketCap": 1900000000000, "netIncome": 30425000000},
+                "FB": {"totalRevenue": 134900000000, "marketCap": 1200000000000, "netIncome": 39098000000}
+            },
+            "failed": []
         }
 
         mock_get.return_value = mock_peers_response
@@ -666,10 +655,13 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         mock_batch_response = MagicMock()
         mock_batch_response.status_code = 200
         mock_batch_response.json.return_value = {
-            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000},
-            "MSFT": {"revenue": None, "marketCap": 3100000000000}, # Incomplete revenue
-            "GOOGL": {"revenue": 307394000000, "marketCap": None}, # Incomplete marketCap
-            "AMZN": {"revenue": 574785000000, "marketCap": 1900000000000}
+            "success": {
+                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000},
+                "MSFT": {"totalRevenue": None, "marketCap": 3100000000000, "netIncome": 72361000000}, # Incomplete revenue
+                "GOOGL": {"totalRevenue": 307394000000, "marketCap": None, "netIncome": 73795000000}, # Incomplete marketCap
+                "AMZN": {"totalRevenue": 574785000000, "marketCap": 1900000000000, "netIncome": 30425000000}
+            },
+            "failed": []
         }
 
         mock_get.return_value = mock_peers_response
@@ -706,7 +698,10 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
 
         mock_get.return_value = mock_peers_response
         mock_post.return_value = MagicMock(status_code=200, json=lambda: {
-            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000}
+            "success": {
+                "AAPL": {"totalRevenue": 387530000000, "marketCap": 3000000000000, "netIncome": 96995000000}
+            },
+            "failed": []
         }) # Batch response with data for the original ticker only
 
         response = self.app.get('/leadership/industry_rank/AAPL')

@@ -176,8 +176,8 @@ def check_positive_recent_earnings(financial_data, details):
         # Get the most recent annual EPS (first item in the list)
         annual_eps = annual_earnings[0].get('Earnings')
         
-        # Get the most recent quarterly EPS (first item in the list)
-        quarterly_eps = quarterly_earnings[0].get('Earnings')
+        # Get the most recent quarterly EPS (last item in the list)
+        quarterly_eps = quarterly_earnings[-1].get('Earnings')
         
         # Check if both EPS values are positive
         details['has_positive_recent_earnings'] = (
@@ -360,13 +360,13 @@ def check_market_trend_context(index_data, details):
 def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, details):
     """
     Evaluate the stock's behavior relative to the market trend context.
-    
+
     Args:
         stock_data (list): List of stock price data dictionaries.
         index_data (dict): Dictionary containing market data for all three indices.
         market_trend_context (str): The market trend context determined by check_market_trend_context.
         details (dict): A dictionary to store the result.
-        
+
     Returns:
         None: The results are stored in the details dictionary.
     """
@@ -375,7 +375,23 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
         details['shallow_decline'] = False
         details['new_52_week_high'] = False
         details['recent_breakout'] = False
-        
+
+        # Fetch market trend data from data-service
+        market_trends_url = f"{DATA_SERVICE_URL}/market-trends"
+        market_trends_response = requests.get(market_trends_url, timeout=10)
+        if market_trends_response.status_code != 200:
+            raise Exception("Failed to fetch market trend data")
+
+        market_trends_data = market_trends_response.json()
+        recent_trends_statuses = [trend['status'] for trend in market_trends_data]
+        recent_trends = recent_trends_statuses[-8:]
+
+        # Determine if the market is in a recovery phase
+        is_recovery_phase = (
+            market_trend_context in ['Neutral', 'Bullish'] and
+            any(trend == 'Bearish' for trend in recent_trends)
+        )
+
         if market_trend_context == 'Bearish':
             # Shallow Decline Check
             # A stock's correction from its 52-week high must not be more than 2.5 times the current correction of the S&P 500 (SPY)
@@ -384,52 +400,49 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
                 sp500_high = sp500_data.get('high_52_week')
                 sp500_current = sp500_data.get('current_price')
                 sp500_decline = ((sp500_high - sp500_current) / sp500_high) if sp500_high and sp500_current else 0
-                
+
                 # Find stock's 52-week high and current price
                 if len(stock_data) >= 252:  # Approximately 1 year of trading days
                     stock_high = max(day['high'] for day in stock_data[-252:])
                     stock_current = stock_data[-1]['close']
                     stock_decline = ((stock_high - stock_current) / stock_high) if stock_high else 0
-                    
+
                     # Check if stock's decline is not more than 2.5 times the S&P 500's decline
                     if sp500_decline > 0 and stock_decline <= (sp500_decline * 2.5):
                         details['shallow_decline'] = True
-        
+
         elif market_trend_context in ['Neutral', 'Bullish']:
             # New High Check
             # Check if the stock is among the first to reach a new 52-week high
             if stock_data and len(stock_data) >= 252:
                 stock_high = max(day['high'] for day in stock_data[-252:-1])  # High excluding today
                 current_price = stock_data[-1]['close']
-                
+
                 # Check if current price is a new 52-week high
                 if current_price > stock_high:
                     details['new_52_week_high'] = True
-        
-        # Breakout Check During Market Recovery
-        # Check for breakouts specifically when the market is recovering from a correction/bear market
-        # For this implementation, we'll assume the market is in recovery if it's in 'Neutral' or 'Bullish' state
-        # and we'll look for price and volume breakouts in the last 20 trading days
-        if market_trend_context in ['Neutral', 'Bullish'] and stock_data and len(stock_data) >= 20:
-            # Look for a breakout in the last 20 trading days
-            recent_prices = [day['close'] for day in stock_data[-20:]]
-            recent_volumes = [day['volume'] for day in stock_data[-20:] if 'volume' in day]
-            
-            if recent_prices and recent_volumes:
-                # Calculate average price and volume for the period
-                avg_price = sum(recent_prices[:-1]) / len(recent_prices[:-1])  # Exclude today
-                avg_volume = sum(recent_volumes[:-1]) / len(recent_volumes[:-1]) if len(recent_volumes) > 1 else 0
-                
-                # Check if today's price and volume are significantly higher
-                current_price = recent_prices[-1]
-                current_volume = recent_volumes[-1] if recent_volumes else 0
-                
-                price_breakout = current_price > (avg_price * 1.05)  # 5% above average
-                volume_breakout = current_volume > (avg_volume * 1.5) if avg_volume > 0 else False
-                
-                if price_breakout and volume_breakout:
-                    details['recent_breakout'] = True
-                    
+
+            # Breakout Check During Market Recovery
+            if is_recovery_phase and stock_data and len(stock_data) >= 20:
+                # Look for a breakout in the last 20 trading days
+                recent_prices = [day['close'] for day in stock_data[-20:]]
+                recent_volumes = [day['volume'] for day in stock_data[-20:] if 'volume' in day]
+
+                if recent_prices and recent_volumes:
+                    # Calculate average price and volume for the period
+                    avg_price = sum(recent_prices[:-1]) / len(recent_prices[:-1])  # Exclude today
+                    avg_volume = sum(recent_volumes[:-1]) / len(recent_volumes[:-1]) if len(recent_volumes) > 1 else 0
+
+                    # Check if today's price and volume are significantly higher
+                    current_price = recent_prices[-1]
+                    current_volume = recent_volumes[-1] if recent_volumes else 0
+
+                    price_breakout = current_price > (avg_price * 1.05)  # 5% above average
+                    volume_breakout = current_volume > (avg_volume * 1.5) if avg_volume > 0 else False
+
+                    if price_breakout and volume_breakout:
+                        details['recent_breakout'] = True
+
     except Exception as e:
         # Handle any errors gracefully
         details['shallow_decline'] = False
@@ -630,22 +643,23 @@ def check_industry_leadership(ticker):
 
         # 2. Call POST /financials/core/batch with the entire list of peer tickers
         batch_financials_url = f"{DATA_SERVICE_URL}/financials/core/batch"
-        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers}, timeout=30)
+        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers, "metrics": ["revenue", "marketCap", "netIncome"]}, timeout=30)
 
         if batch_response.status_code != 200:
             return {"error": f"Could not fetch batch financial data", "status_code": 500}
 
-        batch_financial_data = batch_response.json()
+        batch_financial_data = batch_response.json().get("success", {})
 
         # 3. Filter out any peers with incomplete data and prepare for DataFrame
         processed_data = []
         for ticker_symbol, data in batch_financial_data.items():
-            # Ensure 'revenue' and 'marketCap' are present and not None
-            if data and data.get('revenue') is not None and data.get('marketCap') is not None:
+            # Ensure 'revenue', 'marketCap', and 'netIncome' are present and not None
+            if data and data.get('totalRevenue') is not None and data.get('marketCap') is not None and data.get('netIncome') is not None:
                 processed_data.append({
                     'ticker': ticker_symbol,
-                    'revenue': data['revenue'],
-                    'marketCap': data['marketCap']
+                    'revenue': data['totalRevenue'],
+                    'marketCap': data['marketCap'],
+                    'netIncome': data['netIncome']
                 })
 
         if not processed_data:
@@ -654,13 +668,14 @@ def check_industry_leadership(ticker):
         # Create a pandas DataFrame
         df = pd.DataFrame(processed_data)
 
-        # Rank by revenue (descending) and then by market cap (descending)
+        # Rank by revenue, market cap, and net income (descending)
         # method='min' assigns the lowest rank in case of ties
         df['revenue_rank'] = df['revenue'].rank(ascending=False, method='min')
         df['market_cap_rank'] = df['marketCap'].rank(ascending=False, method='min')
+        df['earnings_rank'] = df['netIncome'].rank(ascending=False, method='min')
 
         # Combine ranks (lower combined rank is better)
-        df['combined_rank'] = df['revenue_rank'] + df['market_cap_rank']
+        df['combined_rank'] = df['revenue_rank'] + df['market_cap_rank'] + df['earnings_rank']
 
         # Sort by combined rank to get the final ranking
         df = df.sort_values(by='combined_rank').reset_index(drop=True)

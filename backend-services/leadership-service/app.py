@@ -94,6 +94,11 @@ def leadership_analysis(ticker):
         return jsonify({'error': 'Failed to fetch price data due to a connection or service error'}), 503
     
     index_data = fetch_index_data()
+
+    # Fetch historical price data for S&P 500 for the rally check
+    sp500_price_data = fetch_price_data('^GSPC')
+    if sp500_price_data is None:
+        return jsonify({'error': 'Failed to fetch S&P 500 price data for rally analysis'}), 503
     
     # Run all leadership checks
     results = {}
@@ -132,8 +137,7 @@ def leadership_analysis(ticker):
         results['has_positive_recent_earnings'] = details.get('has_positive_recent_earnings', False)
         
         # Outperforms in rally check
-        sp500_data = index_data  # Now contains the S&P 500 core financial data
-        check_outperforms_in_rally(stock_data, sp500_data.get('^GSPC', []), details)
+        check_outperforms_in_rally(stock_data, sp500_price_data, details)
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
         # Market trend context check
@@ -162,6 +166,11 @@ def leadership_analysis(ticker):
             'execution_time': round(execution_time, 3)
         }
     }
+
+    # Check industry leadership
+    leadership_result = check_industry_leadership(ticker)
+    if "rank" in leadership_result:
+        response['results']['is_industry_leader'] = leadership_result['rank'] <= 3
     
     return jsonify(response)
 
@@ -184,6 +193,19 @@ def industry_rank_analysis(ticker):
         status_code = result.get("status_code", 500)
         return jsonify({"error": result["error"]}), status_code
     return jsonify(result), 200
+
+@app.route('/market-trend/current', methods=['GET'])
+def current_market_trend():
+    """Endpoint to get the current market trend"""
+    try:
+        index_data = fetch_index_data()
+        details = {}
+        check_market_trend_context(index_data, details)
+        trend = details.get('market_trend_context', 'Unknown')
+        return jsonify({'status': trend}), 200
+    except Exception as e:
+        print(f"Error fetching market trend: {e}")
+        return jsonify({'error': 'Error fetching market trend'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

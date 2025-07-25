@@ -4,6 +4,9 @@ import requests
 import uuid
 import shortuuid
 from datetime import datetime, timezone
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import requests
 from flask import Flask, jsonify
 from pymongo import MongoClient, errors
 
@@ -17,6 +20,7 @@ SCREENING_SERVICE_URL = os.getenv("SCREENING_SERVICE_URL", "http://screening-ser
 ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003")
 LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
+SCHEDULER_TIME = os.getenv("SCHEDULER_TIME", "16:00")
 # --- Database Setup ---
 client = None
 results_collection = None
@@ -235,6 +239,42 @@ def _store_results(job_id, candidates, funnel_summary):
         print(f"ERROR: Job {job_id}: Failed to write candidate results to database: {e}")
         return False, ({"error": "Failed to write candidate results to database", "details": str(e)}, 500)
 
+# --- Scheduled Job ---
+def store_daily_market_trend():
+    try:
+        # Fetch the current market trend from the leadership-service
+        trend_response = requests.get(f"{LEADERSHIP_SERVICE_URL}/market-trend/current", timeout=15)
+        trend_response.raise_for_status()
+        trend_data = trend_response.json()
+
+        # Prepare the data to be stored in the data-service
+        trend_status = trend_data.get('status')
+        if not trend_status:
+            print("ERROR: Failed to get market trend status from leadership-service")
+            return
+
+        # Store the trend data in the data-service
+        store_response = requests.post(
+            f"{DATA_SERVICE_URL}/market-trend",
+            json={'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'), 'status': trend_status},
+            timeout=15
+        )
+        store_response.raise_for_status()
+        print("Successfully stored market trend status in data-service")
+
+    except requests.exceptions.RequestException as e:
+        print(f"ERROR: Failed to store market trend status: {e}")
+
+# Initialize the scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+# Schedule the job to run daily at the configured time
+scheduler.add_job(
+    store_daily_market_trend,
+    CronTrigger(hour=int(SCHEDULER_TIME.split(':')[0]), minute=int(SCHEDULER_TIME.split(':')[1]))
+)
+
 # --- Orchestration Logic ---
 def run_screening_pipeline():
     """
@@ -272,6 +312,10 @@ def run_screening_pipeline():
     final_candidates = _run_leadership_screening(job_id, vcp_survivors)
     print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
     
+    # 5. Run Stage 3 Leadership Screening on VCP survivors
+    final_candidates = _run_leadership_screening(job_id, vcp_survivors)
+    print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
+    
     # 6. Prepare and store results and summary
     job_summary = {
         "job_id": job_id,
@@ -291,7 +335,8 @@ def run_screening_pipeline():
     print(f"Screening job {job_id} completed successfully.")
     return {
         "message": "Screening job completed successfully.",
-        **job_summary # Unpack the summary into the response
+        **job_summary, # Unpack the summary into the response
+        "unique_industries_count": unique_industries_count,
     }, 200
 
 # --- API Endpoint ---

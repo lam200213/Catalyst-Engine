@@ -19,6 +19,7 @@ price_cache = None
 news_cache = None
 financials_cache = None
 industry_cache = None # New cache for industry data
+market_trends = None # New collection for market trends
 
 # Cache expiration times in seconds
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
@@ -50,7 +51,7 @@ def _create_ttl_index(collection, field, ttl_seconds, name):
             raise
 
 def init_db():
-    global client, db, price_cache, news_cache, financials_cache, industry_cache
+    global client, db, price_cache, news_cache, financials_cache, industry_cache, market_trends
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
     client = MongoClient(MONGO_URI)
     db = client.stock_analysis # Database name
@@ -59,6 +60,7 @@ def init_db():
     news_cache = db.news_cache   # Collection for news data
     financials_cache = db.financials_cache # Collection for financial data
     industry_cache = db.industry_cache # New collection for industry data
+    market_trends = db.market_trends # New collection for market trends
 
     # Use the robust helper function to create/update TTL indexes
     _create_ttl_index(price_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index")
@@ -409,6 +411,42 @@ def get_batch_core_financials_route():
             failed_tickers.append(ticker)
 
     return jsonify({"success": processed_data, "failed": failed_tickers}), 200
+
+@app.route('/market-trend', methods=['POST'])
+def post_market_trend():
+    data = request.get_json()
+    if not data or 'date' not in data or 'status' not in data:
+        return jsonify({"error": "Invalid request payload. 'date' and 'status' are required."}), 400
+
+    try:
+        market_trends.insert_one({
+            "date": data['date'],
+            "status": data['status'],
+            "createdAt": datetime.now(timezone.utc)
+        })
+        return jsonify({"message": "Market trend data stored successfully."}), 201
+    except Exception as e:
+        return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
+
+@app.route('/market-trends', methods=['GET'])
+def get_market_trends():
+    try:
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=56)
+        trends = market_trends.find({
+            "createdAt": {"$gte": start_date, "$lte": end_date}
+        }).sort("createdAt", -1)
+
+        trends_list = []
+        for trend in trends:
+            trends_list.append({
+                "date": trend['date'],
+                "status": trend['status']
+            })
+
+        return jsonify(trends_list), 200
+    except Exception as e:
+        return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':
     init_db() # Initialize the database connection
