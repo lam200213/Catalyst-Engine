@@ -358,3 +358,170 @@ class TestFinancialsEndpoint(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+@patch('app.init_db')
+class TestIndustryPeersEndpoint(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.app = app.test_client()
+        self.industry_cache_patcher = patch('app.industry_cache', MagicMock())
+        self.mock_industry_cache = self.industry_cache_patcher.start()
+
+    def tearDown(self):
+        self.industry_cache_patcher.stop()
+
+    @patch('app.finnhub_provider.get_company_peers_and_industry')
+    def test_get_industry_peers_cache_hit(self, mock_get_industry_peers, mock_init_db):
+        """Test the /industry/peers/:ticker endpoint with a cache hit."""
+        ticker = "AAPL"
+        cached_data = {
+            "_id": "mock_id_789", # Add a mock _id
+            "ticker": ticker,
+            "data": {"industry": "Technology", "peers": ["MSFT", "GOOGL"]},
+            "createdAt": datetime.now(timezone.utc)
+        }
+        self.mock_industry_cache.find_one.return_value = cached_data
+
+        response = self.app.get(f'/industry/peers/{ticker}')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, cached_data['data'])
+        mock_get_industry_peers.assert_not_called()
+        self.mock_industry_cache.update_one.assert_called_once()
+
+    @patch('app.finnhub_provider.get_company_peers_and_industry')
+    def test_get_industry_peers_cache_miss(self, mock_get_industry_peers, mock_init_db):
+        """Test the /industry/peers/:ticker endpoint with a cache miss."""
+        ticker = "AAPL"
+        self.mock_industry_cache.find_one.return_value = None
+        mock_get_industry_peers.return_value = {"industry": "Technology", "peers": ["MSFT", "GOOGL"]}
+
+        response = self.app.get(f'/industry/peers/{ticker}')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"industry": "Technology", "peers": ["MSFT", "GOOGL"]})
+        mock_get_industry_peers.assert_called_once_with(ticker)
+        self.mock_industry_cache.insert_one.assert_called_once()
+
+    @patch('app.finnhub_provider.get_company_peers_and_industry')
+    def test_get_industry_peers_data_not_found(self, mock_get_industry_peers, mock_init_db):
+        """Test the /industry/peers/:ticker endpoint when provider returns no data."""
+        ticker = "NONEXISTENT"
+        self.mock_industry_cache.find_one.return_value = None
+        mock_get_industry_peers.return_value = None
+
+        response = self.app.get(f'/industry/peers/{ticker}')
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json, {"error": "Data not found for ticker"})
+        mock_get_industry_peers.assert_called_once_with(ticker)
+        self.mock_industry_cache.insert_one.assert_not_called()
+
+    def test_get_industry_peers_invalid_ticker_format(self, mock_init_db):
+        """Test the /industry/peers/:ticker endpoint rejects invalid ticker format."""
+        response = self.app.get('/industry/peers/../../etc/passwd')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json, {"error": "Invalid ticker format"})
+
+@patch('app.init_db')
+class TestBatchFinancialsEndpoint(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.app = app.test_client()
+        # Patch financials_cache even if not directly used by this endpoint, for consistency
+        self.financials_cache_patcher = patch('app.financials_cache', MagicMock())
+        self.mock_financials_cache = self.financials_cache_patcher.start()
+
+    def tearDown(self):
+        self.financials_cache_patcher.stop()
+
+    @patch('app.yfinance_provider.get_batch_core_financials')
+    def test_batch_financials_success(self, mock_get_batch_core_financials, mock_init_db):
+        """Test the POST /financials/core/batch endpoint for successful data retrieval and contract enforcement."""
+        tickers = ["AAPL", "MSFT"]
+        mock_get_batch_core_financials.return_value = {
+            "AAPL": {
+                "totalRevenue": 383285000000,
+                "netIncome": 96995000000,
+                "marketCap": 3000000000000,
+                "otherField": "value1"
+            },
+            "MSFT": {
+                "totalRevenue": 211915000000,
+                "netIncome": 72361000000,
+                "marketCap": 2500000000000,
+                "anotherField": "value2"
+            }
+        }
+        
+        response = self.app.post('/financials/core/batch', json={'tickers': tickers})
+        self.assertEqual(response.status_code, 200)
+        data = response.json['success']
+        
+        self.assertIn("AAPL", data)
+        self.assertEqual(data["AAPL"]["totalRevenue"], 383285000000)
+        self.assertEqual(data["AAPL"]["netIncome"], 96995000000)
+        self.assertEqual(data["AAPL"]["marketCap"], 3000000000000)
+        self.assertEqual(data["AAPL"]["otherField"], "value1")
+
+        self.assertIn("MSFT", data)
+        self.assertEqual(data["MSFT"]["totalRevenue"], 211915000000)
+        self.assertEqual(data["MSFT"]["netIncome"], 72361000000)
+        self.assertEqual(data["MSFT"]["marketCap"], 2500000000000)
+        self.assertEqual(data["MSFT"]["anotherField"], "value2")
+        
+        self.assertEqual(response.json['failed'], [])
+        mock_get_batch_core_financials.assert_called_once_with(tickers)
+
+    @patch('app.yfinance_provider.get_batch_core_financials')
+    def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_core_financials, mock_init_db):
+        """Test that missing data contract fields are handled with default values."""
+        tickers = ["GOOG", "AMZN"]
+        mock_get_batch_core_financials.return_value = {
+            "GOOG": {
+                "totalRevenue": 100000000000,
+                "otherField": "value3"
+            },
+            "AMZN": {
+                "netIncome": 5000000000,
+                "marketCap": "not_a_number", # Invalid type
+                "anotherField": "value4"
+            },
+            "FAIL": None # Simulate a failed ticker
+        }
+        
+        response = self.app.post('/financials/core/batch', json={'tickers': tickers + ["FAIL"]})
+        self.assertEqual(response.status_code, 200)
+        data = response.json['success']
+        failed = response.json['failed']
+
+        self.assertIn("GOOG", data)
+        self.assertEqual(data["GOOG"]["totalRevenue"], 100000000000)
+        self.assertEqual(data["GOOG"]["netIncome"], 0) # Defaulted
+        self.assertEqual(data["GOOG"]["marketCap"], 0) # Defaulted
+        self.assertEqual(data["GOOG"]["otherField"], "value3")
+
+        self.assertIn("AMZN", data)
+        self.assertEqual(data["AMZN"]["totalRevenue"], 0) # Defaulted
+        self.assertEqual(data["AMZN"]["netIncome"], 5000000000)
+        self.assertEqual(data["AMZN"]["marketCap"], 0) # Defaulted due to invalid type
+        self.assertEqual(data["AMZN"]["anotherField"], "value4")
+        
+        self.assertIn("FAIL", failed)
+        self.assertEqual(len(failed), 1)
+        mock_get_batch_core_financials.assert_called_once_with(tickers + ["FAIL"])
+
+    def test_batch_financials_empty_ticker_list(self, mock_init_db):
+        """Test handling of an empty ticker list."""
+        response = self.app.post('/financials/core/batch', json={'tickers': []})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"success": {}, "failed": []})
+
+    def test_batch_financials_invalid_payload(self, mock_init_db):
+        """Test handling of invalid request payloads."""
+        # Missing 'tickers'
+        response = self.app.post('/financials/core/batch', json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json)
+
+        # 'tickers' not a list
+        response = self.app.post('/financials/core/batch', json={'tickers': "AAPL"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json)

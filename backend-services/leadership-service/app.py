@@ -11,7 +11,8 @@ from leadership_logic import (
     check_has_limited_float,
     check_outperforms_in_rally,
     check_market_trend_context,
-    evaluate_market_trend_impact
+    evaluate_market_trend_impact,
+    check_industry_leadership
 )
 
 app = Flask(__name__)
@@ -166,6 +167,22 @@ def leadership_analysis(ticker):
 def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy'}), 200
+
+@app.route('/leadership/industry_rank/<ticker>', methods=['GET'])
+def industry_rank_analysis(ticker):
+    """
+    API endpoint to get the industry rank of a given ticker.
+    """
+    if not ticker or not isinstance(ticker, str):
+        return jsonify({'error': 'Invalid ticker parameter'}), 400
+    
+    result = check_industry_leadership(ticker)
+    
+    if "error" in result:
+        status_code = result.get("status_code", 500)
+        return jsonify({"error": result["error"]}), status_code
+    
+    return jsonify(result), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

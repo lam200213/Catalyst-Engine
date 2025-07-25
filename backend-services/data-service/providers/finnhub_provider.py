@@ -53,3 +53,34 @@ def get_stock_data(ticker: str) -> list | None:
     except Exception as e:
         print(f"Error fetching data from Finnhub for {ticker}: {e}")
         return None
+
+def get_company_peers_and_industry(ticker: str) -> dict | None:
+    """
+    Fetches company peers and industry classification from Finnhub.
+
+    Args:
+        ticker: The stock symbol to fetch data for.
+
+    Returns:
+        A dictionary with 'industry' and 'peers' data, or None if an error occurs.
+    """
+    try:
+        api_key = os.getenv('FINNHUB_API_KEY')
+        if not api_key:
+            raise ValueError("FINNHUB_API_KEY is not set in environment.")
+            
+        finnhub_client = finnhub.Client(api_key=api_key)
+        
+        peers = finnhub_client.company_peers(ticker)
+        profile = finnhub_client.company_profile2(ticker)
+        
+        industry = profile.get('finnhubIndustry') if profile else None
+        
+        return {
+            "industry": industry,
+            "peers": peers if peers else []
+        }
+        
+    except Exception as e:
+        print(f"Error fetching company peers and industry from Finnhub for {ticker}: {e}")
+        return None

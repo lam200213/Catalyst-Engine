@@ -1,3 +1,6 @@
+import requests
+import pandas as pd
+
 # Constants for market cap ranges (in USD)
 MIN_MARKET_CAP = 300_000_000      # $300M
 MAX_MARKET_CAP = 10_000_000_000    # $10B
@@ -588,3 +591,109 @@ def check_consecutive_quarterly_growth(financial_data, details):
     except (KeyError, TypeError, IndexError):
         details['has_consecutive_quarterly_growth'] = False
         details['consecutive_quarterly_growth_level'] = 'Error'
+
+
+DATA_SERVICE_URL = "http://data-service:3001"
+
+def check_industry_leadership(ticker):
+    """
+    Analyzes a company's industry peers and ranks them based on revenue and market cap.
+
+    Args:
+        ticker (str): The stock ticker symbol of the company to analyze.
+
+    Returns:
+        dict: A JSON object containing the ticker's rank and industry details,
+              or an error message if data cannot be fetched or processed.
+    """
+    try:
+        # 1. Call GET /industry/peers/<ticker> to get industry name and peer list
+        peers_url = f"{DATA_SERVICE_URL}/industry/peers/{ticker}"
+        peers_response = requests.get(peers_url, timeout=10)
+
+        if peers_response.status_code != 200:
+            return {"error": f"Could not fetch industry peers for {ticker}", "status_code": 500}
+
+        peers_data = peers_response.json()
+        industry_name = peers_data.get("industry")
+        peer_tickers = peers_data.get("peers", [])
+
+        if not industry_name:
+            return {"error": f"No industry data found for {ticker}"}
+        
+        # Include the original ticker in the batch request
+        # Even if peer_tickers is empty, we still want to process the original ticker
+        all_tickers = list(set(peer_tickers + [ticker]))
+
+        # Include the original ticker in the batch request
+        all_tickers = list(set(peer_tickers + [ticker]))
+
+        # 2. Call POST /financials/core/batch with the entire list of peer tickers
+        batch_financials_url = f"{DATA_SERVICE_URL}/financials/core/batch"
+        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers}, timeout=30)
+
+        if batch_response.status_code != 200:
+            return {"error": f"Could not fetch batch financial data", "status_code": 500}
+
+        batch_financial_data = batch_response.json()
+
+        # 3. Filter out any peers with incomplete data and prepare for DataFrame
+        processed_data = []
+        for ticker_symbol, data in batch_financial_data.items():
+            # Ensure 'revenue' and 'marketCap' are present and not None
+            if data and data.get('revenue') is not None and data.get('marketCap') is not None:
+                processed_data.append({
+                    'ticker': ticker_symbol,
+                    'revenue': data['revenue'],
+                    'marketCap': data['marketCap']
+                })
+
+        if not processed_data:
+            return {"error": "No complete financial data available for ranking after filtering."}
+
+        # Create a pandas DataFrame
+        df = pd.DataFrame(processed_data)
+
+        # Rank by revenue (descending) and then by market cap (descending)
+        # method='min' assigns the lowest rank in case of ties
+        df['revenue_rank'] = df['revenue'].rank(ascending=False, method='min')
+        df['market_cap_rank'] = df['marketCap'].rank(ascending=False, method='min')
+
+        # Combine ranks (lower combined rank is better)
+        df['combined_rank'] = df['revenue_rank'] + df['market_cap_rank']
+
+        # Sort by combined rank to get the final ranking
+        df = df.sort_values(by='combined_rank').reset_index(drop=True)
+
+        # Find the rank of the original ticker
+        ticker_rank_info = df[df['ticker'] == ticker]
+
+        if not ticker_rank_info.empty:
+            # Add 1 because pandas ranks are 0-indexed if reset_index is used without drop=True,
+            # but rank() itself is 1-indexed. combined_rank is already a sum of 1-indexed ranks.
+            # We want the position in the sorted DataFrame, which is 0-indexed.
+            # So, if the first item is rank 1, its index is 0.
+            # The rank should be its position + 1.
+            final_rank = ticker_rank_info.index[0] + 1
+        else:
+            final_rank = None # Should not happen if original ticker was included in all_tickers
+
+        # Convert numpy.int64 to Python int
+        final_rank = int(final_rank) if final_rank is not None else None
+        df['combined_rank'] = df['combined_rank'].astype(int)
+
+        return {
+            "ticker": ticker,
+            "industry": industry_name,
+            "rank": final_rank,
+            "total_peers_ranked": len(df),
+            "ranked_peers_data": df.to_dict(orient='records') # Optional: include full ranked data
+        }
+
+    except requests.exceptions.Timeout:
+        return {"error": "Request to data service timed out."}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Network or service error: {e}"}
+    except Exception as e:
+        print(f"Error in check_industry_leadership for {ticker}: {e}")
+        return {"error": f"An unexpected error occurred: {e}"}

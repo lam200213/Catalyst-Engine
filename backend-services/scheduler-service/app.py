@@ -15,7 +15,8 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
 TICKER_SERVICE_URL = os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001")
 SCREENING_SERVICE_URL = os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002")
 ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003")
-
+LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 # --- Database Setup ---
 client = None
 results_collection = None

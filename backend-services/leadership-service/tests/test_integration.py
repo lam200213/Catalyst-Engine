@@ -472,7 +472,7 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
             ]
         }
         mock_get.side_effect = [
-            mock_financial_response,  # Financial data
+            mock_financial_response,  # Financial data for first call
             MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data
             MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data
                 'current_price': 4500,
@@ -494,6 +494,29 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
                 'sma_200': 13500,
                 'high_52_week': 16000,
                 'low_52_week': 12000
+            }),
+            mock_financial_response,  # Financial data for second call (cache hit simulation)
+            MagicMock(status_code=200, json=lambda: [{'formatted_date': '2024-01-01', 'close': 100}]),  # Stock price data for second call
+            MagicMock(status_code=200, json=lambda: {  # S&P 500 core financial data for second call
+                'current_price': 4500,
+                'sma_50': 4400,
+                'sma_200': 4200,
+                'high_52_week': 4800,
+                'low_52_week': 4000
+            }),
+            MagicMock(status_code=200, json=lambda: {  # Dow Jones core financial data for second call
+                'current_price': 35000,
+                'sma_50': 34000,
+                'sma_200': 32000,
+                'high_52_week': 38000,
+                'low_52_week': 30000
+            }),
+            MagicMock(status_code=200, json=lambda: {  # NASDAQ core financial data for second call
+                'current_price': 15000,
+                'sma_50': 14500,
+                'sma_200': 13500,
+                'high_52_week': 16000,
+                'low_52_week': 12000
             })
         ]
 
@@ -509,8 +532,9 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         self.assertEqual(response1.json, response2.json)
 
     # New tests for orchestrated check execution
+    @patch('app.time.time', side_effect=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) # Mock time.time() for non-zero execution time
     @patch('app.requests.get')
-    def test_leadership_endpoint_parallel_execution(self, mock_get):
+    def test_leadership_endpoint_parallel_execution(self, mock_get, mock_time):
         """
         Test the /leadership/<ticker> endpoint with parallel check execution
         """
@@ -580,6 +604,161 @@ class TestLeadershipServiceIntegration(unittest.TestCase):
         self.assertIsInstance(execution_time, (int, float))
         self.assertGreater(execution_time, 0)
         self.assertLess(execution_time, 5)  # Should complete in less than 5 seconds
+
+    @patch('app.requests.post') # Mock requests.post for batch endpoint
+    @patch('app.requests.get')
+    def test_industry_rank_endpoint_success(self, mock_get, mock_post):
+        """
+        Test the /leadership/industry_rank/<ticker> endpoint with valid data
+        """
+        # Mock response for GET /industry/peers/<ticker>
+        mock_peers_response = MagicMock()
+        mock_peers_response.status_code = 200
+        mock_peers_response.json.return_value = {
+            "industry": "Technology",
+            "peers": ["MSFT", "GOOGL", "AMZN", "FB"]
+        }
+
+        # Mock response for POST /financials/core/batch
+        mock_batch_response = MagicMock()
+        mock_batch_response.status_code = 200
+        mock_batch_response.json.return_value = {
+            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000},
+            "MSFT": {"revenue": 211915000000, "marketCap": 3100000000000},
+            "GOOGL": {"revenue": 307394000000, "marketCap": 2200000000000},
+            "AMZN": {"revenue": 574785000000, "marketCap": 1900000000000},
+            "FB": {"revenue": 134900000000, "marketCap": 1200000000000}
+        }
+
+        mock_get.return_value = mock_peers_response
+        mock_post.return_value = mock_batch_response
+
+        response = self.app.get('/leadership/industry_rank/AAPL')
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+
+        self.assertEqual(response_data['ticker'], 'AAPL')
+        self.assertEqual(response_data['industry'], 'Technology')
+        self.assertIn('rank', response_data)
+        self.assertIn('total_peers_ranked', response_data)
+        self.assertIn('ranked_peers_data', response_data)
+        self.assertIsInstance(response_data['rank'], int)
+        self.assertGreater(response_data['rank'], 0)
+        self.assertIsInstance(response_data['total_peers_ranked'], int)
+        self.assertGreater(response_data['total_peers_ranked'], 0)
+        self.assertIsInstance(response_data['ranked_peers_data'], list)
+        self.assertGreater(len(response_data['ranked_peers_data']), 0)
+
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_industry_rank_endpoint_incomplete_data(self, mock_get, mock_post):
+        """
+        Test the /leadership/industry_rank/<ticker> endpoint with incomplete financial data for peers
+        """
+        mock_peers_response = MagicMock()
+        mock_peers_response.status_code = 200
+        mock_peers_response.json.return_value = {
+            "industry": "Technology",
+            "peers": ["MSFT", "GOOGL", "AMZN"]
+        }
+
+        mock_batch_response = MagicMock()
+        mock_batch_response.status_code = 200
+        mock_batch_response.json.return_value = {
+            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000},
+            "MSFT": {"revenue": None, "marketCap": 3100000000000}, # Incomplete revenue
+            "GOOGL": {"revenue": 307394000000, "marketCap": None}, # Incomplete marketCap
+            "AMZN": {"revenue": 574785000000, "marketCap": 1900000000000}
+        }
+
+        mock_get.return_value = mock_peers_response
+        mock_post.return_value = mock_batch_response
+
+        response = self.app.get('/leadership/industry_rank/AAPL')
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+
+        self.assertEqual(response_data['ticker'], 'AAPL')
+        self.assertEqual(response_data['industry'], 'Technology')
+        self.assertIn('rank', response_data)
+        self.assertIn('total_peers_ranked', response_data)
+        self.assertIn('ranked_peers_data', response_data)
+        
+        # Only AAPL and AMZN should be ranked
+        self.assertEqual(response_data['total_peers_ranked'], 2)
+        self.assertEqual(len(response_data['ranked_peers_data']), 2)
+        self.assertFalse(any(d['ticker'] == 'MSFT' for d in response_data['ranked_peers_data']))
+        self.assertFalse(any(d['ticker'] == 'GOOGL' for d in response_data['ranked_peers_data']))
+
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_industry_rank_endpoint_no_peers(self, mock_get, mock_post):
+        """
+        Test the /leadership/industry_rank/<ticker> endpoint when no peers are returned
+        """
+        mock_peers_response = MagicMock()
+        mock_peers_response.status_code = 200
+        mock_peers_response.json.return_value = {
+            "industry": "Technology",
+            "peers": []
+        }
+
+        mock_get.return_value = mock_peers_response
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {
+            "AAPL": {"revenue": 387530000000, "marketCap": 3000000000000}
+        }) # Batch response with data for the original ticker only
+
+        response = self.app.get('/leadership/industry_rank/AAPL')
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json
+
+        self.assertEqual(response_data['ticker'], 'AAPL')
+        self.assertEqual(response_data['industry'], 'Technology')
+        self.assertIn('rank', response_data)
+        self.assertIn('total_peers_ranked', response_data)
+        self.assertIn('ranked_peers_data', response_data)
+        
+        # Only the original ticker should be ranked if no peers
+        self.assertEqual(response_data['total_peers_ranked'], 1)
+        self.assertEqual(response_data['rank'], 1)
+        self.assertEqual(len(response_data['ranked_peers_data']), 1)
+        self.assertEqual(response_data['ranked_peers_data'][0]['ticker'], 'AAPL')
+
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_industry_rank_endpoint_peers_service_unavailable(self, mock_get, mock_post):
+        """
+        Test the /leadership/industry_rank/<ticker> endpoint when peers service is unavailable
+        """
+        mock_get.return_value = MagicMock(status_code=503) # Peers service unavailable
+
+        response = self.app.get('/leadership/industry_rank/AAPL')
+        self.assertEqual(response.status_code, 500) # Error from check_industry_leadership
+        response_data = response.json
+        self.assertIn('error', response_data)
+        self.assertIn('Could not fetch industry peers', response_data['error'])
+
+    @patch('app.requests.post')
+    @patch('app.requests.get')
+    def test_industry_rank_endpoint_batch_service_unavailable(self, mock_get, mock_post):
+        """
+        Test the /leadership/industry_rank/<ticker> endpoint when batch financial service is unavailable
+        """
+        mock_peers_response = MagicMock()
+        mock_peers_response.status_code = 200
+        mock_peers_response.json.return_value = {
+            "industry": "Technology",
+            "peers": ["MSFT", "GOOGL"]
+        }
+
+        mock_get.return_value = mock_peers_response
+        mock_post.return_value = MagicMock(status_code=503) # Batch service unavailable
+
+        response = self.app.get('/leadership/industry_rank/AAPL')
+        self.assertEqual(response.status_code, 500) # Error from check_industry_leadership
+        response_data = response.json
+        self.assertIn('error', response_data)
+        self.assertIn('Could not fetch batch financial data', response_data['error'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -178,3 +178,21 @@ def get_core_financials(ticker_symbol):
     except Exception as e:
         print(f"Error fetching core financials for {ticker_symbol}: {e}")
         return None
+
+def get_batch_core_financials(tickers: list[str]) -> dict:
+    """
+    Fetches core financial data for a list of tickers.
+    
+    Args:
+        tickers: A list of stock symbols to fetch data for.
+        
+    Returns:
+        A dictionary where keys are tickers and values are their core financial data.
+        If a ticker's data cannot be fetched, its value will be None.
+    """
+    results = {}
+    for ticker_symbol in tickers:
+        # Introduce a small delay to avoid hitting rate limits when fetching multiple tickers
+        time.sleep(random.uniform(0.1, 0.5))
+        results[ticker_symbol] = get_core_financials(ticker_symbol)
+    return results

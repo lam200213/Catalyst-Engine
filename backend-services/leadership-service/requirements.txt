@@ -2,5 +2,6 @@ Flask
 requests
 numpy
 pandas
+requests
 pytest
 pytest-benchmark

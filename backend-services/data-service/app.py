@@ -18,10 +18,12 @@ db = None
 price_cache = None
 news_cache = None
 financials_cache = None
+industry_cache = None # New cache for industry data
 
 # Cache expiration times in seconds
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
 NEWS_CACHE_TTL = 14400
+INDUSTRY_CACHE_TTL = 86400 # 1 day
 
 # A helper function to make index creation robust
 def _create_ttl_index(collection, field, ttl_seconds, name):
@@ -48,7 +50,7 @@ def _create_ttl_index(collection, field, ttl_seconds, name):
             raise
 
 def init_db():
-    global client, db, price_cache, news_cache
+    global client, db, price_cache, news_cache, financials_cache, industry_cache
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
     client = MongoClient(MONGO_URI)
     db = client.stock_analysis # Database name
@@ -56,11 +58,13 @@ def init_db():
     price_cache = db.price_cache # Collection for price data
     news_cache = db.news_cache   # Collection for news data
     financials_cache = db.financials_cache # Collection for financial data
+    industry_cache = db.industry_cache # New collection for industry data
 
     # Use the robust helper function to create/update TTL indexes
     _create_ttl_index(price_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index")
     _create_ttl_index(news_cache, "createdAt", NEWS_CACHE_TTL, "createdAt_ttl_index")
     _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
+    _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
 
 @app.route('/data/<path:ticker>', methods=['GET'])
 def get_data(ticker: str):
@@ -333,6 +337,79 @@ def get_core_financials(ticker):
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
     
+@app.route('/industry/peers/<path:ticker>', methods=['GET'])
+def get_industry_peers(ticker: str):
+    """
+    Provides company peers and industry classification for a given ticker, with caching.
+    """
+    if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
+        return jsonify({"error": "Invalid ticker format"}), 400
+
+    cached_data = industry_cache.find_one({'ticker': ticker})
+    if cached_data:
+        print(f"DATA-SERVICE: Cache HIT for industry/peers: {ticker}")
+        industry_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        return jsonify(cached_data['data'])
+
+    print(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
+    data = finnhub_provider.get_company_peers_and_industry(ticker)
+
+    if data:
+        industry_cache.insert_one({
+            "ticker": ticker,
+            "data": data,
+            "createdAt": datetime.now(timezone.utc)
+        })
+        print(f"DATA-SERVICE: CACHE INSERT for industry/peers: {ticker}")
+        return jsonify(data)
+    else:
+        return jsonify({"error": "Data not found for ticker"}), 404
+
+@app.route('/financials/core/batch', methods=['POST'])
+def get_batch_core_financials_route():
+    """
+    Provides core financial data for a batch of tickers, with data contract enforcement.
+    """
+    payload = request.get_json()
+    if not payload or 'tickers' not in payload:
+        return jsonify({"error": "Invalid request payload. 'tickers' is required."}), 400
+
+    tickers = payload['tickers']
+    if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
+        return jsonify({"error": "'tickers' must be a list of strings."}), 400
+
+    if not tickers:
+        return jsonify({"success": {}, "failed": []}), 200
+
+    # Fetch data from provider
+    raw_data = yfinance_provider.get_batch_core_financials(tickers)
+
+    processed_data = {}
+    failed_tickers = []
+
+    for ticker, data in raw_data.items():
+        if data:
+            # Enforce data contract
+            total_revenue = data.get('totalRevenue')
+            net_income = data.get('netIncome')
+            market_cap = data.get('marketCap')
+
+            # Validate and substitute if not numerical
+            processed_total_revenue = total_revenue if isinstance(total_revenue, (int, float)) else 0
+            processed_net_income = net_income if isinstance(net_income, (int, float)) else 0
+            processed_market_cap = market_cap if isinstance(market_cap, (int, float)) else 0
+
+            processed_data[ticker] = {
+                "totalRevenue": processed_total_revenue,
+                "netIncome": processed_net_income,
+                "marketCap": processed_market_cap,
+                **{k: v for k, v in data.items() if k not in ['totalRevenue', 'netIncome', 'marketCap']} # Keep other fields
+            }
+        else:
+            failed_tickers.append(ticker)
+
+    return jsonify({"success": processed_data, "failed": failed_tickers}), 200
+
 if __name__ == '__main__':
     init_db() # Initialize the database connection
     app.run(host='0.0.0.0', port=PORT)
