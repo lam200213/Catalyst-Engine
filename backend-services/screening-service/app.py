@@ -44,7 +44,7 @@ def screen_ticker_endpoint(ticker):
     try:
         ticker = ticker.upper()
         # Fetch historical price data from data-service
-        data_service_url = f"{DATA_SERVICE_URL}/data/{ticker}"
+        data_service_url = f"{DATA_SERVICE_URL}/price/{ticker}"
         hist_resp = requests.get(data_service_url)
 
         # Explicitly check for non-200 status codes from data-service
@@ -89,38 +89,6 @@ def screen_ticker_endpoint(ticker):
         # This catches other unexpected errors within the screening-service
         return jsonify({"error": "An internal error occurred in the screening-service.", "details": str(e)}), 500
 
-def _process_ticker(ticker):
-    """
-    Helper function to process a single ticker.
-    Encapsulates data fetching and screening logic.
-    Returns the ticker if it passes, otherwise None.
-    """
-    try:
-        # 1. Fetch data for the ticker
-        data_service_url = f"{DATA_SERVICE_URL}/data/{ticker.upper()}"
-        hist_resp = requests.get(data_service_url)
-        
-        # Skip this ticker if data fetching fails
-        if hist_resp.status_code != 200:
-            print(f"Skipping {ticker}: Failed to get data (status {hist_resp.status_code})")
-            return None
-        
-        historical_data = hist_resp.json()
-        
-        # 2. Apply screening logic
-        result = apply_screening_criteria(ticker, historical_data)
-        
-        # 3. Return ticker if it passes
-        if result.get("passes", False):
-            return ticker
-            
-    except requests.exceptions.RequestException as e:
-        print(f"Skipping {ticker} due to connection error: {e}")
-    except Exception as e:
-        print(f"Skipping {ticker} due to an unexpected error during its processing: {e}")
-    
-    return None
-
 # Endpoint to screen a batch of tickers
 def _process_chunk(chunk):
     """
@@ -130,7 +98,7 @@ def _process_chunk(chunk):
     passing_in_chunk = []
     try:
         # 1. Fetch data for the entire chunk from the data-service's batch endpoint
-        data_service_url = f"{DATA_SERVICE_URL}/data/batch"
+        data_service_url = f"{DATA_SERVICE_URL}/price/batch"
         resp = requests.post(data_service_url, json={"tickers": chunk, "source": "yfinance"}, timeout=120)
         
         if resp.status_code != 200:

@@ -178,20 +178,24 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
         return None
 
-def _transform_income_statements(statements):
-    """Helper to extract raw values and create the keys expected by the leadership logic."""
+def _transform_income_statements(statements, shares_outstanding):
+    """Helper to extract raw values and manually calculate EPS if not provided."""
     transformed = []
     for s in statements:
-        # Ensure we handle cases where financial data might be missing
         net_income = s.get('netIncome', {}).get('raw')
         total_revenue = s.get('totalRevenue', {}).get('raw')
-        # Get EPS instead of using Net Income for "Earnings"
+        
+        # Try to get pre-calculated EPS first
         eps = (s.get('basicEps') or {}).get('raw')
         
+        # Fallback: Manually calculate EPS if not available and data is valid
+        if eps is None and net_income is not None and shares_outstanding is not None and shares_outstanding > 0:
+            eps = net_income / shares_outstanding
+
         transformed.append({
-            'Earnings': eps, # Use EPS for earnings-related checks
+            'Earnings': eps,
+            'Net Income': net_income,
             'Revenue': total_revenue,
-            'Net Income': net_income, # Keep Net Income for margin checks
             'Total Revenue': total_revenue,
         })
     return transformed
@@ -249,27 +253,23 @@ def get_core_financials(ticker_symbol):
             
             info = result[0]
 
-            # Latest Add: More robust data extraction
             summary_detail = info.get('summaryDetail') or {}
             default_key_stats = info.get('defaultKeyStatistics') or {}
             asset_profile = info.get('assetProfile') or {}
             
-            # Gone: Old parsing logic
-            # income_statement_history = info.get('incomeStatementHistory') or {}
-            # income_statements = income_statement_history.get('incomeStatementHistory', [])
-            # raw_annual = [s for s in income_statements if s.get('periodType') == 'ANNUAL']
-            # raw_quarterly = [s for s in income_statements if s.get('periodType') == 'QUARTERLY']
+            # Get sharesOutstanding to pass to the helper function
+            shares_outstanding = (default_key_stats.get('sharesOutstanding') or {}).get('raw')
 
-            # Latest Add: Correctly parse separate annual and quarterly history keys
+            # Parse separate annual and quarterly history keys
             annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
             quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistoryQuarterly', [])
 
-            annual_earnings_list = _transform_income_statements(annual_history)
-            quarterly_earnings_list = _transform_income_statements(quarterly_history)
+            annual_earnings_list = _transform_income_statements(annual_history, shares_outstanding)
+            quarterly_earnings_list = _transform_income_statements(quarterly_history, shares_outstanding)
 
             data = {
                 'marketCap': (summary_detail.get('marketCap') or {}).get('raw'),
-                'sharesOutstanding': (default_key_stats.get('sharesOutstanding') or {}).get('raw'),
+                'sharesOutstanding': shares_outstanding,
                 'floatShares': (default_key_stats.get('floatShares') or {}).get('raw'),
                 'ipoDate': (asset_profile.get('ipoDate') or {}).get('fmt'),
                 'annual_earnings': annual_earnings_list,

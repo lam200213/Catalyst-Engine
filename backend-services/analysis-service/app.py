@@ -100,7 +100,7 @@ def analyze_ticker_endpoint(ticker):
     try:
         ticker = ticker.upper()
         # 1. Fetch historical data from the data-service
-        hist_resp = requests.get(f"{DATA_SERVICE_URL}/data/{ticker}")
+        hist_resp = requests.get(f"{DATA_SERVICE_URL}/price/{ticker}")
         
         if hist_resp.status_code != 200:
             try:

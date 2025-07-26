@@ -8,8 +8,8 @@ TICKER = "AAPL" # Use a common, reliable ticker for the test
 
 # URLs for the data-service endpoints that leadership-service depends on
 endpoints_to_test = {
-    "Core Financials": f"{DATA_SERVICE_URL}/financials/core/{TICKER}",
-    "Price History": f"{DATA_SERVICE_URL}/data/{TICKER}",
+    "Core Financials": f"{DATA_SERVICE_URL}/core/{TICKER}",
+    "Price History": f"{DATA_SERVICE_URL}/price/{TICKER}",
     "Industry Peers": f"{DATA_SERVICE_URL}/industry/peers/{TICKER}"
 }
 

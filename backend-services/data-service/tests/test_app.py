@@ -108,7 +108,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         mock_get_stock_data.return_value = [{"formatted_date": "2025-07-20", "close": 156.0}]
 
         # Act
-        self.app.get(f'/data/{ticker}?source=yfinance')
+        self.app.get(f'/price/{ticker}?source=yfinance')
 
         # Assert: The provider was called with the day AFTER the last cached date
         expected_start_date = last_cached_date_obj + timedelta(days=1)
@@ -132,7 +132,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.mock_price_cache.find_one.return_value = fresh_record
 
         # Act
-        response = self.app.get(f'/data/{ticker}?source=yfinance')
+        response = self.app.get(f'/price/{ticker}?source=yfinance')
 
         # Assert
         self.assertEqual(response.status_code, 200)
@@ -151,7 +151,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.mock_price_cache.find_one.return_value = None
 
         # Act
-        response = self.app.get(f'/data/{ticker}?source=yfinance')
+        response = self.app.get(f'/price/{ticker}?source=yfinance')
 
         # Assert
         self.assertEqual(response.status_code, 404)
@@ -170,7 +170,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
     @patch('app.yfinance_provider.get_stock_data')
     def test_batch_endpoint_success(self, mock_get_stock_data, mock_init_db):
         """
-        Tests the /data/batch endpoint for successfully fetching data for a mix
+        Tests the /price/batch endpoint for successfully fetching data for a mix
         of cached and uncached tickers.
         """
         # --- Arrange ---
@@ -201,7 +201,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         }
 
         # --- Act ---
-        response = self.app.post('/data/batch', json=request_payload)
+        response = self.app.post('/price/batch', json=request_payload)
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
@@ -240,7 +240,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         request_payload = {'tickers': [], 'source': 'yfinance'}
 
         # --- Act ---
-        response = self.app.post('/data/batch', json=request_payload)
+        response = self.app.post('/price/batch', json=request_payload)
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
@@ -266,7 +266,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         # --- Act & Assert ---
         for payload in [payload1, payload2, payload3]:
             with self.subTest(payload=payload):
-                response = self.app.post('/data/batch', json=payload)
+                response = self.app.post('/price/batch', json=payload)
                 self.assertEqual(response.status_code, 400)
                 self.assertIn('error', response.json)
         
@@ -288,7 +288,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         request_payload = {'tickers': ['AAPL', 'MSFT'], 'source': 'yfinance'}
 
         # --- Act ---
-        response = self.app.post('/data/batch', json=request_payload)
+        response = self.app.post('/price/batch', json=request_payload)
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)

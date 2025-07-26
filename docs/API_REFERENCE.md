@@ -8,13 +8,13 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     curl http://localhost:3000/tickers
     ```
 
-* **GET `/data/:ticker`**
+* **GET `/price/:ticker`**
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker, with caching.
     * **Note:** The `source` parameter is handled by the `data-service` directly, not the gateway.
   - **Example Usage:**
     ```bash
-    curl http://localhost:3000/data/AAPL?source=yfinance
+    curl http://localhost:3000/price/AAPL?source=yfinance
     ```
 
 * **GET `/news/:ticker`**
@@ -25,12 +25,12 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     curl http://localhost:3000/news/AAPL
     ```
 
-- **POST `/data/batch`**
+- **POST `/price/batch`**
   - Proxies to: `data-service`
   - Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
   - **Example Usage:**
     ```bash
-    curl -X POST http://localhost:3000/data/batch \
+    curl -X POST http://localhost:3000/price/batch \
       -H "Content-Type: application/json" \
       -d '{"tickers": ["AAPL", "GOOGL", "MSFT", "FAKETICKER"], "source": "yfinance"}'
     ```

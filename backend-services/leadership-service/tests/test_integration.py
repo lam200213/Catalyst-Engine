@@ -77,9 +77,9 @@ class TestLeadershipScreening(unittest.TestCase):
             if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
             # Mock for rally check price data
-            if 'data/PASS-TICKER' in url:
+            if 'price/PASS-TICKER' in url:
                 return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data(performance_factor=1.02)) # Stock outperforms
-            if 'data/^GSPC' in url:
+            if 'price/^GSPC' in url:
                 return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data()) # Market rally
             # Mocks for industry leadership check
             if 'industry/peers/PASS-TICKER' in url:
@@ -221,9 +221,9 @@ class TestLeadershipScreening(unittest.TestCase):
         def side_effect(url, **kwargs):
             if 'financials/core/AAPL' in url:
                 return mock_data_service_response(200, self._get_mock_financial_data())
-            if 'data/AAPL' in url:
+            if 'price/AAPL' in url:
                 return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
-            if 'data/^GSPC' in url:
+            if 'price/^GSPC' in url:
                 return mock_data_service_response(200, self._get_mock_price_data())
             if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
@@ -254,9 +254,9 @@ class TestLeadershipScreening(unittest.TestCase):
         def side_effect(url, **kwargs):
             if 'financials/core/AAPL' in url:
                 return mock_data_service_response(200, mock_financials)
-            if 'data/AAPL' in url:
+            if 'price/AAPL' in url:
                 return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
-            if 'data/^GSPC' in url:
+            if 'price/^GSPC' in url:
                 return mock_data_service_response(200, self._get_mock_price_data())
             if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})

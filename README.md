@@ -45,7 +45,7 @@ graph LR
         subgraph Data Layer
             APIGateway --> DataService[Data Service];
             ScreeningService -- "Requests data in chunks" --> DataService;
-            DataService -- "Responds via /data/batch" --> ScreeningService;
+            DataService -- "Responds via /price/batch" --> ScreeningService;
             AnalysisService --> DataService;
             LeadershipService --> DataService;
             DataService <--> MongoDB[(MongoDB Cache)];
@@ -57,7 +57,7 @@ graph LR
     style Scheduler fill:#facc15,stroke:#713f12,stroke-width:2px,color:#000
 ```
 
-**Screening & Data Service Communication:** The `screening-service` fetches data from the `data-service` in chunks using the `/data/batch` endpoint. This batching approach is more efficient than requesting data for each ticker individually, especially when screening a large number of stocks.
+**Screening & Data Service Communication:** The `screening-service` fetches data from the `data-service` in chunks using the `/price/batch` endpoint. This batching approach is more efficient than requesting data for each ticker individually, especially when screening a large number of stocks.
 
 ### Screenshots
 ![Sample](docs/images/homepage.png)

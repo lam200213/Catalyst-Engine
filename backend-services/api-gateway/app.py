@@ -14,7 +14,7 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 # Service URLs are now managed via environment variables
 # These point to the internal Docker service names
 SERVICES = {
-    "data": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
+    "price": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "news": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "financials": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "industry": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
@@ -39,15 +39,21 @@ def gateway(service, path=""):
     if '..' in path:
         return jsonify({"error": "Malicious path detected"}), 400
 
-    # Construct the full URL for the target service
-    if service == 'tickers': # Specific override for the simple ticker service
+    base_url = SERVICES[service]
+    # Special handling for different routing patterns
+    if service == 'tickers':
         target_url = f"{SERVICES[service]}/tickers"
-    else:
-        # The logic directly forwards the path, which is what the downstream service expects.
-        # e.g., a request to /financials/core/AAPL becomes a request to /core/AAPL on the data-service.
-        base_url = SERVICES[service]
+    elif service == 'financials':
+        # For 'financials', the service name is not part of the downstream path
+        # e.g., /financials/core/AAPL -> http://data-service:3001/core/AAPL
         target_url = f"{base_url}/{path.rstrip('/')}"
-
+    else:
+        # For most other services, the full path is the service name + the path
+        # e.g., /screen/AAPL -> http://screening-service:3002/screen/AAPL
+        # e.g., /cache/clear -> http://data-service:3001/cache/clear
+        full_path = f"{service}/{path}".rstrip('/')
+        target_url = f"{base_url}/{full_path}"
+        
     try:
         # Conditional logic to handle POST vs. GET requests
         if request.method == 'POST':
@@ -61,8 +67,13 @@ def gateway(service, path=""):
             query_params = dict(request.args)
             resp = requests.get(target_url, params=query_params, timeout=20)
 
-        # The client can then handle different status codes (e.g., 404, 500)
-        return jsonify(resp.json()), resp.status_code
+        # Safely handle JSON decoding
+        try:
+            json_data = resp.json()
+        except requests.exceptions.JSONDecodeError:
+            json_data = {"error": f"Non-JSON or empty response from {service}", "details": resp.text}
+        
+        return jsonify(json_data), resp.status_code
 
     except requests.exceptions.Timeout:
         print(f"Timeout connecting to {service}")
@@ -77,7 +88,7 @@ def gateway(service, path=""):
     except Exception as e:
         # Catch any other unexpected errors in the gateway itself
         print(f"An unexpected internal error occurred in the gateway: {e}")
-        return jsonify({"error": "An internal error occurred in the gateway", "details": str(e)}), 500
+        return jsonify({"error": "An unexpected internal error occurred in the gateway", "details": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

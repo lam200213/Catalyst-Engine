@@ -209,7 +209,7 @@ class TestScreeningEndpoint(unittest.TestCase):
         self.assertIsNotNone(json_data)
         self.assertEqual(json_data['ticker'], 'AAPL')
         self.assertTrue(json_data['passes'])
-        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/AAPL")
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/price/AAPL")
 
     @patch('app.requests.get')
     def test_single_ticker_not_found_case(self, mock_get):
@@ -233,7 +233,7 @@ class TestScreeningEndpoint(unittest.TestCase):
         self.assertIsNotNone(json_data)
         self.assertIn("Invalid or non-existent ticker", json_data['error'])
         self.assertEqual(json_data['details'], "Ticker not found")
-        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/NONEXISTENT")
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/price/NONEXISTENT")
 
     @patch('app.requests.get', side_effect=requests.exceptions.ConnectionError("Mocked connection error"))
     def test_single_ticker_service_unavailable_case(self, mock_get):
@@ -252,7 +252,7 @@ class TestScreeningEndpoint(unittest.TestCase):
         self.assertIsNotNone(json_data)
         self.assertIn("Error connecting to the data-service.", json_data['error'])
         self.assertIn("Mocked connection error", json_data['details'])
-        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/data/AAPL")
+        mock_get.assert_called_once_with(f"{DATA_SERVICE_URL}/price/AAPL")
 
     @patch('app.requests.post')
     @patch('builtins.print')

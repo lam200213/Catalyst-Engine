@@ -43,7 +43,7 @@ def fetch_price_data(ticker):
     """Fetch price data from data service"""
     try:
         # Fetch stock price data
-        stock_url = f"{DATA_SERVICE_URL}/data/{ticker}"
+        stock_url = f"{DATA_SERVICE_URL}/price/{ticker}"
         stock_response = requests.get(stock_url, timeout=10)
         
         if stock_response.status_code != 200:

@@ -100,7 +100,7 @@ A key interaction is between the `screening-service` and the `data-service`. Whe
 
 To optimize this process, the `screening-service` now communicates with the `data-service` using a batch endpoint:
 
-*   **Endpoint:** `/data/batch`
+*   **Endpoint:** `/price/batch`
 *   **Method:** `POST`
 *   **Payload:** A JSON object containing a list of stock tickers.
 *   **Response:** A JSON object containing the historical price data for all requested tickers.
