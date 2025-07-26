@@ -200,7 +200,7 @@ def leadership_analysis(ticker):
 
     # Check industry leadership
     leadership_result = check_industry_leadership(ticker)
-    if "rank" in leadership_result:
+    if "rank" in leadership_result and leadership_result['rank'] is not None:
         response['details']['is_industry_leader'] = leadership_result['rank'] <= 3
     
     return jsonify(response)

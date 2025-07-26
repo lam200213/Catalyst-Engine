@@ -246,15 +246,7 @@ def get_core_financials(ticker_symbol):
                 print(f"PROVIDER-DEBUG: Yahoo API returned non-200 status: {response.status_code}", flush=True)
                 return None
 
-            # Latest Add: Add detailed logging to inspect the raw API response
-            raw_json_response = response.json()
-            print(f"PROVIDER-DEBUG: Raw Yahoo Finance response for {ticker_symbol}:")
-            # Use json.dumps for pretty printing the dictionary in the log
-            import json
-            print(json.dumps(raw_json_response, indent=2))
-            result = raw_json_response.get('quoteSummary', {}).get('result')
-
-            #result = response.json().get('quoteSummary', {}).get('result')
+            result = response.json().get('quoteSummary', {}).get('result')
             if not result:
                 print(f"PROVIDER-DEBUG: Yahoo API response has no 'result' field.", flush=True)
                 return None
@@ -270,11 +262,10 @@ def get_core_financials(ticker_symbol):
 
             # Parse separate annual and quarterly history keys
             annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
-            quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistoryQuarterly', [])
+            quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
 
             annual_earnings_list = _transform_income_statements(annual_history, shares_outstanding)
             quarterly_earnings_list = _transform_income_statements(quarterly_history, shares_outstanding)
-
             data = {
                 'marketCap': (summary_detail.get('marketCap') or {}).get('raw'),
                 'sharesOutstanding': shares_outstanding,

@@ -11,7 +11,7 @@ from providers import yfinance_provider
 
 class TestYfinanceProviderCore(unittest.TestCase):
 
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_get_core_financials_regular_stock(self, mock_cffi_get):
         """Tests the get_core_financials function for a regular stock ticker."""
         # Arrange
@@ -61,7 +61,7 @@ class TestYfinanceProviderCore(unittest.TestCase):
         self.assertEqual(data['high_52_week'], 4150)
         self.assertEqual(data['low_52_week'], 3900)
 
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_get_core_financials_api_error(self, mock_cffi_get):
         """Tests the get_core_financials function for API errors."""
         # Arrange

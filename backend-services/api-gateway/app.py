@@ -8,7 +8,6 @@ app = Flask(__name__)
 PORT = int(os.getenv("PORT", 3000))
 
 # Secure CORS Configuration: Only allow requests from the frontend's origin
-# This replaces the overly permissive CORS(app)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
 # Service URLs are now managed via environment variables
@@ -43,17 +42,11 @@ def gateway(service, path=""):
     # Special handling for different routing patterns
     if service == 'tickers':
         target_url = f"{SERVICES[service]}/tickers"
-    elif service == 'financials':
-        # For 'financials', the service name is not part of the downstream path
-        # e.g., /financials/core/AAPL -> http://data-service:3001/core/AAPL
-        target_url = f"{base_url}/{path.rstrip('/')}"
     else:
-        # For most other services, the full path is the service name + the path
+        # The full path is the service name + the path
         # e.g., /screen/AAPL -> http://screening-service:3002/screen/AAPL
         # e.g., /cache/clear -> http://data-service:3001/cache/clear
-        full_path = f"{service}/{path}".rstrip('/')
-        target_url = f"{base_url}/{full_path}"
-        
+        target_url = f"{base_url.rstrip('/')}{request.path}"
     try:
         # Conditional logic to handle POST vs. GET requests
         if request.method == 'POST':

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-26
-Updated cache clear feature to drop the financials_cache and industry_cache collections.
+Debugged all leadership related services, now all runs without routing or 401/404 errors.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

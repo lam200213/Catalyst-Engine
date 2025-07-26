@@ -68,7 +68,7 @@ def init_db():
     _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
     _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
 
-@app.route('/core/batch', methods=['POST'])
+@app.route('/financials/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
     """
     Provides core financial data for a batch of tickers, with data contract enforcement.
@@ -113,7 +113,7 @@ def get_batch_core_financials_route():
 
     return jsonify({"success": processed_data, "failed": failed_tickers}), 200
 
-@app.route('/core/<path:ticker>', methods=['GET'])
+@app.route('/financials/core/<path:ticker>', methods=['GET'])
 def get_core_financials(ticker):
     """
     Provides core financial data for a given ticker, with caching.

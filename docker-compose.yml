@@ -25,9 +25,12 @@ services:
     networks:
       - app-network
     # for development
-    # volumes:
-      # - ./backend-services/data-service:/app
-    # Mount local directory to container's /app
+    volumes:
+      - ./backend-services/data-service:/app
+      # Mount local directory to container's /app
+      # - yahoo_tmp:/tmp  
+      # Persistent storage for /tmp
+    
 
   screening-service:
     build: ./backend-services/screening-service
@@ -179,9 +182,9 @@ services:
 
 volumes:
   mongodb_data:
+  #yahoo_tmp:
+  # for debug, saving the temporary files of yfinance response 
 
 networks:
   app-network:
     driver: bridge
-
-# Remove duplicate services block

@@ -12,7 +12,7 @@ from providers import yfinance_provider
 class TestYfinanceProvider(unittest.TestCase):
 
     # Corrected patch target
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_get_stock_data_uses_curl_cffi(self, mock_cffi_get):
         """Tests that the data provider uses curl_cffi for requests."""
         # Arrange
@@ -26,7 +26,7 @@ class TestYfinanceProvider(unittest.TestCase):
         mock_cffi_get.assert_called_once()
 
     # Corrected patch target
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_get_stock_data_success(self, mock_cffi_get):
         """Tests successful data retrieval and transformation."""
         # Arrange
@@ -53,7 +53,7 @@ class TestYfinanceProvider(unittest.TestCase):
         self.assertEqual(data[0]['open'], 150)
 
     # Corrected patch target
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_get_stock_data_malformed_json(self, mock_cffi_get):
         """Tests that the function returns None for malformed JSON."""
         # Arrange
@@ -70,7 +70,7 @@ class TestYfinanceProvider(unittest.TestCase):
 
     @patch('providers.yfinance_provider.random.uniform')
     @patch('providers.yfinance_provider.time.sleep')
-    @patch('curl_cffi.requests.get')
+    @patch('providers.yfinance_provider.session.get')
     def test_throttling_is_applied(self, mock_cffi_get, mock_sleep, mock_uniform):
         """Tests that a randomized delay is applied to throttle requests."""
         # Arrange
