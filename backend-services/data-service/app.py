@@ -126,7 +126,6 @@ def get_core_financials(ticker):
     if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
         return jsonify({"error": "Invalid ticker format"}), 400
 
-    # Check cache first using the global financials_cache variable
     cached_data = financials_cache.find_one({'ticker': ticker})
     if cached_data:
         print(f"DATA-SERVICE: Cache HIT for financials: {ticker}")
@@ -377,6 +376,12 @@ def clear_cache():
         if news_cache is not None:
             news_cache.drop()
             print("DATA-SERVICE: Dropped news_cache collection.")
+        if financials_cache is not None:
+            financials_cache.drop()
+            print("DATA-SERVICE: Dropped financials_cache collection.")
+        if industry_cache is not None:
+            industry_cache.drop()
+            print("DATA-SERVICE: Dropped industry_cache collection.")
         
         # Re-initialize the collections and their TTL indexes
         init_db()

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-07-26
-Debugged the /industry/peers not returning correct results issue
+Updated cache clear feature to drop the financials_cache and industry_cache collections.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

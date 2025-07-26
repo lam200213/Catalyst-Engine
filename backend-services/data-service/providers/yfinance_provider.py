@@ -246,7 +246,15 @@ def get_core_financials(ticker_symbol):
                 print(f"PROVIDER-DEBUG: Yahoo API returned non-200 status: {response.status_code}", flush=True)
                 return None
 
-            result = response.json().get('quoteSummary', {}).get('result')
+            # Latest Add: Add detailed logging to inspect the raw API response
+            raw_json_response = response.json()
+            print(f"PROVIDER-DEBUG: Raw Yahoo Finance response for {ticker_symbol}:")
+            # Use json.dumps for pretty printing the dictionary in the log
+            import json
+            print(json.dumps(raw_json_response, indent=2))
+            result = raw_json_response.get('quoteSummary', {}).get('result')
+
+            #result = response.json().get('quoteSummary', {}).get('result')
             if not result:
                 print(f"PROVIDER-DEBUG: Yahoo API response has no 'result' field.", flush=True)
                 return None

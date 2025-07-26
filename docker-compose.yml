@@ -25,8 +25,8 @@ services:
     networks:
       - app-network
     # for development
-    volumes:
-      - ./backend-services/data-service:/app
+    # volumes:
+      # - ./backend-services/data-service:/app
     # Mount local directory to container's /app
 
   screening-service:
