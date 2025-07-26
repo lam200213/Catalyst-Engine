@@ -43,11 +43,10 @@ def gateway(service, path=""):
     if service == 'tickers': # Specific override for the simple ticker service
         target_url = f"{SERVICES[service]}/tickers"
     else:
-        # For all other services, forward the original path structure
-        # e.g., /financials/core/AAPL -> http://data-service:3001/financials/core/AAPL
+        # The logic directly forwards the path, which is what the downstream service expects.
+        # e.g., a request to /financials/core/AAPL becomes a request to /core/AAPL on the data-service.
         base_url = SERVICES[service]
-        full_path = f"{service}/{path}".rstrip('/')
-        target_url = f"{base_url}/{full_path}"
+        target_url = f"{base_url}/{path.rstrip('/')}"
 
     try:
         # Conditional logic to handle POST vs. GET requests

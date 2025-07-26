@@ -1,13 +1,18 @@
 # backend-services/data-service/providers/yfinance_provider.py
-from curl_cffi import requests
+from curl_cffi import requests as cffi_requests
 import datetime as dt
 import time # Add time for throttling
 import random # Add random for throttling
 import pandas as pd
 import logging
 import time
+import threading
 #DEBUG
 import sys
+
+session = cffi_requests.Session()
+_YAHOO_CRUMB = None
+_AUTH_LOCK = threading.Lock()
 
 # --- HIGH-VISIBILITY LOGGING TO CONFIRM FILE IS LOADED ---
 # This will print the moment the Python interpreter loads this file.
@@ -26,6 +31,43 @@ USER_AGENTS = [
 # Proxies are now loaded from an environment variable for better configuration management.
 import os # Add os import for environment variable access
 PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
+
+def _get_yahoo_auth():
+    """
+    Performs an initial request to Yahoo Finance to get the necessary
+    cookies and the API 'crumb' for authenticated requests.
+    This is thread-safe to prevent multiple requests in a concurrent environment.
+    """
+    global _YAHOO_CRUMB
+    # Use a lock to ensure only one thread tries to get the crumb at a time
+    with _AUTH_LOCK:
+        # If another thread already got the crumb while this one was waiting, just return it
+        if _YAHOO_CRUMB:
+            return _YAHOO_CRUMB
+
+        print("PROVIDER-DEBUG: No auth crumb found. Fetching new one...", flush=True)
+        try:
+            # The 'getcrumb' endpoint is a reliable way to get a valid crumb
+            crumb_url = "https://query1.finance.yahoo.com/v1/test/getcrumb"
+            headers = {'User-Agent': _get_random_user_agent()}
+            proxy = _get_random_proxy()
+
+            # The session object will automatically store the required cookies
+            crumb_response = session.get(
+                crumb_url,
+                headers=headers,
+                proxies=proxy,
+                impersonate="chrome110",
+                timeout=10
+            )
+            crumb_response.raise_for_status()
+            _YAHOO_CRUMB = crumb_response.text
+            print(f"PROVIDER-DEBUG: Successfully fetched new crumb: {_YAHOO_CRUMB}", flush=True)
+            return _YAHOO_CRUMB
+        except cffi_requests.errors.RequestsError as e:
+            sys.stderr.write(f"--- CRITICAL: Failed to get Yahoo auth crumb: {e} ---\n")
+            sys.stderr.flush()
+            return None
 
 def _get_random_user_agent() -> str:
     """Returns a random user-agent from the list."""
@@ -86,6 +128,9 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
     """
     Fetches historical stock data for a single ticker from Yahoo Finance.
     """
+    crumb = _get_yahoo_auth()
+    if not crumb:
+        return None
     #  Introduce request throttling to avoid rate-limiting.
     time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds
 
@@ -97,24 +142,25 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         # `period1` is the start timestamp, `period2` is the current time.
         start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
         end_ts = int(time.time())
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d&crumb={crumb}"
     else:
         # If no start_date is given, default to a 1-year data range.
         # This is used for initial data population or full cache refreshes.
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d&crumb={crumb}"
 
     headers = {'User-Agent': _get_random_user_agent()}
     proxy = _get_random_proxy()
 
     try:
-        response = requests.get(
+        response = session.get(
             url,
             headers=headers,
             proxies=proxy,
             impersonate="chrome110",
             timeout=10
         )
-
+        # Raise an exception for bad status codes to be caught below
+        response.raise_for_status()
         if response.status_code != 200:
             print(f"Yahoo Finance API returned status {response.status_code} for {ticker}")
             return None
@@ -123,8 +169,10 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         #  Pass ticker to transformation function
         return _transform_yahoo_response(data, ticker)
 
-    except requests.errors.RequestsError as e:
-        print(f"A curl_cffi request error occurred for {ticker}: {e}")
+    except cffi_requests.errors.RequestsError as e:
+        if e.response:
+            print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
+        print(f"A curl_cffi request error occurred for {ticker}: {e}", flush=True)
         return None
     except Exception as e:
         print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
@@ -149,93 +197,75 @@ def _transform_income_statements(statements):
     return transformed
 
 # Function to fetch core financial data for Leadership screening
+# backend-services/data-service/providers/yfinance_provider.py
+
 def get_core_financials(ticker_symbol):
     """
     Fetches core financial data points required for Leadership Profile screening.
     For S&P 500 (^GSPC), returns market data including current price, SMAs, and 52-week highs/lows.
     For other tickers, returns standard financial data.
     """
+    # Latest Add: High-visibility print statement with flush=True to guarantee it appears in logs
+    print(f"PROVIDER-DEBUG: Attempting to get core financials for {ticker_symbol}", flush=True)
+
     try:
-        # DEBUG
-        print(f"DEBUG: Entering get_core_financials for {ticker_symbol}")
-        # DEBUG ENDS
         start_time = time.time()
 
         # Special handling for major indices
         if ticker_symbol in ['^GSPC', '^DJI', 'QQQ']:
-            # Get historical data for calculating SMAs and 52-week ranges
             hist = _get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
-
             if not hist:
+                print(f"PROVIDER-DEBUG: No historical data for index {ticker_symbol}", flush=True)
                 return None
 
-            # Calculate required data points
-            current_price = float(hist[-1]['close'])
-            sma_50 = float(pd.DataFrame(hist)['close'].tail(50).mean())
-            sma_200 = float(pd.DataFrame(hist)['close'].tail(200).mean()) if len(hist) >= 200 else sma_50
-            high_52_week = float(pd.DataFrame(hist)['high'].max())
-            low_52_week = float(pd.DataFrame(hist)['low'].min())
-
+            df = pd.DataFrame(hist)
             data = {
-                'current_price': current_price,
-                'sma_50': sma_50,
-                'sma_200': sma_200,
-                'high_52_week': high_52_week,
-                'low_52_week': low_52_week
+                'current_price': float(df['close'].iloc[-1]),
+                'sma_50': float(df['close'].tail(50).mean()),
+                'sma_200': float(df['close'].tail(200).mean()) if len(df) >= 200 else float(df['close'].tail(50).mean()),
+                'high_52_week': float(df['high'].max()),
+                'low_52_week': float(df['low'].min())
             }
         else:
-            # Fetch financial data from Yahoo Finance API
-            url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}?modules=summaryDetail,assetProfile,financialData,defaultKeyStatistics,incomeStatementHistory,balanceSheetHistory,cashflowStatementHistory"
+            # Logic for regular stocks
+            crumb = _get_yahoo_auth()
+            if not crumb:
+                return None
+            
+            url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}?modules=summaryDetail,assetProfile,financialData,defaultKeyStatistics,incomeStatementHistory,incomeStatementHistoryQuarterly,balanceSheetHistory,cashflowStatementHistory&crumb={crumb}"
             headers = {'User-Agent': _get_random_user_agent()}
             proxy = _get_random_proxy()
 
-            response = requests.get(
-                url,
-                headers=headers,
-                proxies=proxy,
-                impersonate="chrome110",
-                timeout=10
-            )
-            # --- START DEBUGGING BLOCK ---
-            print("--- YAHOO FINANCE API DEBUG ---")
-            print(f"Request URL: {url}")
-            print(f"Status Code: {response.status_code}")
-            try:
-                # Attempt to pretty-print the JSON response for readability
-                import json
-                print(f"Raw Response JSON: {json.dumps(response.json(), indent=2)}")
-            except Exception as json_e:
-                print(f"Could not decode JSON. Raw Text: {response.text}")
-                print(f"JSON Decode Error: {json_e}")
-            print("--- END DEBUGGING BLOCK ---")
-            # --- END DEBUGGING BLOCK ---
-
+            response = session.get(url, headers=headers, proxies=proxy, impersonate="chrome110", timeout=15)
+            response.raise_for_status()
             if response.status_code != 200:
-                print(f"Yahoo Finance API returned status {response.status_code} for {ticker_symbol}")
+                print(f"PROVIDER-DEBUG: Yahoo API returned non-200 status: {response.status_code}", flush=True)
                 return None
 
-            # Robust data extraction to prevent crashes on null values
-            info = response.json()['quoteSummary']['result'][0]
+            result = response.json().get('quoteSummary', {}).get('result')
+            if not result:
+                print(f"PROVIDER-DEBUG: Yahoo API response has no 'result' field.", flush=True)
+                return None
+            
+            info = result[0]
 
-            # --- Safer Data Extraction ---
-            # This pattern (e.g., info.get('key') or {}) prevents crashes if the API
-            # returns a 'null' value for a key instead of an object.
+            # Latest Add: More robust data extraction
             summary_detail = info.get('summaryDetail') or {}
             default_key_stats = info.get('defaultKeyStatistics') or {}
             asset_profile = info.get('assetProfile') or {}
-            income_statement_history = info.get('incomeStatementHistory') or {}
+            
+            # Gone: Old parsing logic
+            # income_statement_history = info.get('incomeStatementHistory') or {}
+            # income_statements = income_statement_history.get('incomeStatementHistory', [])
+            # raw_annual = [s for s in income_statements if s.get('periodType') == 'ANNUAL']
+            # raw_quarterly = [s for s in income_statements if s.get('periodType') == 'QUARTERLY']
 
-            # Correctly parse and separate the financial statements
-            income_statements = income_statement_history.get('incomeStatementHistory', [])
-            
-            # 1. Filter the raw statements first
-            raw_annual = [s for s in income_statements if s.get('periodType') == 'ANNUAL']
-            raw_quarterly = [s for s in income_statements if s.get('periodType') == 'QUARTERLY']
-            
-            # 2. Then transform the filtered lists
-            annual_earnings_list = _transform_income_statements(raw_annual)
-            quarterly_earnings_list = _transform_income_statements(raw_quarterly)
-            quarterly_financials_list = quarterly_earnings_list
+            # Latest Add: Correctly parse separate annual and quarterly history keys
+            annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
+            quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistoryQuarterly', [])
+
+            annual_earnings_list = _transform_income_statements(annual_history)
+            quarterly_earnings_list = _transform_income_statements(quarterly_history)
 
             data = {
                 'marketCap': (summary_detail.get('marketCap') or {}).get('raw'),
@@ -244,21 +274,24 @@ def get_core_financials(ticker_symbol):
                 'ipoDate': (asset_profile.get('ipoDate') or {}).get('fmt'),
                 'annual_earnings': annual_earnings_list,
                 'quarterly_earnings': quarterly_earnings_list,
-                'quarterly_financials': quarterly_financials_list
+                'quarterly_financials': quarterly_earnings_list # This assumes earnings and financials are the same for now
             }
 
         duration = time.time() - start_time
-        logging.info(f"Yahoo Finance API call for {ticker_symbol} took {duration:.2f} seconds.")
+        print(f"PROVIDER-DEBUG: Yahoo Finance API call for {ticker_symbol} took {duration:.2f} seconds.", flush=True)
 
         return data
+    except cffi_requests.errors.RequestsError as e:
+        if e.response:
+            print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
+        print(f"A curl_cffi request error occurred for {ticker_symbol}: {e}", flush=True)
+        return None
     except Exception as e:
-        # --- HIGH-VISIBILITY EXCEPTION LOGGING ---
         sys.stderr.write(f"--- EXCEPTION CAUGHT in get_core_financials for {ticker_symbol} ---\n")
         sys.stderr.write(f"    Exception Type: {type(e).__name__}\n")
         sys.stderr.write(f"    Exception Details: {str(e)}\n")
         sys.stderr.write(f"--- END EXCEPTION ---\n")
         sys.stderr.flush()
-        # --- END HIGH-VISIBILITY LOGGING ---
         return None
 
 def get_batch_core_financials(tickers: list[str]) -> dict:

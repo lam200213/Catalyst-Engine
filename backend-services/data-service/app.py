@@ -68,7 +68,7 @@ def init_db():
     _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
     _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
 
-@app.route('/financials/core/batch', methods=['POST'])
+@app.route('/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
     """
     Provides core financial data for a batch of tickers, with data contract enforcement.
@@ -113,11 +113,15 @@ def get_batch_core_financials_route():
 
     return jsonify({"success": processed_data, "failed": failed_tickers}), 200
 
-@app.route('/financials/core/<path:ticker>', methods=['GET'])
+@app.route('/core/<path:ticker>', methods=['GET'])
 def get_core_financials(ticker):
     """
     Provides core financial data for a given ticker, with caching.
     """
+    # DEBUG
+    print(f"DEBUG: Entering get_core_financials in data service for {ticker}")
+    # DEBUG ENDS
+
     # Input validation
     if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
         return jsonify({"error": "Invalid ticker format"}), 400
@@ -146,7 +150,7 @@ def get_core_financials(ticker):
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
 
-@app.route('/data/batch', methods=['POST'])
+@app.route('/price/batch', methods=['POST'])
 def get_batch_data():
     """
     Handles fetching data for a batch of tickers.
@@ -236,7 +240,7 @@ def get_batch_data():
         "failed": failed_tickers
     }), 200
 
-@app.route('/data/<string:ticker>', methods=['GET'])
+@app.route('/price/<string:ticker>', methods=['GET'])
 def get_data(ticker: str):
     source = request.args.get('source', 'yfinance').lower()
     print(f"Received request for ticker: {ticker}, source: {source}")
