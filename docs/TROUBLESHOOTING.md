@@ -25,6 +25,7 @@ Error response from daemon: Conflict. The container name "/some-service" is alre
    docker-compose up --build -d
 
 ---
+
 # Developer Diagnostic Tools 🛠️
 
 The repository includes scripts to help diagnose common issues quickly. These should be your first step when troubleshooting problems that aren't simple container conflicts.
@@ -104,3 +105,38 @@ A failed run will highlight the specific endpoint that is failing and provide ne
    --- Diagnosis Complete ---
    ❌ One or more checks failed. Review the output above...
    ```
+
+### **4. Debugging External API Connectivity (e.g., Finnhub)**
+
+**When to Use**: When a service fails to fetch data from an external provider like Finnhub, and you suspect an issue with the API key or network connectivity from within the container.
+
+**Command**:
+
+1. **Check if the API Key is Present in the Container:** This command verifies that the environment variable from your .env file was successfully passed into the running container.
+
+   ```Bash  
+   docker-compose exec data-service python -c "import os; print(os.getenv('FINNHUB_API_KEY'))"
+   ```
+
+   **Expected Success Output**: Your full Finnhub API key.
+   
+   **Expected Failure Output**: None or a blank line. If you see this, check for typos in your .env file or restart your containers with docker-compose down && docker-compose up --build -d.
+
+2. **Test Direct API Connectivity with curl:** This command bypasses all application code and directly tests if the container can reach the Finnhub API with your key.
+
+One-Time Setup (If needed): The data-service container does not include curl by default. Run this command once to install it:
+
+   ```Bash  
+   docker-compose exec -u root data-service sh -c "apt-get update && apt-get install -y curl"
+   ```
+
+Test Command:
+Replace YOUR_API_KEY with your actual key from the .env file.
+
+   ```Bash  
+   docker-compose exec data-service curl "[https://finnhub.io/api/v1/stock/peers?symbol=NVDA&token=YOUR_API_KEY](https://finnhub.io/api/v1/stock/peers?symbol=NVDA&token=YOUR_API_KEY)"
+   ```
+
+   **Expected Success Output**: A JSON list of ticker symbols, like ["NVDA","AVGO","AMD",...].
+   
+   **Expected Failure Output**: A JSON error, like {"error":"Invalid API key"}.

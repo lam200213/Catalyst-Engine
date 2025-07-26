@@ -9,4 +9,3 @@ yfinance
 finnhub-python
 pytest
 curl-cffi
-curl_cffi

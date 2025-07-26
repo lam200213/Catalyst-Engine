@@ -6,6 +6,15 @@ import random # Add random for throttling
 import pandas as pd
 import logging
 import time
+#DEBUG
+import sys
+
+# --- HIGH-VISIBILITY LOGGING TO CONFIRM FILE IS LOADED ---
+# This will print the moment the Python interpreter loads this file.
+# If you don't see this in the logs, the container is using old code.
+sys.stderr.write("--- yfinance_provider.py MODULE LOADED ---\n")
+sys.stderr.flush()
+# --- END HIGH-VISIBILITY LOGGING ---
 
 # A list of user-agents to rotate through
 USER_AGENTS = [
@@ -147,6 +156,9 @@ def get_core_financials(ticker_symbol):
     For other tickers, returns standard financial data.
     """
     try:
+        # DEBUG
+        print(f"DEBUG: Entering get_core_financials for {ticker_symbol}")
+        # DEBUG ENDS
         start_time = time.time()
 
         # Special handling for major indices
@@ -240,7 +252,13 @@ def get_core_financials(ticker_symbol):
 
         return data
     except Exception as e:
-        print(f"Error fetching core financials for {ticker_symbol}: {e}")
+        # --- HIGH-VISIBILITY EXCEPTION LOGGING ---
+        sys.stderr.write(f"--- EXCEPTION CAUGHT in get_core_financials for {ticker_symbol} ---\n")
+        sys.stderr.write(f"    Exception Type: {type(e).__name__}\n")
+        sys.stderr.write(f"    Exception Details: {str(e)}\n")
+        sys.stderr.write(f"--- END EXCEPTION ---\n")
+        sys.stderr.flush()
+        # --- END HIGH-VISIBILITY LOGGING ---
         return None
 
 def get_batch_core_financials(tickers: list[str]) -> dict:

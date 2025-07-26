@@ -72,8 +72,8 @@ def get_company_peers_and_industry(ticker: str) -> dict | None:
         finnhub_client = finnhub.Client(api_key=api_key)
         
         peers = finnhub_client.company_peers(ticker)
-        profile = finnhub_client.company_profile2(ticker)
-        
+
+        profile = finnhub_client.company_profile2(symbol=ticker)
         industry = profile.get('finnhubIndustry') if profile else None
         
         return {
