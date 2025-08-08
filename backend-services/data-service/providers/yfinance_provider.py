@@ -7,12 +7,26 @@ import pandas as pd
 import logging
 import time
 import threading
+import pandas as pd
+import io
+import yfinance as yf
+from bs4 import BeautifulSoup
 #DEBUG
 import sys
 
 session = cffi_requests.Session()
 _YAHOO_CRUMB = None
 _AUTH_LOCK = threading.Lock()
+
+# --- Soft-coded Yahoo Finance Scraper Selectors ---
+# These class names are specific to the Yahoo Finance financial statements page.
+# Yahoo may update its website structure, causing these to fail.
+# If the scraper stops working, inspect the page's HTML and update these values.
+# - YF_ROW_CLASS: Represents a row in the financial table (e.g., "Total Revenue").
+# - YF_HEADER_ROW_CLASS: Represents the header row containing the dates.
+YF_ROW_CLASS = 'yf-t22klz'
+YF_HEADER_ROW_CLASS = 'yf-1yyu1pc'
+# --- End Selectors ---
 
 # --- HIGH-VISIBILITY LOGGING TO CONFIRM FILE IS LOADED ---
 # This will print the moment the Python interpreter loads this file.
@@ -200,8 +214,44 @@ def _transform_income_statements(statements, shares_outstanding):
         })
     return transformed
 
-# Function to fetch core financial data for Leadership screening
-# backend-services/data-service/providers/yfinance_provider.py
+# Functions to fetch core financial data for Leadership screening# Latest Add: Create a new helper using the yfinance library
+def _fetch_financials_with_yfinance(ticker):
+    """
+    Fetches quarterly financials for a ticker using the yfinance library.
+    """
+    print(f"PROVIDER-DEBUG: Attempting to fetch financials for {ticker} using yfinance library.")
+    try:
+        stock = yf.Ticker(ticker)
+        financials = stock.quarterly_financials
+        if financials.empty:
+            print(f"PROVIDER-DEBUG: No quarterly financials data found for {ticker} from yfinance.")
+            return None
+
+        # Gone: Original logic that caused the strftime error.
+        # financials_t = financials.transpose()
+        # financials_t['date'] = financials_t.index.strftime('%Y-%m-%d')
+        # ...
+
+        # Latest Add: Correctly process the yfinance DataFrame.
+        financials_df = financials.transpose()
+        records = []
+        for date_col in financials_df.columns:
+            # Safely access data for each date, now in columns
+            record = {
+                'date': date_col.strftime('%Y-%m-%d'),
+                'Revenue': int(financials_df.loc['Total Revenue', date_col]) if 'Total Revenue' in financials_df.index and pd.notna(financials_df.loc['Total Revenue', date_col]) else None,
+                'Net Income': int(financials_df.loc['Net Income', date_col]) if 'Net Income' in financials_df.index and pd.notna(financials_df.loc['Net Income', date_col]) else None,
+                'Earnings': float(financials_df.loc['Basic EPS', date_col]) if 'Basic EPS' in financials_df.index and pd.notna(financials_df.loc['Basic EPS', date_col]) else None,
+            }
+            # Add Total Revenue as well for consistency if needed, matching the curl output structure
+            if record['Revenue'] is not None:
+                record['Total Revenue'] = record['Revenue']
+            records.append(record)
+        return records
+
+    except Exception as e:
+        print(f"PROVIDER-DEBUG: yfinance library failed for {ticker}. Error: {e}")
+        return None
 
 def get_core_financials(ticker_symbol):
     """
@@ -209,13 +259,13 @@ def get_core_financials(ticker_symbol):
     For S&P 500 (^GSPC), returns market data including current price, SMAs, and 52-week highs/lows.
     For other tickers, returns standard financial data.
     """
-    # Latest Add: High-visibility print statement with flush=True to guarantee it appears in logs
+    start_time = time.time()
     print(f"PROVIDER-DEBUG: Attempting to get core financials for {ticker_symbol}", flush=True)
 
-    try:
-        start_time = time.time()
+    info = {}
+    data = None
 
-        # Special handling for major indices
+    try:
         if ticker_symbol in ['^GSPC', '^DJI', 'QQQ']:
             hist = _get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
             if not hist:
@@ -230,8 +280,8 @@ def get_core_financials(ticker_symbol):
                 'high_52_week': float(df['high'].max()),
                 'low_52_week': float(df['low'].min())
             }
+            return data
         else:
-            # Logic for regular stocks
             crumb = _get_yahoo_auth()
             if not crumb:
                 return None
@@ -257,10 +307,8 @@ def get_core_financials(ticker_symbol):
             default_key_stats = info.get('defaultKeyStatistics') or {}
             asset_profile = info.get('assetProfile') or {}
             
-            # Get sharesOutstanding to pass to the helper function
             shares_outstanding = (default_key_stats.get('sharesOutstanding') or {}).get('raw')
 
-            # Parse separate annual and quarterly history keys
             annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
             quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
 
@@ -273,8 +321,30 @@ def get_core_financials(ticker_symbol):
                 'ipoDate': (asset_profile.get('ipoDate') or {}).get('fmt'),
                 'annual_earnings': annual_earnings_list,
                 'quarterly_earnings': quarterly_earnings_list,
-                'quarterly_financials': quarterly_earnings_list # This assumes earnings and financials are the same for now
+                'quarterly_financials': quarterly_earnings_list
             }
+
+        extended_financials_data = _fetch_financials_with_yfinance(ticker_symbol)
+
+        if extended_financials_data:
+            data = {'ticker': ticker_symbol}
+            data['quarterly_earnings'] = extended_financials_data.get('quarterly', [])
+            data['quarterly_financials'] = extended_financials_data.get('quarterly', [])
+            # You can add more data points here if needed from yfinance
+            # For example: data['marketCap'] = yf.Ticker(ticker_symbol).info.get('marketCap')
+            return data
+        else:
+            print(f"PROVIDER-DEBUG: Falling back to API data for {ticker_symbol}", flush=True)
+            annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
+            quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
+
+            shares_outstanding = (default_key_stats.get('sharesOutstanding') or {}).get('raw')
+            annual_earnings_list = _transform_income_statements(annual_history, shares_outstanding)
+            quarterly_earnings_list = _transform_income_statements(quarterly_history, shares_outstanding)
+
+            data['annual_earnings'] = annual_earnings_list
+            data['quarterly_earnings'] = quarterly_earnings_list
+            data['quarterly_financials'] = quarterly_earnings_list
 
         duration = time.time() - start_time
         print(f"PROVIDER-DEBUG: Yahoo Finance API call for {ticker_symbol} took {duration:.2f} seconds.", flush=True)
@@ -306,7 +376,6 @@ def get_batch_core_financials(tickers: list[str]) -> dict:
     """
     results = {}
     for ticker_symbol in tickers:
-        # Introduce a small delay to avoid hitting rate limits when fetching multiple tickers
         time.sleep(random.uniform(0.1, 0.5))
         results[ticker_symbol] = get_core_financials(ticker_symbol)
     return results

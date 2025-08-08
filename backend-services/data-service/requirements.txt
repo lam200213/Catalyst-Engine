@@ -9,3 +9,4 @@ yfinance
 finnhub-python
 pytest
 curl-cffi
+beautifulsoup4

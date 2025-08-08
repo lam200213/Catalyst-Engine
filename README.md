@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-07-26
-Debugged all leadership related services, now all runs without routing or 401/404 errors.
+2025-08-8
+Debugged leadership screening: YoY EPS Growth, used yfinance to scrap the embedded finanical data in yahoo finance.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -108,31 +108,3 @@ Follow these steps to set up and run the application locally:
 - [🔗 Detailed Architecture & Tech Stack](./docs/ARCHITECTURE.md)
 - [📖 API Reference Guide](./docs/API_REFERENCE.md)
 - [⚙️ Troubleshooting Guide](./docs/TROUBLESHOOTING.md)
-
-## Leadership Service API
-
-### Endpoints
-
-#### GET /check_market_cap
-
-**Description**: Checks if a company is a small to mid-cap based on its market cap.
-
-**Parameters**:
-- `market_cap` (float, required): The market cap of the company.
-
-**Response**:
-- `is_small_to_mid_cap` (bool): Indicates whether the company is a small to mid-cap.
-- `details` (str): Additional details about the market cap range.
-
-**Example Request**:
-```
-GET /check_market_cap?market_cap=5000000000
-```
-
-**Example Response**:
-```json
-{
-  "is_small_to_mid_cap": true,
-  "details": "The company is a small to mid-cap with a market cap of 5 billion."
-}
-```
