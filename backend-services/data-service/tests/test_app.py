@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import os
 import sys
 from datetime import date, datetime, timezone, timedelta
@@ -493,7 +493,7 @@ class TestBatchFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(data["MSFT"]["anotherField"], "value2")
         
         self.assertEqual(response.json['failed'], [])
-        mock_get_batch_core_financials.assert_called_once_with(tickers)
+        mock_get_batch_core_financials.assert_called_once_with(tickers, ANY)
 
     @patch('app.yfinance_provider.get_batch_core_financials')
     def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_core_financials, mock_init_db):
@@ -531,7 +531,7 @@ class TestBatchFinancialsEndpoint(unittest.TestCase):
         
         self.assertIn("FAIL", failed)
         self.assertEqual(len(failed), 1)
-        mock_get_batch_core_financials.assert_called_once_with(tickers + ["FAIL"])
+        mock_get_batch_core_financials.assert_called_once_with(tickers + ["FAIL"], ANY)
 
     def test_batch_financials_empty_ticker_list(self, mock_init_db):
         """Test handling of an empty ticker list."""

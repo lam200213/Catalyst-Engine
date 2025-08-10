@@ -16,74 +16,56 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
 
     @patch('providers.yfinance_provider.yf.Ticker')
     def test_fetch_financials_with_yfinance_success(self, mock_yfinance_ticker):
-            """
-            Gone:
-            - All previous tests for the old `_fetch_financials` function.
-            Latest Add:
-            - Test successful fetching and transformation of financials using the yfinance library.
-            """
-            # --- Arrange ---
-            # Create a mock DataFrame that mimics the yfinance library's output
-            mock_data = {
-                'Total Revenue': [1000, 1100, 1200],
-                'Net Income': [100, 110, 120],
-                'Basic EPS': [1.0, 1.1, 1.2],
-            }
-            mock_index = [
-                pd.Timestamp('2023-03-31'),
-                pd.Timestamp('2023-06-30'),
-                pd.Timestamp('2023-09-30'),
-            ]
-            mock_df = pd.DataFrame(mock_data, index=mock_index)
-
-            # Configure the mock yfinance Ticker object
-            mock_instance = mock_yfinance_ticker.return_value
-            mock_instance.quarterly_financials = mock_df
-
-            # --- Act ---
-            result = yfinance_provider._fetch_financials_with_yfinance('AAPL')
-
-            # --- Assert ---
-            self.assertIsNotNone(result)
-            
-            # Gone: The assertion was incorrect because `result` is a list, not a dict.
-            # self.assertIn('quarterly', result)
-
-            # Latest Add: Correctly validate the structure and content of the returned list.
-            self.assertIsInstance(result, list, "Result should be a list of records")
-            self.assertEqual(len(result), 3, "Should return all three mock records")
-            
-            # Check the content of the first record to ensure correct processing
-            first_record = result[0]
-            self.assertEqual(first_record['date'], '2023-03-31')
-            self.assertEqual(first_record['Revenue'], 1000)
-            self.assertEqual(first_record['Net Income'], 100)
-            self.assertEqual(first_record['Earnings'], 1.0)
-
-    @patch('providers.yfinance_provider.yf.Ticker')
-    def test_fetch_financials_with_yfinance_empty_dataframe(self, mock_yfinance_ticker):
         """
-        Gone:
-        - N/A
-        Latest Add:
-        - Test the scenario where the yfinance library returns an empty DataFrame.
+        Test successful fetching and transformation of financials using the yfinance library.
         """
-        # --- Arrange ---
+        # Create mock DataFrames for earnings
+        mock_q_earnings_df = pd.DataFrame({'Revenue': [1000], 'Earnings': [100]})
+        mock_a_earnings_df = pd.DataFrame({'Revenue': [4000], 'Earnings': [400]})
+        
+        # Configure the mock yfinance Ticker object
         mock_instance = mock_yfinance_ticker.return_value
-        mock_instance.quarterly_financials = pd.DataFrame() # Empty dataframe
+        # This is the crucial part that was missing. We must mock .info.
+        mock_instance.info = {
+            'marketCap': 2.5e12,
+            'sharesOutstanding': 15e9,
+            'floatShares': 14.9e9,
+            'ipoDate': 345479400 # Unix timestamp for 1980-12-12
+        }
+        mock_instance.quarterly_earnings = mock_q_earnings_df
+        mock_instance.earnings = mock_a_earnings_df
+
 
         # --- Act ---
-        result = yfinance_provider._fetch_financials_with_yfinance('Nodata')
+        result = yfinance_provider._fetch_financials_with_yfinance('AAPL')
+        
+        # --- Assert ---
+        self.assertIsNotNone(result)
+        self.assertEqual(result['marketCap'], 2.5e12)
+        self.assertEqual(result['ipoDate'], '1980-12-12')
+        self.assertIn('quarterly_earnings', result)
+        self.assertEqual(len(result['quarterly_earnings']), 1)
+        self.assertEqual(result['quarterly_earnings'][0]['Revenue'], 1000)
 
+    @patch('providers.yfinance_provider.yf.Ticker')
+    def test_fetch_financials_with_yfinance_missing_info(self, mock_yfinance_ticker):
+        """
+        - Test that the function returns None if `stock.info` is empty or missing keys.
+        """
+        # --- Arrange ---
+        # Configure the mock to return an empty info dictionary
+        mock_instance = mock_yfinance_ticker.return_value
+        mock_instance.info = {}
+        
+        # --- Act ---
+        result = yfinance_provider._fetch_financials_with_yfinance('AAPL')
+        
         # --- Assert ---
         self.assertIsNone(result)
 
     @patch('providers.yfinance_provider.yf.Ticker')
     def test_fetch_financials_with_yfinance_exception(self, mock_yfinance_ticker):
         """
-        Gone:
-        - N/A
-        Latest Add:
         - Test that the function returns None if the yfinance library raises an exception.
         """
         # --- Arrange ---
@@ -100,9 +82,6 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
     @patch('providers.yfinance_provider._fetch_financials_with_yfinance')
     def test_get_core_financials_uses_yfinance_first(self, mock_fetch_yf):
         """
-        Gone:
-        - Old tests for `get_core_financials` that only tested the API call.
-        Latest Add:
         - Test that `get_core_financials` successfully calls the new yfinance helper.
         """
         # --- Arrange ---
@@ -125,9 +104,6 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
     @patch('providers.yfinance_provider.session.get')
     def test_get_core_financials_fallback_to_api(self, mock_requests_get, mock_fetch_yf):
         """
-        Gone:
-        - N/A
-        Latest Add:
         - Test the fallback mechanism: if yfinance helper fails, it should call the API.
         """
         # --- Arrange ---
@@ -170,9 +146,6 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
     @patch('providers.yfinance_provider._get_single_ticker_data')
     def test_get_core_financials_for_index(self, mock_get_single_ticker):
         """
-        Gone:
-        - N/A
-        Latest Add:
         - Test the specific logic for market indices like ^GSPC.
         """
         # --- Arrange ---

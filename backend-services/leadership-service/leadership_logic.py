@@ -11,6 +11,8 @@ LIMITED_FLOAT_THRESHOLD = 0.20    # 20%
 # Constants for time periods
 RECENT_IPO_YEARS = 10              # Last 10 years
 
+DATA_SERVICE_URL = "http://data-service:3001"
+
 def check_is_small_to_mid_cap(financial_data, details):
     """
     Check if the company has a market capitalization between a specified lower and upper bound.
@@ -449,43 +451,6 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
         details['new_52_week_high'] = False
         details['recent_breakout'] = False
 
-def _calculate_rolling_average_growth(quarterly_data, key):
-    """
-    Calculates QoQ growth rates and then a two-quarter rolling average.
-    
-    Args:
-        quarterly_data (list): List of dictionaries with quarterly results.
-        key (str): The key for the value to analyze (e.g., 'Earnings', 'Revenue').
-
-    Returns:
-        list: A list of the two-quarter rolling average growth rates.
-    """
-    if not quarterly_data or len(quarterly_data) < 2:
-        return []
-
-    growth_rates = []
-    for i in range(1, len(quarterly_data)):
-        current_val = quarterly_data[i].get(key)
-        prev_val = quarterly_data[i-1].get(key)
-        
-        if current_val is None or prev_val is None or prev_val == 0:
-            growth_rates.append(0)  # Handle missing data or division by zero
-            continue
-            
-        growth = (current_val - prev_val) / abs(prev_val)
-        growth_rates.append(growth)
-
-    if len(growth_rates) < 2:
-        return []
-
-    rolling_averages = []
-    for i in range(1, len(growth_rates)):
-        avg = (growth_rates[i] + growth_rates[i-1]) / 2
-        rolling_averages.append(avg)
-        
-    return rolling_averages
-
-
 def check_accelerating_growth(financial_data, details):
     """
     Check if the quarter-over-quarter growth rates are strictly increasing for
@@ -560,53 +525,58 @@ def check_accelerating_growth(financial_data, details):
 
 def check_consecutive_quarterly_growth(financial_data, details):
     """
-    Check if the 2Q rolling average growth for EPS has been >20%
-    for the last 4 consecutive quarters.
-    Requires at least 6 quarters of data to produce 4 rolling average figures.
-    Fails if even one of the last four quarters does not show >20% EPS growth.
-    Also categorizes the growth level similar to YoY EPS growth.
+    Checks if the Quarter-over-Quarter (QoQ) EPS growth has been >20%
+    for the last 4 consecutive quarters. Requires at least 5 quarters of data.
+    Fails if any of the last four quarters do not show >20% QoQ EPS growth.
+    Categorizes the average growth level of the last four quarters.
     """
     try:
         earnings = financial_data.get('quarterly_earnings', [])
         
-        if len(earnings) < 6:
+        # Require at least 5 quarters of data to calculate 4 QoQ growth rates.
+        if len(earnings) < 5:
             details['has_consecutive_quarterly_growth'] = False
             details['consecutive_quarterly_growth_level'] = 'Insufficient Data'
             return
 
-        # Check smoothed EPS growth
-        eps_rolling_avg = _calculate_rolling_average_growth(earnings, 'Earnings')
+        # Calculate the last 4 QoQ growth rates
+        qoq_growth_rates = []
+        # We need the last 5 earnings reports to get the last 4 growth rates.
+        recent_earnings = earnings[-5:]
+
+        for i in range(1, len(recent_earnings)):
+            current_eps = recent_earnings[i].get('Earnings')
+            prev_eps = recent_earnings[i-1].get('Earnings')
+
+            # Handle missing data, or negative/zero base EPS
+            if current_eps is None or prev_eps is None or prev_eps <= 0:
+                qoq_growth_rates.append(0)  # Assign 0 growth to avoid errors and ensure failure
+                continue
+            
+            growth = (current_eps - prev_eps) / abs(prev_eps)
+            qoq_growth_rates.append(growth)
+
+        # Check that ALL of the last 4 quarters have >20% QoQ EPS growth
+        details['has_consecutive_quarterly_growth'] = all(rate > 0.20 for rate in qoq_growth_rates)
         
-        # Check that we have at least 4 rolling average figures
-        if len(eps_rolling_avg) < 4:
-            details['has_consecutive_quarterly_growth'] = False
-            details['consecutive_quarterly_growth_level'] = 'Insufficient Data'
-            return
-        
-        # Get the average of the last 4 quarters' growth rates
-        recent_growth_rates = eps_rolling_avg[-4:]
-        avg_growth = sum(recent_growth_rates) / len(recent_growth_rates)
-        
-        # Determine growth level
-        if avg_growth > 0.45:  # >45%
-            details['consecutive_quarterly_growth_level'] = 'Exceptional Growth'
-        elif avg_growth > 0.35:  # >35%
-            details['consecutive_quarterly_growth_level'] = 'High Growth'
-        elif avg_growth > 0.20:  # >20%
-            details['consecutive_quarterly_growth_level'] = 'Standard Growth'
+        # Determine growth level based on the average of the last 4 quarters' growth
+        if qoq_growth_rates:
+            avg_growth = sum(qoq_growth_rates) / len(qoq_growth_rates)
+            if avg_growth > 0.45:
+                details['consecutive_quarterly_growth_level'] = 'Exceptional Growth'
+            elif avg_growth > 0.35:
+                details['consecutive_quarterly_growth_level'] = 'High Growth'
+            elif avg_growth > 0.20:
+                details['consecutive_quarterly_growth_level'] = 'Standard Growth'
+            else:
+                details['consecutive_quarterly_growth_level'] = 'Moderate Growth'
         else:
-            details['consecutive_quarterly_growth_level'] = 'Moderate Growth'
-        
-        # Check that ALL of the last 4 quarters have >20% EPS growth
-        # If ANY quarter has <=20% growth, the function should fail
-        details['has_consecutive_quarterly_growth'] = all(avg > 0.20 for avg in recent_growth_rates)
-        
-    except (KeyError, TypeError, IndexError):
+            # This case should ideally not be hit due to the len check above
+            details['consecutive_quarterly_growth_level'] = 'Insufficient Data'
+
+    except (KeyError, TypeError, IndexError, ZeroDivisionError):
         details['has_consecutive_quarterly_growth'] = False
         details['consecutive_quarterly_growth_level'] = 'Error'
-
-
-DATA_SERVICE_URL = "http://data-service:3001"
 
 def check_industry_leadership(ticker):
     """

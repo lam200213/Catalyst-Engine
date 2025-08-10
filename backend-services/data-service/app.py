@@ -5,6 +5,7 @@ from pymongo import MongoClient
 from datetime import date, datetime, timedelta, timezone
 from pymongo.errors import OperationFailure
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -25,6 +26,9 @@ market_trends = None # New collection for market trends
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
 NEWS_CACHE_TTL = 14400
 INDUSTRY_CACHE_TTL = 86400 # 1 day = 86400
+
+# Using a ThreadPoolExecutor for concurrent requests in batch endpoints
+executor = ThreadPoolExecutor(max_workers=10)
 
 # A helper function to make index creation robust
 def _create_ttl_index(collection, field, ttl_seconds, name):
@@ -71,7 +75,7 @@ def init_db():
 @app.route('/financials/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
     """
-    Provides core financial data for a batch of tickers, with data contract enforcement.
+    Provides core financial data for a batch of tickers, with data contract enforcement, in parallel.
     """
     payload = request.get_json()
     if not payload or 'tickers' not in payload:
@@ -85,7 +89,7 @@ def get_batch_core_financials_route():
         return jsonify({"success": {}, "failed": []}), 200
 
     # Fetch data from provider
-    raw_data = yfinance_provider.get_batch_core_financials(tickers)
+    raw_data = yfinance_provider.get_batch_core_financials(tickers, executor)
 
     processed_data = {}
     failed_tickers = []

@@ -1,5 +1,6 @@
 import time
 import requests
+import json
 from flask import Flask, jsonify
 import os
 import re # regex import for input validation
@@ -96,6 +97,15 @@ def leadership_analysis(ticker):
             return jsonify({'error': 'Service unavailable: data-service'}), 503
         else:
             return jsonify({'error': f'Failed to fetch data from data-service (status {status})'}), 502
+
+    # --- DEBUGGING BLOCK ---
+    # Print the exact data received to the container's logs
+    print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
+    print(f"Data received from data-service for {ticker}:", flush=True)
+    # Use json.dumps for pretty-printing the dictionary
+    print(json.dumps(financial_data, indent=2), flush=True)
+    print("--- END DEBUG ---", flush=True)
+    # --- END DEBUGGING BLOCK ---
 
     stock_data = fetch_price_data(ticker)
     if stock_data is None:
