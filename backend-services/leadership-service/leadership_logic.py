@@ -13,6 +13,9 @@ RECENT_IPO_YEARS = 10              # Last 10 years
 
 DATA_SERVICE_URL = "http://data-service:3001"
 
+# Functions for financial statements (like check_yoy_eps_growth) expect newest-to-oldest data, 
+# while functions for price history expect oldest-to-newest, due to the data properties.
+
 def check_is_small_to_mid_cap(financial_data, details):
     """
     Check if the company has a market capitalization between a specified lower and upper bound.
@@ -125,8 +128,8 @@ def check_yoy_eps_growth(financial_data, details):
             return
         
         # Most recent quarter (index -1) and same quarter from previous year (index -5)
-        current_eps = earnings[-1]['Earnings']
-        previous_year_eps = earnings[-5]['Earnings']
+        current_eps = earnings[0]['Earnings']
+        previous_year_eps = earnings[4]['Earnings']
         
         # Handle division by zero or negative numbers
         if previous_year_eps <= 0:
@@ -178,8 +181,8 @@ def check_positive_recent_earnings(financial_data, details):
         # Get the most recent annual EPS (first item in the list)
         annual_eps = annual_earnings[0].get('Earnings')
         
-        # Get the most recent quarterly EPS (last item in the list)
-        quarterly_eps = quarterly_earnings[-1].get('Earnings')
+        # Get the most recent quarterly EPS (first item in the list)
+        quarterly_eps = quarterly_earnings[0].get('Earnings')
         
         # Check if both EPS values are positive
         details['has_positive_recent_earnings'] = (
@@ -196,8 +199,9 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
     The system identifies the start of a market rally in the S&P 500 and then compares the performance
     of both the stock and S&P 500 over the next 20 trading days. The stock must show > 1.5x the market's gain.
     
+    PS: Data of price history is in order of oldest-to-newest.
     Args:
-        stock_data (list): List of stock price data dictionaries.
+        stock_data (list): List of stock price data dictionaries. 
         sp500_data (list): List of S&P 500 price data dictionaries.
         details (dict): A dictionary to store the result.
         
@@ -363,6 +367,7 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
     """
     Evaluate the stock's behavior relative to the market trend context.
 
+    PS: Data of price history is in order of oldest-to-newest.
     Args:
         stock_data (list): List of stock price data dictionaries.
         index_data (dict): Dictionary containing market data for all three indices.
@@ -468,58 +473,46 @@ def check_accelerating_growth(financial_data, details):
             return
 
         def calculate_qoq_growth_rates(data, key1, key2=None):
-            """Calculate 3 QoQ growth rates from 4 quarters of data"""
-            growth_rates = []
-            for i in range(1, 4):  # Calculate 3 growth rates from 4 quarters
-                if key2:  # For margin calculation (Net Income / Total Revenue)
-                    current_val = data[-(4-i)][key1] / data[-(4-i)][key2]
-                    prev_val = data[-(4-(i-1))][key1] / data[-(4-(i-1))][key2]
-                else:  # For direct value calculation (Earnings, Revenue)
-                    current_val = data[-(4-i)][key1]
-                    prev_val = data[-(4-(i-1))][key1]
+            """Calculates and checks for 3 accelerating QoQ growth rates."""
+            rates = []
+            for i in range(3):
+                # Indices are in reverse chronological order: 0=Q4, 1=Q3, 2=Q2, 3=Q1
+                # We calculate (Newer - Older) / abs(Older)
+                # Newest growth: (data[0] - data[1]) -> Q4 vs Q3
+                # Middle growth: (data[1] - data[2]) -> Q3 vs Q2
+                # Oldest growth: (data[2] - data[3]) -> Q2 vs Q1
                 
-                if prev_val == 0:
-                    return None
+                # Use index i for the newer period, i+1 for the older period
+                new_period = data[i]
+                old_period = data[i+1]
+
+                if key2: # For margin = key1 / key2 (e.g., Net Income / Revenue)
+                    new_val = new_period.get(key1) / new_period.get(key2)
+                    old_val = old_period.get(key1) / old_period.get(key2)
+                else: # For direct values (e.g., Earnings, Revenue)
+                    new_val = new_period.get(key1)
+                    old_val = old_period.get(key1)
+
+                # Ensure values are valid for calculation
+                if old_val is None or new_val is None or old_val == 0:
+                    return False # Cannot calculate growth, so it's not accelerating.
                 
-                growth_rate = (current_val - prev_val) / abs(prev_val)
-                growth_rates.append(growth_rate)
-            return growth_rates
+                rates.append((new_val - old_val) / abs(old_val))
+            
+            # Check for strictly increasing growth: Newest > Middle > Oldest
+            return rates[0] > rates[1] > rates[2]
 
-        # Calculate QoQ growth rates for Earnings
-        earnings_growth_rates = calculate_qoq_growth_rates(earnings, 'Earnings')
-        if earnings_growth_rates is None:
-            details['has_accelerating_growth'] = False
-            return
+        # Check for acceleration across all three key metrics
+        earnings_accelerating = calculate_qoq_growth_rates(earnings, 'Earnings')
+        revenue_accelerating = calculate_qoq_growth_rates(earnings, 'Revenue')
+        margin_accelerating = calculate_qoq_growth_rates(financials, 'Net Income', 'Total Revenue')
 
-        # Check if Earnings growth rates are strictly increasing
-        earnings_accelerating = (earnings_growth_rates[2] > earnings_growth_rates[1] >
-                              earnings_growth_rates[0])
-
-        # Calculate QoQ growth rates for Revenue (Sales)
-        revenue_growth_rates = calculate_qoq_growth_rates(earnings, 'Revenue')
-        if revenue_growth_rates is None:
-            details['has_accelerating_growth'] = False
-            return
-
-        # Check if Revenue growth rates are strictly increasing
-        revenue_accelerating = (revenue_growth_rates[2] > revenue_growth_rates[1] >
-                             revenue_growth_rates[0])
-
-        # Calculate QoQ growth rates for Net Margin
-        margin_growth_rates = calculate_qoq_growth_rates(financials, 'Net Income', 'Total Revenue')
-        if margin_growth_rates is None:
-            details['has_accelerating_growth'] = False
-            return
-
-        # Check if Net Margin growth rates are strictly increasing
-        margin_accelerating = (margin_growth_rates[2] > margin_growth_rates[1] >
-                            margin_growth_rates[0])
-        
         details['has_accelerating_growth'] = (earnings_accelerating and
                                            revenue_accelerating and
                                            margin_accelerating)
-        
-    except (KeyError, TypeError, IndexError, ZeroDivisionError):
+
+    except (KeyError, TypeError, IndexError, ZeroDivisionError, AttributeError):
+        # Gracefully handle any data or calculation errors
         details['has_accelerating_growth'] = False
 
 
@@ -542,18 +535,18 @@ def check_consecutive_quarterly_growth(financial_data, details):
         # Calculate the last 4 QoQ growth rates
         qoq_growth_rates = []
         # We need the last 5 earnings reports to get the last 4 growth rates.
-        recent_earnings = earnings[-5:]
+        recent_earnings = earnings[:5]
 
-        for i in range(1, len(recent_earnings)):
+        for i in range(len(recent_earnings) - 1):
             current_eps = recent_earnings[i].get('Earnings')
-            prev_eps = recent_earnings[i-1].get('Earnings')
+            next_eps = recent_earnings[i+1].get('Earnings')
 
             # Handle missing data, or negative/zero base EPS
-            if current_eps is None or prev_eps is None or prev_eps <= 0:
+            if current_eps is None or next_eps is None or next_eps <= 0:
                 qoq_growth_rates.append(0)  # Assign 0 growth to avoid errors and ensure failure
                 continue
             
-            growth = (current_eps - prev_eps) / abs(prev_eps)
+            growth = (current_eps - next_eps) / abs(next_eps)
             qoq_growth_rates.append(growth)
 
         # Check that ALL of the last 4 quarters have >20% QoQ EPS growth
@@ -563,16 +556,16 @@ def check_consecutive_quarterly_growth(financial_data, details):
         if qoq_growth_rates:
             avg_growth = sum(qoq_growth_rates) / len(qoq_growth_rates)
             if avg_growth > 0.45:
-                details['consecutive_quarterly_growth_level'] = 'Exceptional Growth'
+                level = 'Exceptional Growth'
             elif avg_growth > 0.35:
-                details['consecutive_quarterly_growth_level'] = 'High Growth'
+                level = 'High Growth'
             elif avg_growth > 0.20:
-                details['consecutive_quarterly_growth_level'] = 'Standard Growth'
+                level = 'Standard Growth'
             else:
-                details['consecutive_quarterly_growth_level'] = 'Moderate Growth'
-        else:
-            # This case should ideally not be hit due to the len check above
-            details['consecutive_quarterly_growth_level'] = 'Insufficient Data'
+                level = 'Moderate Growth'
+
+            details['consecutive_quarterly_growth_level'] = level
+            details['qoq_growth_rates'] = qoq_growth_rates # for debugging
 
     except (KeyError, TypeError, IndexError, ZeroDivisionError):
         details['has_consecutive_quarterly_growth'] = False
@@ -623,14 +616,21 @@ def check_industry_leadership(ticker):
         # 3. Filter out any peers with incomplete data and prepare for DataFrame
         processed_data = []
         for ticker_symbol, data in batch_financial_data.items():
-            # Ensure 'revenue', 'marketCap', and 'netIncome' are present and not None
-            if data and data.get('totalRevenue') is not None and data.get('marketCap') is not None and data.get('netIncome') is not None:
-                processed_data.append({
-                    'ticker': ticker_symbol,
-                    'revenue': data['totalRevenue'],
-                    'marketCap': data['marketCap'],
-                    'netIncome': data['netIncome']
-                })
+            # Ensure data is valid and annual_earnings is a non-empty list
+            if data and isinstance(data.get('annual_earnings'), list) and data['annual_earnings']:
+                most_recent_annual = data['annual_earnings'][0]
+                revenue = most_recent_annual.get('Revenue')
+                net_income = most_recent_annual.get('Net Income')
+                market_cap = data.get('marketCap')
+
+                # Ensure all required metrics are present and not None
+                if revenue is not None and net_income is not None and market_cap is not None:
+                    processed_data.append({
+                        'ticker': ticker_symbol,
+                        'revenue': revenue,
+                        'marketCap': market_cap,
+                        'netIncome': net_income
+                    })
 
         if not processed_data:
             return {"error": "No complete financial data available for ranking after filtering."}

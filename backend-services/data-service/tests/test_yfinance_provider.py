@@ -19,18 +19,21 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         """
         Test successful fetching and transformation of financials using the yfinance library.
         """
+        # --- Arrange ---
+        # Create a proper DatetimeIndex for the columns
+        date_cols = pd.to_datetime(['2023-09-30'])
+
         # Create mock DataFrames for earnings
-        mock_q_earnings_df = pd.DataFrame({'Revenue': [1000], 'Earnings': [100]})
-        mock_a_earnings_df = pd.DataFrame({'Revenue': [4000], 'Earnings': [400]})
+        mock_q_earnings_df = pd.DataFrame([[1000], [100]], index=['Revenue', 'Earnings'], columns=date_cols)
+        mock_a_earnings_df = pd.DataFrame([[4000], [400]], index=['Revenue', 'Earnings'], columns=date_cols)
         
         # Configure the mock yfinance Ticker object
         mock_instance = mock_yfinance_ticker.return_value
-        # This is the crucial part that was missing. We must mock .info.
         mock_instance.info = {
             'marketCap': 2.5e12,
             'sharesOutstanding': 15e9,
             'floatShares': 14.9e9,
-            'ipoDate': 345479400 # Unix timestamp for 1980-12-12
+            'firstTradeDateMilliseconds': 345479400000 # Unix timestamp for 1980-12-12 (the unit is in milliseconds)
         }
         mock_instance.quarterly_earnings = mock_q_earnings_df
         mock_instance.earnings = mock_a_earnings_df

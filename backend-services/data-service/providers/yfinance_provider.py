@@ -11,6 +11,7 @@ import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 #DEBUG
 import sys
+import json
 
 session = cffi_requests.Session()
 _YAHOO_CRUMB = None
@@ -217,28 +218,50 @@ def _transform_income_statements(statements, shares_outstanding):
 def _fetch_financials_with_yfinance(ticker):
     """
     Fetches financials for a ticker using the yfinance library.
+    
+    This is the primary, preferred method for fetching core financial data.
     """
     print(f"PROVIDER-DEBUG: Attempting to fetch financials for {ticker} using yfinance library.")
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
+
+        # --- DEBUGGING BLOCK ---
+        # Print the exact data received to the container's logs
+        print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
+        print(f"Data received from data-service for {ticker}:", flush=True)
+        # Use json.dumps for pretty-printing the dictionary
+        print(json.dumps(info, indent=2), flush=True)
+        print("--- END DEBUG ---", flush=True)
+        # --- END DEBUGGING BLOCK ---
+        
+        # The 'info' dictionary must exist and contain essential data to be useful.
         if not info or 'marketCap' not in info:
             print(f"PROVIDER-DEBUG: yfinance info missing key fields for {ticker}.")
             return None
 
-        # Safely get ipoDate
-        ipo_date_val = info.get('firstTradeDateEpoch')
-        ipoDate = None
-        if ipo_date_val:
-            try:
-                if isinstance(ipo_date_val, (int, float)):
-                    ipoDate = dt.datetime.fromtimestamp(ipo_date_val).strftime('%Y-%m-%d')
-                elif hasattr(ipo_date_val, 'strftime'):
-                    ipoDate = ipo_date_val.strftime('%Y-%m-%d')
-            except Exception as e:
-                print(f"PROVIDER-DEBUG: Could not parse ipoDate '{ipo_date_val}' for {ticker}. Error: {e}")
-
-        # Use the recommended income statement attributes
+        # --- IPO Date Handling ---
+        # Yahoo Finance provides the 'firstTradeDateEpoch', which is the timestamp
+        # of the first trade recorded. This serves as a reliable proxy for the IPO date.
+        ipo_date = None
+    
+        ipo_date_timestamp = info.get('firstTradeDateMilliseconds')
+        # Represents the number of milliseconds since the Unix epoch.
+        # divide the millisecond value by 1000 to the number of seconds since the Unix epoch
+        
+        if ipo_date_timestamp:
+            # Ensure the timestamp value is a number before converting.
+            if isinstance(ipo_date_timestamp, (int, float)):
+                try:
+                    ipo_date_timestamp_val = ipo_date_timestamp / 1000
+                    ipo_date = dt.datetime.fromtimestamp(ipo_date_timestamp_val).strftime('%Y-%m-%d')
+                except (ValueError, TypeError) as e:
+                    # Log if the timestamp is invalid (e.g., out of range).
+                    print(f"PROVIDER-DEBUG: Could not convert epoch '{ipo_date_timestamp}' to date for {ticker}. Error: {e}")
+            else:
+                print(f"PROVIDER-DEBUG: Expected epoch for 'firstTradeDateEpoch' to be a number, but got {type(ipo_date_timestamp)} for {ticker}.")
+        
+        # --- Financial Statement Formatting ---
         q_income_stmt = stock.quarterly_income_stmt
         a_income_stmt = stock.income_stmt
 
@@ -246,11 +269,16 @@ def _fetch_financials_with_yfinance(ticker):
             if df is None or df.empty:
                 return []
             df_t = df.transpose()
-            # Rename columns to be more consistent
-            df_t = df_t.rename(columns={"Total Revenue": "Revenue", "Net Income": "Net Income"})
-            # Manually calculate EPS if not present
-            if 'Basic EPS' not in df_t.columns and 'Net Income' in df_t.columns and info.get('sharesOutstanding'):
-                df_t['Earnings'] = df_t['Net Income'] / info['sharesOutstanding']
+           # This ensures consistency with the fallback method and prevents errors in leadership_logic.
+            if 'Total Revenue' in df_t.columns:
+                df_t['Revenue'] = df_t['Total Revenue']
+            else:
+                df_t['Revenue'] = None
+            
+            # Manually calculate EPS if not present, using sharesOutstanding from the info dict.
+            shares_outstanding = info.get('sharesOutstanding')
+            if 'Basic EPS' not in df_t.columns and 'Net Income' in df_t.columns and shares_outstanding:
+                df_t['Earnings'] = df_t['Net Income'] / shares_outstanding
             else:
                 df_t['Earnings'] = df_t.get('Basic EPS')
 
@@ -259,20 +287,22 @@ def _fetch_financials_with_yfinance(ticker):
         quarterly_financials = format_income_statement(q_income_stmt)
         annual_financials = format_income_statement(a_income_stmt)
 
+        # Consolidate all data into the final dictionary.
         return {
+            'ticker': ticker,
             'marketCap': info.get('marketCap'),
             'sharesOutstanding': info.get('sharesOutstanding'),
             'floatShares': info.get('floatShares'),
-            'ipoDate': ipoDate,
+            'ipoDate': ipo_date, # Use the processed date
             'annual_earnings': annual_financials,
             'quarterly_earnings': quarterly_financials,
             'quarterly_financials': quarterly_financials,
-            'quarterly_earnings': quarterly_financials
         }
     except Exception as e:
-        print(f"PROVIDER-DEBUG: yfinance library failed for {ticker}. Error: {e}")
+        # Catch any other unexpected errors from the yfinance library call.
+        print(f"PROVIDER-DEBUG: An unhandled exception occurred in the yfinance library for {ticker}. Error: {e}")
         return None
-
+    
 def get_core_financials(ticker_symbol):
     """
     Fetches core financial data points required for Leadership Profile screening.
@@ -345,6 +375,7 @@ def get_core_financials(ticker_symbol):
         quarterly_earnings_list = _transform_income_statements(quarterly_history, shares_outstanding)
         
         data = {
+            'ticker': ticker_symbol,
             'marketCap': (summary_detail.get('marketCap') or {}).get('raw'),
             'sharesOutstanding': shares_outstanding,
             'floatShares': (default_key_stats.get('floatShares') or {}).get('raw'),

@@ -11,8 +11,9 @@ from providers import yfinance_provider
 
 class TestYfinanceProviderCore(unittest.TestCase):
 
+    @patch('providers.yfinance_provider._fetch_financials_with_yfinance')
     @patch('providers.yfinance_provider.session.get')
-    def test_get_core_financials_regular_stock(self, mock_cffi_get):
+    def test_get_core_financials_regular_stock(self, mock_cffi_get, mock_fetch_yf):
         """Tests the get_core_financials function for a regular stock ticker."""
         # Arrange
         mock_response = MagicMock()
@@ -29,6 +30,7 @@ class TestYfinanceProviderCore(unittest.TestCase):
             }
         }
         mock_cffi_get.return_value = mock_response
+        mock_fetch_yf.return_value = None # Prevent the fallback call
 
         # Act
         data = yfinance_provider.get_core_financials('AAPL')
@@ -61,16 +63,18 @@ class TestYfinanceProviderCore(unittest.TestCase):
         self.assertEqual(data['high_52_week'], 4150)
         self.assertEqual(data['low_52_week'], 3900)
 
-    @patch('providers.yfinance_provider.session.get')
-    def test_get_core_financials_api_error(self, mock_cffi_get):
-        """Tests the get_core_financials function for API errors."""
-        # Arrange
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_cffi_get.return_value = mock_response
+@patch('providers.yfinance_provider._fetch_financials_with_yfinance')
+@patch('providers.yfinance_provider.session.get')
+def test_get_core_financials_api_error(self, mock_cffi_get, mock_fetch_yf):
+    """Tests the get_core_financials function for API errors."""
+    # Arrange
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_cffi_get.return_value = mock_response
+    mock_fetch_yf.return_value = None  # Ensure fallback also returns None
 
-        # Act
-        data = yfinance_provider.get_core_financials('AAPL')
+    # Act
+    data = yfinance_provider.get_core_financials('AAPL')
 
-        # Assert
-        self.assertIsNone(data)
+    # Assert
+    self.assertIsNone(data)
