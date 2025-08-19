@@ -14,6 +14,46 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
     including the new yfinance library integration and fallback mechanisms.
     """
 
+    @patch('providers.yfinance_provider.session')
+    @patch('providers.yfinance_provider._get_yahoo_auth', return_value='test_crumb')
+    def test_ticker_sanitization(self, mock_get_auth, mock_session):
+        """
+        Test that ticker symbols are correctly sanitized before being used in an API call.
+        Checks for stripping whitespace and replacing slashes.
+        """
+        # --- Arrange ---
+        # Mock the session to return a valid JSON structure to avoid unrelated errors.
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            'chart': {
+                'result': [{
+                    'timestamp': [1672531200],
+                    'indicators': {
+                        'quote': [{'open': [100], 'high': [105], 'low': [99], 'close': [102], 'volume': [10000]}],
+                        'adjclose': [{'adjclose': [101]}]
+                    }
+                }]
+            }
+        }
+        mock_session.get.return_value = mock_response
+
+        dirty_ticker = 'BRK/A  '
+        expected_sanitized_ticker = 'BRK-A'
+
+        # --- Act ---
+        yfinance_provider._get_single_ticker_data(dirty_ticker)
+
+        # --- Assert ---
+        # Verify that the request method was called
+        mock_session.get.assert_called_once()
+        
+        # Get the URL that was actually called
+        request_url = mock_session.get.call_args[0][0]
+
+        # Check that the sanitized ticker is in the URL, not the original dirty one
+        self.assertIn(expected_sanitized_ticker, request_url)
+        self.assertNotIn(dirty_ticker, request_url)
+
     @patch('providers.yfinance_provider.yf.Ticker')
     def test_fetch_financials_with_yfinance_success(self, mock_yfinance_ticker):
         """

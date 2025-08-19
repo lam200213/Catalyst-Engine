@@ -141,6 +141,11 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
     """
     Fetches historical stock data for a single ticker from Yahoo Finance.
     """
+
+    # Sanitize the ticker symbol to handle special characters and whitespace.
+    # This ensures tickers like 'BRK/B' become 'BRK-B' and 'ECC ' becomes 'ECC'.
+    sanitized_ticker = ticker.strip().replace('/', '-')
+
     crumb = _get_yahoo_auth()
     if not crumb:
         return None
@@ -155,11 +160,11 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
         # `period1` is the start timestamp, `period2` is the current time.
         start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
         end_ts = int(time.time())
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d&crumb={crumb}"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?period1={start_ts}&period2={end_ts}&interval=1d&crumb={crumb}"
     else:
         # If no start_date is given, default to a 1-year data range.
         # This is used for initial data population or full cache refreshes.
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1y&interval=1d&crumb={crumb}"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?range=1y&interval=1d&crumb={crumb}"
 
     headers = {'User-Agent': _get_random_user_agent()}
     proxy = _get_random_proxy()
