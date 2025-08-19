@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-19
-Add Sanitization in YfinanceProvider, and unit test correspondingly
+Update scheduler-service on returning total process time and saving intermediate results in db.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

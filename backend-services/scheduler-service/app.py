@@ -1,6 +1,7 @@
 # backend-services/scheduler-service/app.py
 import os
 import requests
+import time 
 import uuid
 import shortuuid
 from datetime import datetime, timezone
@@ -280,6 +281,7 @@ def run_screening_pipeline():
     Fetches all tickers, runs trend screening, then VCP analysis on survivors,
     followed by leadership screening.
     """
+    start_time = time.time()
     # Generate a human-readable and chronological job ID
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime('%Y%m%d-%H%M%S')
@@ -307,18 +309,27 @@ def run_screening_pipeline():
     unique_industries_count = _count_unique_industries(job_id, vcp_survivors)
     
     # 5. Run Stage 3 Leadership Screening on VCP survivors
-    final_candidates = _run_leadership_screening(job_id, vcp_survivors)
+    leadership_survivors = _run_leadership_screening(job_id, vcp_survivors)
     print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
     
     # 6. Prepare and store results and summary
+    final_candidates = leadership_survivors
+
+    end_time = time.time()
+    total_process_time = round(end_time - start_time, 2)
+
     job_summary = {
         "job_id": job_id,
         "processed_at": now,
+        "total_process_time": total_process_time,
         "total_tickers_fetched": len(all_tickers),
         "trend_screen_survivors_count": len(trend_survivors),
         "vcp_survivors_count": len(vcp_survivors),
         "unique_industries_count": unique_industries_count,
-        "final_candidates_count": len(final_candidates)
+        "final_candidates_count": len(final_candidates),
+        "trend_survivors": trend_survivors,
+        "vcp_survivors": vcp_survivors,
+        "leadership_survivors": leadership_survivors,
     }
     
     success, error_info = _store_results(job_id, final_candidates, job_summary)
@@ -326,10 +337,16 @@ def run_screening_pipeline():
         return error_info
     
     # 7. Return a success response with job details.
+
+    excluded_keys = {"trend_survivors", "leadership_survivors"}
+
+    # Create a filtered copy of job_summary
+    filtered_result = {k: v for k, v in job_summary.items() if k not in excluded_keys}
+
     print(f"Screening job {job_id} completed successfully.")
     return {
         "message": "Screening job completed successfully.",
-        **job_summary, # Unpack the summary into the response
+        **filtered_result, # Unpack the summary into the response
         "unique_industries_count": unique_industries_count,
     }, 200
 
