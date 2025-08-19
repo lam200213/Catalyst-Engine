@@ -606,7 +606,7 @@ def check_industry_leadership(ticker):
 
         # 2. Call POST /financials/core/batch with the entire list of peer tickers
         batch_financials_url = f"{DATA_SERVICE_URL}/financials/core/batch"
-        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers, "metrics": ["revenue", "marketCap", "netIncome"]}, timeout=30)
+        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers, "metrics": ["revenue", "marketCap", "netIncome"]}, timeout=40)
 
         if batch_response.status_code != 200:
             return {"error": f"Could not fetch batch financial data", "status_code": 500}
