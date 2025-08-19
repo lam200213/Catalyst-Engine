@@ -100,11 +100,11 @@ def leadership_analysis(ticker):
 
     # --- DEBUGGING BLOCK ---
     # Print the exact data received to the container's logs
-    print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
-    print(f"Data received from data-service for {ticker}:", flush=True)
-    # Use json.dumps for pretty-printing the dictionary
-    print(json.dumps(financial_data, indent=2), flush=True)
-    print("--- END DEBUG ---", flush=True)
+    # print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
+    # print(f"Data received from data-service for {ticker}:", flush=True)
+    # # Use json.dumps for pretty-printing the dictionary
+    # print(json.dumps(financial_data, indent=2), flush=True)
+    # print("--- END DEBUG ---", flush=True)
     # --- END DEBUGGING BLOCK ---
 
     stock_data = fetch_price_data(ticker)

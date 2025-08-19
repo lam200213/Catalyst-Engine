@@ -199,8 +199,6 @@ def _run_leadership_screening(job_id, vcp_survivors):
     print(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(leadership_candidates)} tickers.")
     return leadership_candidates
 
-# backend-services/scheduler-service/app.py
-
 def _store_results(job_id, candidates, funnel_summary):
     """Stores candidate results and the job summary in the database."""
     results_coll, jobs_coll = get_db_collections()
@@ -307,10 +305,6 @@ def run_screening_pipeline():
     
     # 4. Run "How to Count Unique Industries" task
     unique_industries_count = _count_unique_industries(job_id, vcp_survivors)
-    
-    # 5. Run Stage 3 Leadership Screening on VCP survivors
-    final_candidates = _run_leadership_screening(job_id, vcp_survivors)
-    print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
     
     # 5. Run Stage 3 Leadership Screening on VCP survivors
     final_candidates = _run_leadership_screening(job_id, vcp_survivors)

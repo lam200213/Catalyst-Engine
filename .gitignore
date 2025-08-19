@@ -84,3 +84,4 @@ dev-debug.log
 
 #debug
 json-yfinance_provider.py
+response.json
