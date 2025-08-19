@@ -348,7 +348,7 @@ def get_core_financials(ticker_symbol):
         return extended_financials_data
 
     # --- Fallback Fetching Strategy (Direct API Call) ---
-    print(f"PROVIDER-DEBUG: yfinance helper failed. Falling back to direct API for {ticker_symbol}", flush=True)
+    print(f"PROVIDER-DEBUG: Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.", flush=True)
     try:
         crumb = _get_yahoo_auth()
         if not crumb:
@@ -395,9 +395,12 @@ def get_core_financials(ticker_symbol):
         return data
 
     except cffi_requests.errors.RequestsError as e:
-        if e.response:
-            print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
-        print(f"A curl_cffi request error occurred during fallback for {ticker_symbol}: {e}", flush=True)
+        if e.response and e.response.status_code == 404:
+            print(f"PROVIDER-DEBUG: Fallback for {ticker_symbol} also failed with 404. Ticker is confirmed unavailable.", flush=True)
+        else:
+            if e.response:
+                print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
+            print(f"A curl_cffi request error occurred during fallback for {ticker_symbol}: {e}", flush=True)
         return None
     except Exception as e:
         sys.stderr.write(f"--- EXCEPTION CAUGHT in get_core_financials fallback for {ticker_symbol} ---\n")
