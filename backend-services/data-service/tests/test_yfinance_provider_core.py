@@ -22,8 +22,11 @@ class TestYfinanceProviderCore(unittest.TestCase):
             "quoteSummary": {
                 "result": [{
                     "summaryDetail": {"marketCap": {"raw": 2000000000}},
-                    "defaultKeyStatistics": {"floatShares": {"raw": 10000000}},
-                    "assetProfile": {"ipoDate": {"fmt": "2020-01-01"}},
+                    "defaultKeyStatistics": {
+                        "floatShares": {"raw": 10000000},
+                        "ipoDate": {"fmt": "2020-01-01"}
+                    },
+                    "assetProfile": {},
                     "incomeStatementHistory": {"incomeStatementHistory": []},
                     "cashflowStatementHistory": {"cashflowStatements": []}
                 }]
