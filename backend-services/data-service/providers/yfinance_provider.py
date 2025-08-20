@@ -233,11 +233,11 @@ def _fetch_financials_with_yfinance(ticker):
 
         # --- DEBUGGING BLOCK ---
         # Print the exact data received to the container's logs
-        print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
-        print(f"Data received from data-service for {ticker}:", flush=True)
+        # print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
+        # print(f"Data received from data-service for {ticker}:", flush=True)
         # Use json.dumps for pretty-printing the dictionary
-        print(json.dumps(info, indent=2), flush=True)
-        print("--- END DEBUG ---", flush=True)
+        # print(json.dumps(info, indent=2), flush=True)
+        # print("--- END DEBUG ---", flush=True)
         # --- END DEBUGGING BLOCK ---
         
         # The 'info' dictionary must exist and contain essential data to be useful.

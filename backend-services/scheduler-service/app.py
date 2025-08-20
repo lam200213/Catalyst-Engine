@@ -313,6 +313,7 @@ def run_screening_pipeline():
     print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
     
     # 6. Prepare and store results and summary
+    final_candidates = []
     final_candidates = leadership_survivors
 
     end_time = time.time()
