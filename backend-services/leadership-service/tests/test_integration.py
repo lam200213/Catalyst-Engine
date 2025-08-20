@@ -74,7 +74,7 @@ class TestLeadershipScreening(unittest.TestCase):
             if 'financials/core/PASS-TICKER' in url:
                 return mock_data_service_response(200, TestLeadershipScreening._get_mock_financial_data())
             # Mock for market trend context checks
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
             # Mock for rally check price data
             if 'price/PASS-TICKER' in url:
@@ -225,7 +225,7 @@ class TestLeadershipScreening(unittest.TestCase):
                 return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
             if 'price/^GSPC' in url:
                 return mock_data_service_response(200, self._get_mock_price_data())
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
             if 'industry/peers/AAPL' in url:
                 return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
@@ -258,7 +258,7 @@ class TestLeadershipScreening(unittest.TestCase):
                 return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
             if 'price/^GSPC' in url:
                 return mock_data_service_response(200, self._get_mock_price_data())
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/QQQ' in url:
+            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
                 return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
             if 'industry/peers/AAPL' in url:
                 return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})

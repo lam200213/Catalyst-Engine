@@ -60,7 +60,7 @@ def fetch_index_data():
     """Fetch major index data from data service"""
     try:
         # Fetch data for all three major indices for market trend context
-        indices = ['^GSPC', '^DJI', 'QQQ']
+        indices = ['^GSPC', '^DJI', '^IXIC']
         index_data = {}
         
         for index in indices:
@@ -143,12 +143,10 @@ def leadership_analysis(ticker):
         # YoY EPS growth check
         check_yoy_eps_growth(financial_data, details)
         results['has_strong_yoy_eps_growth'] = details.get('has_strong_yoy_eps_growth', False)
-        results['yoy_eps_growth_level'] = details.get('yoy_eps_growth_level', 'Unknown')
         
         # Consecutive quarterly growth check
         check_consecutive_quarterly_growth(financial_data, details)
         results['has_consecutive_quarterly_growth'] = details.get('has_consecutive_quarterly_growth', False)
-        results['consecutive_quarterly_growth_level'] = details.get('consecutive_quarterly_growth_level', 'Unknown')
         
         # Positive recent earnings check
         check_positive_recent_earnings(financial_data, details)
@@ -180,11 +178,10 @@ def leadership_analysis(ticker):
         'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
         'has_accelerating_growth', 'has_strong_yoy_eps_growth',
         'has_consecutive_quarterly_growth', 'has_positive_recent_earnings',
-        'outperforms_in_rally'
     ]
 
     # Check if all core criteria pass
-    passes_check = all(results.get(key, False) for key in core_criteria)
+    passes_check = all(details.get(key, {}).get('pass', False) for key in core_criteria)
 
     # Conditionally check market context criteria
     market_context = results.get('market_trend_context')

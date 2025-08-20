@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-20
-Update yfinance_provider.py to produce more informative logs, stating that the ticker is likely unavailable or delisted, if ticker fails both the primary and fallback data-fetching methods with a 404 error.
+Update leadership logic for better logging; minor logic changed in check_outperforms_in_rally; index choice changed from QQQ to ^IXIC
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

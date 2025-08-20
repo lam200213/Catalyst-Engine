@@ -60,12 +60,12 @@ def create_mock_index_data(trend='Bullish'):
     base_data = {
         '^GSPC': {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 'high_52_week': 4800, 'low_52_week': 4000},
         '^DJI': {'current_price': 35000, 'sma_50': 34000, 'sma_200': 32000, 'high_52_week': 38000, 'low_52_week': 30000},
-        'QQQ': {'current_price': 400, 'sma_50': 390, 'sma_200': 370, 'high_52_week': 420, 'low_52_week': 350}
+        '^IXIC': {'current_price': 400, 'sma_50': 390, 'sma_200': 370, 'high_52_week': 420, 'low_52_week': 350}
     }
     if trend == 'Bearish':
         base_data['^GSPC']['current_price'] = 4300
         base_data['^DJI']['current_price'] = 33000
-        base_data['QQQ']['current_price'] = 380
+        base_data['^IXIC']['current_price'] = 380
     if trend == 'Neutral':
         base_data['^DJI']['current_price'] = 33000
     return base_data

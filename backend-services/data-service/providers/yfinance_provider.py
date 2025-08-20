@@ -319,7 +319,7 @@ def get_core_financials(ticker_symbol):
     print(f"PROVIDER-DEBUG: Attempting to get core financials for {ticker_symbol}", flush=True)
 
     # --- Special Handling for Market Indices ---
-    if ticker_symbol in ['^GSPC', '^DJI', 'QQQ']:
+    if ticker_symbol in ['^GSPC', '^DJI', '^IXIC']:
         hist = _get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
         if not hist:
             print(f"PROVIDER-DEBUG: No historical data for index {ticker_symbol}", flush=True)

@@ -1,5 +1,6 @@
 import requests
 import pandas as pd
+from datetime import datetime
 
 # Constants for market cap ranges (in USD)
 MIN_MARKET_CAP = 300_000_000      # $300M
@@ -16,6 +17,10 @@ DATA_SERVICE_URL = "http://data-service:3001"
 # Functions for financial statements (like check_yoy_eps_growth) expect newest-to-oldest data, 
 # while functions for price history expect oldest-to-newest, due to the data properties.
 
+# A consistent structure for failure responses
+def failed_check(metric, message, **kwargs):
+    return {metric: {"pass": False, "message": message, **kwargs}}
+
 def check_is_small_to_mid_cap(financial_data, details):
     """
     Check if the company has a market capitalization between a specified lower and upper bound.
@@ -27,19 +32,34 @@ def check_is_small_to_mid_cap(financial_data, details):
     Returns:
         None: The result is stored in the 'is_small_to_mid_cap' key of the details dictionary.
     """
+    metric_key = 'is_small_to_mid_cap'
+
     try:
         market_cap = financial_data.get('marketCap')
         
         # Handle missing or None market cap
         if market_cap is None:
-            details['is_small_to_mid_cap'] = False
+            details.update(failed_check(metric_key, "Market cap data not available.", market_cap=None))
             return
         
-        # Check if market cap is within the specified range
-        details['is_small_to_mid_cap'] = MIN_MARKET_CAP <= market_cap <= MAX_MARKET_CAP
+        is_pass = MIN_MARKET_CAP <= market_cap <= MAX_MARKET_CAP
+        message = (
+            f"Market cap ${market_cap:,.0f} is within the range of "
+            f"${MIN_MARKET_CAP:,.0f} to ${MAX_MARKET_CAP:,.0f}."
+            if is_pass
+            else f"Market cap ${market_cap:,.0f} is outside the required range."
+        )
+
+        # Populate a detailed dictionary instead of a single boolean
+        details[metric_key] = {
+            "pass": is_pass,
+            "market_cap": f"${market_cap:,.0f}",
+            "required_range": f"${MIN_MARKET_CAP:,.0f} - ${MAX_MARKET_CAP:,.0f}",
+            "message": message
+        }
         
     except (TypeError, ValueError):
-        details['is_small_to_mid_cap'] = False
+        details.update(failed_check(metric_key, "Invalid market cap data format.", market_cap=financial_data.get('marketCap')))
 
 def check_is_early_stage(financial_data, details):
     """
@@ -52,14 +72,14 @@ def check_is_early_stage(financial_data, details):
     Returns:
         None: The result is stored in the 'is_recent_ipo' key of the details dictionary.
     """
-    from datetime import datetime
+    metric_key = 'is_recent_ipo'
     
     try:
         ipo_date_str = financial_data.get('ipoDate')
         
         # Handle missing or None IPO date
         if not ipo_date_str:
-            details['is_recent_ipo'] = False
+            details.update(failed_check(metric_key, "IPO date not available.", ipo_date=None))
             return
         
         # Parse the IPO date string
@@ -70,10 +90,23 @@ def check_is_early_stage(financial_data, details):
         years_since_ipo = (current_date - ipo_date).days / 365.25
         
         # Check if IPO was within the recent timeframe
-        details['is_recent_ipo'] = years_since_ipo <= RECENT_IPO_YEARS
+        is_pass = years_since_ipo <= RECENT_IPO_YEARS
+        message = (
+            f"IPO was {years_since_ipo:.1f} years ago, which is within the {RECENT_IPO_YEARS}-year threshold."
+            if is_pass
+            else f"IPO was {years_since_ipo:.1f} years ago, which is older than the {RECENT_IPO_YEARS}-year threshold."
+        )
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "ipo_date": ipo_date_str,
+            "years_since_ipo": f"{years_since_ipo:.1f}",
+            "threshold_years": RECENT_IPO_YEARS,
+            "message": message
+        }
         
     except (ValueError, TypeError):
-        details['is_recent_ipo'] = False
+        details.update(failed_check(metric_key, "Invalid IPO date format.", ipo_date=ipo_date))
 
 def check_has_limited_float(financial_data, details):
     """
@@ -86,23 +119,40 @@ def check_has_limited_float(financial_data, details):
     Returns:
         None: The result is stored in the 'has_limited_float' key of the details dictionary.
     """
+    metric_key = 'has_limited_float'
+
     try:
         shares_outstanding = financial_data.get('sharesOutstanding')
         float_shares = financial_data.get('floatShares')
         
         # Handle missing or None values
         if shares_outstanding is None or float_shares is None or shares_outstanding <= 0:
-            details['has_limited_float'] = False
+            details.update(failed_check(metric_key, "Shares outstanding or float shares data not available.", 
+                                        shares_outstanding=shares_outstanding, float_shares=float_shares))
             return
         
         # Calculate the float percentage
         float_percentage = float_shares / shares_outstanding
         
         # Check if the float percentage is below the threshold
-        details['has_limited_float'] = float_percentage <= LIMITED_FLOAT_THRESHOLD
+        is_pass = float_percentage <= LIMITED_FLOAT_THRESHOLD
+        message = (
+            f"Float is {float_percentage:.1%}, which is below the {LIMITED_FLOAT_THRESHOLD:.0%} threshold."
+            if is_pass
+            else f"Float is {float_percentage:.1%}, which is above the {LIMITED_FLOAT_THRESHOLD:.0%} threshold."
+        )
         
+        details[metric_key] = {
+            "pass": is_pass,
+            "float_percentage": f"{float_percentage:.1%}",
+            "threshold": f"<= {LIMITED_FLOAT_THRESHOLD:.0%}",
+            "message": message
+        }
+
     except (TypeError, ValueError, ZeroDivisionError):
-        details['has_limited_float'] = False
+        details.update(failed_check(metric_key, "Error calculating float percentage.", 
+                                    shares_outstanding=financial_data.get('sharesOutstanding'), 
+                                    float_shares=financial_data.get('floatShares')))
 
 def check_yoy_eps_growth(financial_data, details):
     """
@@ -118,43 +168,61 @@ def check_yoy_eps_growth(financial_data, details):
     Returns:
         None: The result is stored in the 'has_strong_yoy_eps_growth' key of the details dictionary.
     """
+    metric_key = 'has_strong_yoy_eps_growth'
     try:
         earnings = financial_data.get('quarterly_earnings', [])
         
         # Require at least 5 quarters of data
         if len(earnings) < 5:
-            details['has_strong_yoy_eps_growth'] = False
-            details['yoy_eps_growth_level'] = 'Insufficient Data'
+            details.update(failed_check(metric_key, "Insufficient quarterly earnings data (requires >=5 quarters).",
+                                        quarters_found=len(earnings)))
             return
         
-        # Most recent quarter (index -1) and same quarter from previous year (index -5)
+        # Most recent quarter (index 0) and same quarter from previous year (index 4)
         current_eps = earnings[0]['Earnings']
         previous_year_eps = earnings[4]['Earnings']
         
         # Handle division by zero or negative numbers
         if previous_year_eps <= 0:
-            details['has_strong_yoy_eps_growth'] = False
-            details['yoy_eps_growth_level'] = 'Negative/Zero Base'
+            details.update(failed_check(metric_key, "Previous year's EPS is zero or negative, cannot calculate growth.",
+                                        previous_year_eps=previous_year_eps))
             return
         
         # Calculate YoY growth percentage
         yoy_growth = (current_eps - previous_year_eps) / previous_year_eps
+
+        # Check if the YoY growth is greater than 25%
+        is_pass = yoy_growth > 0.25
         
         # Determine growth level
         if yoy_growth > 0.45:  # >45%
-            details['yoy_eps_growth_level'] = 'Exceptional Growth'
+            yoy_eps_growth_level = 'Exceptional Growth'
         elif yoy_growth > 0.35:  # >35%
-            details['yoy_eps_growth_level'] = 'High Growth'
+            yoy_eps_growth_level = 'High Growth'
         elif yoy_growth > 0.25:  # >25%
-            details['yoy_eps_growth_level'] = 'Standard Growth'
+            yoy_eps_growth_level = 'Standard Growth'
         else:
-            details['yoy_eps_growth_level'] = 'Moderate Growth'
+            yoy_eps_growth_level = 'Moderate Growth'
         
-        details['has_strong_yoy_eps_growth'] = yoy_growth > 0.25  # 25%
+        # Create message
+        message = (
+            f"YoY EPS growth is {yoy_growth:+.1%}, which exceeds the +25% threshold."
+            if is_pass
+            else f"YoY EPS growth is {yoy_growth:+.1%}, failing to meet the +25% threshold."
+        )
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "current_quarter_eps": current_eps,
+            "previous_year_eps": previous_year_eps,
+            "yoy_growth": f"{yoy_growth:+.1%}",
+            "yoy_eps_growth_level": yoy_eps_growth_level,
+            "message": message
+        }
         
     except (ZeroDivisionError, IndexError, KeyError, TypeError):
-        details['has_strong_yoy_eps_growth'] = False
-        details['yoy_eps_growth_level'] = 'Error'
+        details.update(failed_check(metric_key, "An error occurred during calculation.",
+                                    earnings = earnings))
 
 def check_positive_recent_earnings(financial_data, details):
     """
@@ -168,6 +236,7 @@ def check_positive_recent_earnings(financial_data, details):
     Returns:
         None: The result is stored in the 'has_positive_recent_earnings' key of the details dictionary.
     """
+    metric_key = 'has_positive_recent_earnings'
     try:
         # Get annual and quarterly earnings data
         annual_earnings = financial_data.get('annual_earnings', [])
@@ -175,7 +244,9 @@ def check_positive_recent_earnings(financial_data, details):
         
         # Check if we have sufficient data
         if not annual_earnings or not quarterly_earnings:
-            details['has_positive_recent_earnings'] = False
+            details.update(failed_check(metric_key, "Missing EPS value in earnings data.",
+                                        annual_qtrs=len(annual_earnings),
+                                        quarterly_qtrs=len(quarterly_earnings)))
             return
         
         # Get the most recent annual EPS (first item in the list)
@@ -185,10 +256,23 @@ def check_positive_recent_earnings(financial_data, details):
         quarterly_eps = quarterly_earnings[0].get('Earnings')
         
         # Check if both EPS values are positive
-        details['has_positive_recent_earnings'] = (
+        is_pass = (
             annual_eps is not None and annual_eps > 0 and
             quarterly_eps is not None and quarterly_eps > 0
         )
+        message = (
+            f"Annual EPS ({annual_eps}) and Quarterly EPS ({quarterly_eps}) are both positive."
+            if is_pass
+            else f"Either Annual EPS ({annual_eps}) or Quarterly EPS ({quarterly_eps}) is not positive."
+        )
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "annual_eps": annual_eps,
+            "quarterly_eps": quarterly_eps,
+            "message": message
+        }
+
     except (IndexError, KeyError, TypeError):
         details['has_positive_recent_earnings'] = False
 
@@ -208,47 +292,44 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
     Returns:
         None: The result is stored in the 'outperforms_in_rally' key of the details dictionary.
     """
+    metric_key = 'outperforms_in_rally'
     try:
         # Check if we have sufficient data
         if not stock_data or not sp500_data or len(stock_data) < 21 or len(sp500_data) < 21:
-            details['outperforms_in_rally'] = False
+            details.update(failed_check(metric_key, "Insufficient stock or S&P 500 data (requires >=21 data points).",
+                                        stock_days=len(stock_data), sp500_days=len(sp500_data)))
             return
         
         # Define parameters
-        rally_threshold = 0.05  # 5% increase to identify rally start
+        rally_threshold = 0.1  # 10% increase to identify rally start
         performance_period = 20  # 20 trading days for performance comparison
         
-        # Look for a rally in the most recent data (last 90 days)
-        lookback_period = min(90, len(sp500_data))
+        # Look for a rally in the most recent data (last 180 days)
+        lookback_period = min(180, len(sp500_data))
         
-        # Find the start of a market rally (5% increase over 3 days)
+        # Find the start of a market rally (10% increase over 10 days)
         rally_start_idx = None
         
-        # Look for a 5% increase over a 3-day period in recent data
+        # Look for a 10% increase over a 10-day period in recent data
         search_start = max(0, len(sp500_data) - lookback_period)
-        search_end = len(sp500_data) - performance_period - 3
+        search_end = len(sp500_data) - performance_period - 10
         
         for i in range(search_start, search_end):
             start_price = sp500_data[i]['close']
-            # Check 3-day increase
-            if i + 3 < len(sp500_data):
-                end_price = sp500_data[i + 3]['close']
+            # Check 10-day increase
+            if i + 10 < len(sp500_data):
+                end_price = sp500_data[i + 10]['close']
                 if end_price >= start_price * (1 + rally_threshold):
-                    rally_start_idx = i  # Rally starts at the beginning of the 3-day period
+                    rally_start_idx = i  # Rally starts at the beginning of the 10-day period
                     break
         
         # If still no rally found, we can't make a determination
         if rally_start_idx is None:
-            details['outperforms_in_rally'] = False
+            details.update(failed_check(metric_key, "No recent market rally detected to measure against."))
             return
         
         # Define the performance comparison period (next 20 trading days)
         performance_end_idx = min(len(sp500_data) - 1, rally_start_idx + performance_period)
-        
-        # Ensure we have enough data for the full performance period
-        if performance_end_idx - rally_start_idx < 10:  # Need at least 10 days for meaningful comparison
-            details['outperforms_in_rally'] = False
-            return
         
         # Get S&P 500 performance over the period
         sp500_start_price = sp500_data[rally_start_idx]['close']
@@ -257,7 +338,8 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
         
         # Make sure there's a positive rally (market going up)
         if sp500_performance <= 0:
-            details['outperforms_in_rally'] = False
+            details.update(failed_check(metric_key, "Market performance during rally period was not positive.",
+                                        sp500_performance=f"{sp500_performance:.2%}"))
             return
         
         # Find corresponding stock data points
@@ -282,7 +364,7 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
         
         # Ensure we have valid indices
         if stock_start_idx >= len(stock_data) or stock_end_idx >= len(stock_data) or stock_start_idx < 0:
-            details['outperforms_in_rally'] = False
+            details.update(failed_check(metric_key, "Invalid stock data indices for performance period."))
             return
         
         # Calculate stock performance over the same period
@@ -291,31 +373,45 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
         stock_performance = (stock_end_price - stock_start_price) / stock_start_price
         
         # Check if stock outperforms S&P 500 by more than 1.5x
-        details['outperforms_in_rally'] = stock_performance > (sp500_performance * 1.5)
+        is_pass = stock_performance > (sp500_performance * 1.5)
+        message = (
+            f"Stock gained {stock_performance:.1%} vs S&P 500's {sp500_performance:.1%} during the rally, exceeding the 1.5x threshold."
+            if is_pass
+            else f"Stock gained {stock_performance:.1%} vs S&P 500's {sp500_performance:.1%}, failing to meet the 1.5x threshold."
+        )
         
+        details[metric_key] = {
+            "pass": is_pass,
+            "stock_performance": f"{stock_performance:.1%}",
+            "sp500_performance": f"{sp500_performance:.1%}",
+            "required_outperformance": "1.5x",
+            "message": message
+        }
+
     except Exception as e:
         # Handle any errors gracefully
-        details['outperforms_in_rally'] = False
+        details.update(failed_check(metric_key, f"An unexpected error occurred: {e}"))
 
 def check_market_trend_context(index_data, details):
     """
-    Determine the market trend context based on all three major indices (SPY, DIA, QQQ) technical indicators.
+    Determine the market trend context based on all three major indices (SPY, DIA, ^IXIC) technical indicators.
     
     Args:
         index_data (dict): Dictionary containing market data for all three indices including:
-                          '^GSPC', '^DJI', 'QQQ' each with 'current_price', 'sma_50', 'sma_200', 'high_52_week', 'low_52_week'
+                          '^GSPC', '^DJI', '^IXIC' each with 'current_price', 'sma_50', 'sma_200', 'high_52_week', 'low_52_week'
         details (dict): A dictionary to store the result.
         
     Returns:
         None: The result is stored in the 'market_trend_context' key of the details dictionary.
     """
+    metric_key = 'market_trend_context'
     try:
         # Define the three major indices
-        indices = ['^GSPC', '^DJI', 'QQQ']
+        indices = ['^GSPC', '^DJI', '^IXIC']
         
         # Check if we have data for all three indices
         if not index_data or not all(index in index_data for index in indices):
-            details['market_trend_context'] = 'Unknown'
+            details.update(failed_check(metric_key, "Missing data for one or more major indices."))
             return
         
         # Determine trend for each index
@@ -333,7 +429,7 @@ def check_market_trend_context(index_data, details):
             
             # Validate required data is present
             if any(value is None for value in [current_price, sma_50, sma_200, high_52_week, low_52_week]):
-                details['market_trend_context'] = 'Unknown'
+                details.update(failed_check(metric_key, f"Missing technical indicators for index {index}."))
                 return
             
             # Determine individual index trend
@@ -350,17 +446,27 @@ def check_market_trend_context(index_data, details):
         
         if bullish_count == 3:
             # All three indices are bullish (above their 50-day SMA)
-            details['market_trend_context'] = 'Bullish'
+            trend = 'Bullish'
         elif bearish_count == 3:
             # All three indices are bearish (below their 50-day SMA)
-            details['market_trend_context'] = 'Bearish'
+            trend = 'Bearish'
         else:
             # Mixed signals
-            details['market_trend_context'] = 'Neutral'
+            trend = 'Neutral'
         
+        is_pass = trend != 'Bearish'
+        message = f"Market trend is {trend}, with {bullish_count}/3 indices in a bullish posture."
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "trend": trend,
+            "index_trends": index_trends,
+            "message": message
+        }   
+
     except Exception as e:
         # Handle any errors gracefully
-        details['market_trend_context'] = 'Unknown'
+        details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}", trend='Unknown'))
 
 
 def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, details):
@@ -377,11 +483,13 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
     Returns:
         None: The results are stored in the details dictionary.
     """
+    metric_key = 'market_trend_impact'
     try:
         # Initialize evaluation results
-        details['shallow_decline'] = False
-        details['new_52_week_high'] = False
-        details['recent_breakout'] = False
+        shallow_decline = False
+        new_52_week_high = False
+        recent_breakout = False
+        sub_results = {}
 
         # Fetch market trend data from data-service
         market_trends_url = f"{DATA_SERVICE_URL}/market-trends"
@@ -416,7 +524,12 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
 
                     # Check if stock's decline is not more than 2.5 times the S&P 500's decline
                     if sp500_decline > 0 and stock_decline <= (sp500_decline * 2.5):
-                        details['shallow_decline'] = True
+                        shallow_decline = True
+
+            sub_results['shallow_decline'] = {
+                "pass": shallow_decline,
+                "message": "Stock decline is shallow relative to S&P 500." if shallow_decline else "Stock decline exceeds threshold relative to S&P 500."
+            }
 
         elif market_trend_context in ['Neutral', 'Bullish']:
             # New High Check
@@ -427,7 +540,12 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
 
                 # Check if current price is a new 52-week high
                 if current_price > stock_high:
-                    details['new_52_week_high'] = True
+                    new_52_week_high = True
+
+            sub_results['new_52_week_high'] = {
+                "pass": new_52_week_high,
+                "message": "Stock reached a new 52-week high." if new_52_week_high else "Stock did not reach a new 52-week high."
+            }
 
             # Breakout Check During Market Recovery
             if is_recovery_phase and stock_data and len(stock_data) >= 20:
@@ -448,13 +566,27 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
                     volume_breakout = current_volume > (avg_volume * 1.5) if avg_volume > 0 else False
 
                     if price_breakout and volume_breakout:
-                        details['recent_breakout'] = True
+                        recent_breakout = True
+
+            sub_results['recent_breakout'] = {
+                "pass": recent_breakout,
+                "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
+            }
+
+        is_pass = all(sub['pass'] for sub in sub_results.values()) if sub_results else False
+        message = f"Market trend impact evaluated in {market_trend_context} context."
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "market_trend_context": market_trend_context,
+            "is_recovery_phase": is_recovery_phase,
+            "sub_results": sub_results,
+            "message": message
+        }
 
     except Exception as e:
         # Handle any errors gracefully
-        details['shallow_decline'] = False
-        details['new_52_week_high'] = False
-        details['recent_breakout'] = False
+        details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}"))
 
 def check_accelerating_growth(financial_data, details):
     """
@@ -463,13 +595,15 @@ def check_accelerating_growth(financial_data, details):
     Requires at least 4 quarters of data to calculate three distinct QoQ growth rates.
     Checks if GrowthRate3 > GrowthRate2 > GrowthRate1 for each metric.
     """
+    metric_key = 'has_accelerating_growth'
     try:
         earnings = financial_data.get('quarterly_earnings', [])
         financials = financial_data.get('quarterly_financials', [])
         
         # Need at least 4 quarters to calculate 3 QoQ growth rates
         if len(earnings) < 4 or len(financials) < 4:
-            details['has_accelerating_growth'] = False
+            details.update(failed_check(metric_key, "Insufficient data (requires >= 4 quarters of earnings and financials).", 
+                                        earnings_qtrs=len(earnings), financials_qtrs=len(financials)))
             return
 
         def calculate_qoq_growth_rates(data, key1, key2=None):
@@ -495,25 +629,33 @@ def check_accelerating_growth(financial_data, details):
 
                 # Ensure values are valid for calculation
                 if old_val is None or new_val is None or old_val == 0:
-                    return False # Cannot calculate growth, so it's not accelerating.
+                     return {"pass": False, "rates": [], "message": f"Cannot calculate growth for {key1} due to zero/null base."}
                 
                 rates.append((new_val - old_val) / abs(old_val))
             
             # Check for strictly increasing growth: Newest > Middle > Oldest
-            return rates[0] > rates[1] > rates[2]
+            is_accelerating = rates[0] > rates[1] > rates[2]
+            message = f"Growth rates [{', '.join([f'{r:.1%}' for r in rates])}] are {'accelerating' if is_accelerating else 'not accelerating'}."
+            return {"pass": is_accelerating, "rates": [f'{r:.1%}' for r in rates], "message": message}
 
         # Check for acceleration across all three key metrics
         earnings_accelerating = calculate_qoq_growth_rates(earnings, 'Earnings')
         revenue_accelerating = calculate_qoq_growth_rates(earnings, 'Revenue')
         margin_accelerating = calculate_qoq_growth_rates(financials, 'Net Income', 'Total Revenue')
 
-        details['has_accelerating_growth'] = (earnings_accelerating and
-                                           revenue_accelerating and
-                                           margin_accelerating)
+        is_pass = earnings_accelerating['pass'] and revenue_accelerating['pass'] and margin_accelerating['pass']
+        
+        details[metric_key] = {
+            "pass": is_pass,
+            "message": "Passes if Earnings, Revenue, and Margin all show accelerating quarter-over-quarter growth." if is_pass else "One or more metrics failed to show accelerating growth.",
+            "earnings": earnings_accelerating,
+            "revenue": revenue_accelerating,
+            "margin": margin_accelerating
+        }
 
-    except (KeyError, TypeError, IndexError, ZeroDivisionError, AttributeError):
+    except (KeyError, TypeError, IndexError, ZeroDivisionError, AttributeError) as e:
         # Gracefully handle any data or calculation errors
-        details['has_accelerating_growth'] = False
+        details.update(failed_check(metric_key, f"An unexpected error occurred: {e}"))
 
 
 def check_consecutive_quarterly_growth(financial_data, details):
@@ -523,13 +665,14 @@ def check_consecutive_quarterly_growth(financial_data, details):
     Fails if any of the last four quarters do not show >20% QoQ EPS growth.
     Categorizes the average growth level of the last four quarters.
     """
+    metric_key = 'has_consecutive_quarterly_growth'
     try:
         earnings = financial_data.get('quarterly_earnings', [])
         
         # Require at least 5 quarters of data to calculate 4 QoQ growth rates.
         if len(earnings) < 5:
-            details['has_consecutive_quarterly_growth'] = False
-            details['consecutive_quarterly_growth_level'] = 'Insufficient Data'
+            details.update(failed_check(metric_key, "Insufficient data (requires >= 5 quarters).",
+                                        quarters_found=len(earnings)))
             return
 
         # Calculate the last 4 QoQ growth rates
@@ -550,7 +693,7 @@ def check_consecutive_quarterly_growth(financial_data, details):
             qoq_growth_rates.append(growth)
 
         # Check that ALL of the last 4 quarters have >20% QoQ EPS growth
-        details['has_consecutive_quarterly_growth'] = all(rate > 0.20 for rate in qoq_growth_rates)
+        is_pass = all(rate > 0.20 for rate in qoq_growth_rates)
         
         # Determine growth level based on the average of the last 4 quarters' growth
         if qoq_growth_rates:
@@ -564,12 +707,22 @@ def check_consecutive_quarterly_growth(financial_data, details):
             else:
                 level = 'Moderate Growth'
 
-            details['consecutive_quarterly_growth_level'] = level
-            details['qoq_growth_rates'] = qoq_growth_rates # for debugging
+        message = (
+            f"Passes with {level} growth. All 4 recent quarters show >20% QoQ EPS growth."
+            if is_pass
+            else "Fails. Not all of the last 4 quarters show >20% QoQ EPS growth."
+        )
+
+        details[metric_key] = {
+            "pass": is_pass,
+            "growth_level": f"{level}",
+            "average_qoq_growth": f"{avg_growth:.1%}",
+            "quarterly_growth_rates": [f"{r:.1%}" for r in qoq_growth_rates],
+            "message": message
+        }
 
     except (KeyError, TypeError, IndexError, ZeroDivisionError):
-        details['has_consecutive_quarterly_growth'] = False
-        details['consecutive_quarterly_growth_level'] = 'Error'
+        details.update(failed_check(metric_key, "An unexpected error occurred during calculation."))
 
 def check_industry_leadership(ticker):
     """

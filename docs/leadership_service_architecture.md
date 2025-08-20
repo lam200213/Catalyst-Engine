@@ -55,7 +55,7 @@ flowchart TD
 - **Ideal Logic**: The stock should rise more than others in the early phase of a market rally, specifically outperforming the S&P 500 by >1.5x in percentage gain during the first 20 trading days of a new rally.
 - **Implementation**:  
   - **Function** `check_outperforms_in_rally`  
-  - **Screening Logic**: Requires at least 21 days of price data for both stock and S&P 500. Scans recent 90 days for a rally start (5% S&P 500 increase over 3 days). If found, compares performance over next 20 days: stock gain > (S&P 500 gain * 1.5). Fails if no rally, insufficient data, or non-positive S&P 500 performance. Aligns dates approximately if exact matches missing.   
+  - **Screening Logic**: Requires at least 21 days of price data for both stock and S&P 500. Scans recent 180 days for a rally start (10% S&P 500 increase over 10 days). If found, compares performance over next 20 days: stock gain > (S&P 500 gain * 1.5). Fails if no rally, insufficient data, or non-positive S&P 500 performance. Aligns dates approximately if exact matches missing.   
   - **Proxies/Notes**: Price history is oldest-to-newest. Rally detection is proxy for "initial stages." If market state (from Metric 10) is not conducive to a rally (e.g., Bearish), this may be neglected with a comment like "neglected due to market state being 'Bearish'".
   - **Market State**: Neglect Bearish market state.
 ---
@@ -130,7 +130,7 @@ flowchart TD
       - Bearish: Decline ≤2.5x S&P 500’s decline from 52-week high.  
       - Bullish/Neutral: New 52-week high or breakout (price >1.05x avg, volume >1.5x avg) if in recovery phase (recent Bearish trends present). 
   - **Highlights/Exceeds**: Stores sub-results (e.g., shallow_decline, new_52_week_high, recent_breakout).
-  - **Proxies/Notes**: Uses QQQ for NASDAQ. Requires 52-week data. If state doesn't match a sub-check, neglect and comment (e.g., "neglected due to market state being 'Bullish'"). Price history oldest-to-newest.
+  - **Proxies/Notes**: Uses ^IXIC for NASDAQ. Requires 52-week data. If state doesn't match a sub-check, neglect and comment (e.g., "neglected due to market state being 'Bullish'"). Price history oldest-to-newest.
 
 ---
 
