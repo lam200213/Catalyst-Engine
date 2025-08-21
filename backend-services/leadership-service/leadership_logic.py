@@ -745,7 +745,15 @@ def check_industry_leadership(ticker):
 
         peers_data = peers_response.json()
         industry_name = peers_data.get("industry")
-        peer_tickers = peers_data.get("peers", [])
+        raw_peer_tickers = peers_data.get("peers", [])
+
+        # Sanitize the ticker symbol to handle special characters and whitespace.
+        # This ensures tickers like 'BRK/B' become 'BRK-B' and 'ECC ' becomes 'ECC'.
+        peer_tickers = [
+            ticker.strip().replace('/', '-') 
+            for ticker in raw_peer_tickers
+            if ticker
+        ]
 
         if not industry_name:
             return {"error": f"No industry data found for {ticker}"}

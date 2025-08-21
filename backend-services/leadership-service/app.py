@@ -37,8 +37,8 @@ def fetch_financial_data(ticker):
             
         return financials_response.json(), 200
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching financial data for {ticker}: {e}")
-        return None, 503 # Service Unavailable
+        app.logger.error(f"Could not fetch financial data for {ticker}: {e}")
+        return jsonify({"error": "Failed to retrieve financial data from upstream service"}), 503
 
 def fetch_price_data(ticker):
     """Fetch price data from data service"""
@@ -156,6 +156,13 @@ def leadership_analysis(ticker):
         check_outperforms_in_rally(stock_data, sp500_price_data, details)
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
+        # Check industry leadership
+        leadership_result = check_industry_leadership(ticker)
+        if "rank" in leadership_result and leadership_result['rank'] is not None:
+            results['is_industry_leader'] = leadership_result['rank'] <= 3
+        else:
+            results['is_industry_leader'] = False
+        
         # Market trend context check
         check_market_trend_context(index_data, details)
         results['market_trend_context'] = details.get('market_trend_context', 'Unknown')
@@ -167,6 +174,18 @@ def leadership_analysis(ticker):
         results['new_52_week_high'] = details.get('new_52_week_high', False)
         results['recent_breakout'] = details.get('recent_breakout', False)
         
+        # Conditionally check market context criteria
+        market_context = results.get('market_trend_context')
+        if market_context == 'Bearish':
+            passes_check = passes_check and results.get('shallow_decline', False)
+        elif market_context in ['Bullish', 'Neutral']:
+            # In a recovery, a breakout OR a new high is a good sign
+            is_in_recovery = "Bearish" in details.get('recent_trends', [])
+            if is_in_recovery:
+                passes_check = passes_check and (results.get('recent_breakout', False) or results.get('new_52_week_high', False))
+            else: # In a standard bull/neutral market, look for a new high
+                passes_check = passes_check and results.get('new_52_week_high', False)
+
     except Exception as e:
         print(f"Error running leadership checks: {e}")
         return jsonify({'error': 'Error running leadership checks'}), 500
@@ -183,18 +202,6 @@ def leadership_analysis(ticker):
     # Check if all core criteria pass
     passes_check = all(details.get(key, {}).get('pass', False) for key in core_criteria)
 
-    # Conditionally check market context criteria
-    market_context = results.get('market_trend_context')
-    if market_context == 'Bearish':
-        passes_check = passes_check and results.get('shallow_decline', False)
-    elif market_context in ['Bullish', 'Neutral']:
-        # In a recovery, a breakout OR a new high is a good sign
-        is_in_recovery = "Bearish" in details.get('recent_trends', [])
-        if is_in_recovery:
-            passes_check = passes_check and (results.get('recent_breakout', False) or results.get('new_52_week_high', False))
-        else: # In a standard bull/neutral market, look for a new high
-            passes_check = passes_check and results.get('new_52_week_high', False)
-    
     # Prepare response
     response = {
         'ticker': ticker,
@@ -205,11 +212,19 @@ def leadership_analysis(ticker):
         }
     }
 
-    # Check industry leadership
-    leadership_result = check_industry_leadership(ticker)
-    if "rank" in leadership_result and leadership_result['rank'] is not None:
-        response['details']['is_industry_leader'] = leadership_result['rank'] <= 3
-    
+    # for detailed logging of failed checks.
+    print(f"--- Leadership Analysis Details for {ticker} ---")
+    for metric, result in results.items():
+        if isinstance(result, dict): # Ensure we're looking at a metric result
+            passed = result.get('pass', True)
+            message = result.get('message')
+            
+            if not passed and message:
+                print(f"[FAIL] {metric}: {message}")
+            elif passed and message: # Optional: log success messages too
+                print(f"[PASS] {metric}: {message}")
+    print("-------------------------------------------------")
+
     return jsonify(response)
 
 @app.route('/health', methods=['GET'])

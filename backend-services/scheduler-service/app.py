@@ -174,20 +174,12 @@ def _run_leadership_screening(job_id, vcp_survivors):
                 try:
                     result = resp.json()
                     # Check if the candidate passes leadership criteria
-                    results = result.get('results', {})
-                    # A candidate passes if they meet several key leadership criteria
-                    passes_leadership = (
-                        results.get('is_small_to_mid_cap', False) and
-                        results.get('has_strong_yoy_eps_growth', False) and
-                        results.get('has_consecutive_quarterly_growth', False) and
-                        results.get('has_positive_recent_earnings', False) and
-                        results.get('outperforms_in_rally', False)
-                    )
-                    
-                    if passes_leadership:
+
+                    if result.get('passes', False):
                         # Add the leadership results to the candidate info
-                        candidate['leadership_results'] = results
+                        candidate['leadership_results'] = result.get('details', {})
                         leadership_candidates.append(candidate)
+                        
                 except requests.exceptions.JSONDecodeError as e:
                     print(f"Warning: Job {job_id}: Could not decode JSON for leadership screening of {ticker}: {e}. Skipping.")
                     continue
@@ -288,12 +280,15 @@ def run_screening_pipeline():
     unique_part = shortuuid.uuid()[:8]
     job_id = f"{timestamp_str}-{unique_part}"
     print(f"Starting screening job ID: {job_id}")
+
+    final_candidates = []
     
     # 1. Get all available tickers from the ticker service.
-    all_tickers, error = _get_all_tickers(job_id)
-    if error:
-        return error
-    print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
+    # all_tickers, error = _get_all_tickers(job_id)
+    all_tickers = ['AAPL', 'MSFT', 'NVDA', 'JPM', 'DE', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ', 'XOM', 'V', 'PG', 'MA', 'HD', 'CVX', 'ABBV', 'LLY', 'AVGO', 'PEP', 'KO', 'COST', 'MRK', 'BAC', 'WMT', 'PFE', 'TMO', 'DIS', 'ABT', 'VZ', 'ADBE', 'CMCSA', 'CSCO', 'DHR', 'ACN', 'NFLX', 'NKE', 'MCD', 'WFC', 'LIN', 'PM', 'RTX', 'TXN', 'BMY', 'HON', 'UPS', 'IBM', 'AMGN', 'QCOM', 'COP', 'CAT', 'AMD', 'INTU', 'SPGI', 'BA', 'GS', 'PLD', 'SBUX', 'MS', 'BLK', 'MDT', 'AMT', 'GE', 'ISRG', 'LOW', 'SCHW', 'AXP', 'ELV', 'NOW', 'BKNG', 'LMT', 'ADI', 'TJX', 'DE', 'C', 'GILD', 'MMM', 'ZTS', 'SYK', 'CB', 'CI', 'MO', 'T', 'SO', 'DUK', 'MMC', 'PNC', 'USB', 'CL', 'BDX', 'NEE', 'APD', 'EOG', 'ICE', 'FISV', 'SLB', 'EQIX', 'NOC', 'ATVI', 'EMR', 'HUM', 'ITW', 'SHW', 'PGR', 'MCK', 'ETN', 'GD', 'PSA', 'AON', 'F', 'ORCL']
+    # if error:
+    #     return error
+    # print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
     
     # 2. Run Stage 1 Trend Screening on the fetched tickers.
     trend_survivors, error = _run_trend_screening(job_id, all_tickers)
@@ -313,7 +308,6 @@ def run_screening_pipeline():
     print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
     
     # 6. Prepare and store results and summary
-    final_candidates = []
     final_candidates = leadership_survivors
 
     end_time = time.time()
@@ -339,7 +333,8 @@ def run_screening_pipeline():
     
     # 7. Return a success response with job details.
 
-    excluded_keys = {"trend_survivors", "leadership_survivors"}
+    excluded_keys = {"trend_survivors"}
+    job_summary['vcp_survivors'] = [item['ticker'] for item in job_summary['vcp_survivors']]
 
     # Create a filtered copy of job_summary
     filtered_result = {k: v for k, v in job_summary.items() if k not in excluded_keys}
