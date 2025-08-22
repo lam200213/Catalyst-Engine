@@ -758,9 +758,8 @@ def check_industry_leadership(ticker):
         if not industry_name:
             return {"error": f"No industry data found for {ticker}"}
         
-        # Include the original ticker in the batch request
-        # Even if peer_tickers is empty, we still want to process the original ticker
-        all_tickers = list(set(peer_tickers + [ticker]))
+        if not peer_tickers:
+            return {"error": f"No peer data found for {ticker}"}
 
         # Include the original ticker in the batch request
         all_tickers = list(set(peer_tickers + [ticker]))

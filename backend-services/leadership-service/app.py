@@ -2,6 +2,8 @@ import time
 import requests
 import json
 from flask import Flask, jsonify
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import os
 import re # regex import for input validation
 from leadership_logic import (
@@ -23,6 +25,23 @@ app = Flask(__name__)
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 5000))
 
+# --- Create a shared requests Session for connection pooling and retries ---
+session = requests.Session()
+
+# Define the retry strategy
+retry_strategy = Retry(
+    total=3,  # Total number of retries
+    backoff_factor=1,  # Wait 1s, 2s, 4s between retries
+    status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
+    allowed_methods=["HEAD", "GET", "OPTIONS"]
+)
+
+# Mount the retry strategy to the session
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+# --- End of shared session configuration ---
+
 def fetch_financial_data(ticker):
     """
     Fetch financial data from data service, handling errors gracefully.
@@ -30,52 +49,45 @@ def fetch_financial_data(ticker):
     """
     try:
         financials_url = f"{DATA_SERVICE_URL}/financials/core/{ticker}"
-        financials_response = requests.get(financials_url, timeout=10)
+        financials_response = session.get(financials_url, timeout=10)
         
-        if financials_response.status_code != 200:
-            return None, financials_response.status_code
+        financials_response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
             
         return financials_response.json(), 200
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Could not fetch financial data for {ticker}: {e}")
-        return jsonify({"error": "Failed to retrieve financial data from upstream service"}), 503
+        return None, getattr(e.response, 'status_code', 503)
 
 def fetch_price_data(ticker):
     """Fetch price data from data service"""
     try:
         # Fetch stock price data
         stock_url = f"{DATA_SERVICE_URL}/price/{ticker}"
-        stock_response = requests.get(stock_url, timeout=10)
-        
-        if stock_response.status_code != 200:
-            return None
+        stock_response = session.get(stock_url, timeout=10) 
+        stock_response.raise_for_status()
             
         stock_data = stock_response.json()
         return stock_data
-    except Exception as e:
-        print(f"Error fetching price data for {ticker}: {e}")
+    except requests.exceptions.RequestException as e:
+        app.logger.error(f"Error fetching price data for {ticker} after retries: {e}")
         return None
 
 def fetch_index_data():
     """Fetch major index data from data service"""
-    try:
-        # Fetch data for all three major indices for market trend context
-        indices = ['^GSPC', '^DJI', '^IXIC']
-        index_data = {}
-        
-        for index in indices:
+    # Fetch data for all three major indices for market trend context
+    indices = ['^GSPC', '^DJI', '^IXIC']
+    index_data = {}
+    for index in indices:
+        try:
             url = f"{DATA_SERVICE_URL}/financials/core/{index}"
-            response = requests.get(url, timeout=10)
+            response = session.get(url, timeout=10)
+            response.raise_for_status()
+            index_data[index] = response.json()
+        except requests.exceptions.RequestException as e:
+            app.logger.error(f"Error fetching index data for {index} after retries: {e}")
+            index_data[index] = {}
             
-            if response.status_code == 200:
-                index_data[index] = response.json()
-            else:
-                index_data[index] = {}
-                
-        return index_data
-    except Exception as e:
-        print(f"Error fetching index data: {e}")
-        return {}
+    return index_data
 
 @app.route('/leadership/<path:ticker>', methods=['GET'])
 def leadership_analysis(ticker):
