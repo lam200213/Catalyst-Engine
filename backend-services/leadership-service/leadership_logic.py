@@ -469,7 +469,7 @@ def check_market_trend_context(index_data, details):
         details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}", trend='Unknown'))
 
 
-def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, details):
+def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, market_trends_data, details):
     """
     Evaluate the stock's behavior relative to the market trend context.
 
@@ -491,13 +491,6 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trend_context, d
         recent_breakout = False
         sub_results = {}
 
-        # Fetch market trend data from data-service
-        market_trends_url = f"{DATA_SERVICE_URL}/market-trends"
-        market_trends_response = requests.get(market_trends_url, timeout=10)
-        if market_trends_response.status_code != 200:
-            raise Exception("Failed to fetch market trend data")
-
-        market_trends_data = market_trends_response.json()
         recent_trends_statuses = [trend['status'] for trend in market_trends_data]
         recent_trends = recent_trends_statuses[-8:]
 
@@ -724,56 +717,27 @@ def check_consecutive_quarterly_growth(financial_data, details):
     except (KeyError, TypeError, IndexError, ZeroDivisionError):
         details.update(failed_check(metric_key, "An unexpected error occurred during calculation."))
 
-def check_industry_leadership(ticker):
+def check_industry_leadership(ticker, peers_data, batch_financial_data):
     """
     Analyzes a company's industry peers and ranks them based on revenue and market cap.
 
     Args:
         ticker (str): The stock ticker symbol of the company to analyze.
+        peers_data (dict): The JSON response from the /industry/peers/<ticker> endpoint.
+        batch_financial_data (dict): The JSON response from the /financials/core/batch endpoint.
 
     Returns:
         dict: A JSON object containing the ticker's rank and industry details,
-              or an error message if data cannot be fetched or processed.
+              or an error message if data cannot be processed.
     """
     try:
-        # 1. Call GET /industry/peers/<ticker> to get industry name and peer list
-        peers_url = f"{DATA_SERVICE_URL}/industry/peers/{ticker}"
-        peers_response = requests.get(peers_url, timeout=10)
-
-        if peers_response.status_code != 200:
-            return {"error": f"Could not fetch industry peers for {ticker}", "status_code": 500}
-
-        peers_data = peers_response.json()
+        # -- data handling -- 
         industry_name = peers_data.get("industry")
-        raw_peer_tickers = peers_data.get("peers", [])
-
-        # Sanitize the ticker symbol to handle special characters and whitespace.
-        # This ensures tickers like 'BRK/B' become 'BRK-B' and 'ECC ' becomes 'ECC'.
-        peer_tickers = [
-            ticker.strip().replace('/', '-') 
-            for ticker in raw_peer_tickers
-            if ticker
-        ]
 
         if not industry_name:
             return {"error": f"No industry data found for {ticker}"}
         
-        if not peer_tickers:
-            return {"error": f"No peer data found for {ticker}"}
-
-        # Include the original ticker in the batch request
-        all_tickers = list(set(peer_tickers + [ticker]))
-
-        # 2. Call POST /financials/core/batch with the entire list of peer tickers
-        batch_financials_url = f"{DATA_SERVICE_URL}/financials/core/batch"
-        batch_response = requests.post(batch_financials_url, json={"tickers": all_tickers, "metrics": ["revenue", "marketCap", "netIncome"]}, timeout=40)
-
-        if batch_response.status_code != 200:
-            return {"error": f"Could not fetch batch financial data", "status_code": 500}
-
-        batch_financial_data = batch_response.json().get("success", {})
-
-        # 3. Filter out any peers with incomplete data and prepare for DataFrame
+        # Filter out any peers with incomplete data and prepare for DataFrame
         processed_data = []
         for ticker_symbol, data in batch_financial_data.items():
             # Ensure data is valid and annual_earnings is a non-empty list
@@ -795,6 +759,7 @@ def check_industry_leadership(ticker):
         if not processed_data:
             return {"error": "No complete financial data available for ranking after filtering."}
 
+        # -- screening -- 
         # Create a pandas DataFrame
         df = pd.DataFrame(processed_data)
 
@@ -834,11 +799,7 @@ def check_industry_leadership(ticker):
             "total_peers_ranked": len(df),
             "ranked_peers_data": df.to_dict(orient='records') # Optional: include full ranked data
         }
-
-    except requests.exceptions.Timeout:
-        return {"error": "Request to data service timed out."}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Network or service error: {e}"}
+    
     except Exception as e:
         print(f"Error in check_industry_leadership for {ticker}: {e}")
         return {"error": f"An unexpected error occurred: {e}"}

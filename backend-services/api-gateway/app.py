@@ -53,7 +53,7 @@ def gateway(service, path=""):
             # Only attempt to forward a JSON body if one is present in the request.
             post_data = request.get_json() if request.is_json else None
             # Set a much longer timeout specifically for the 'jobs' service
-            timeout = 6000 if service == 'jobs' else 40
+            timeout = 6000 if service == 'jobs' else 45
             resp = requests.post(target_url, json=post_data, timeout=timeout)
         else:  # Default to GET
             # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.

@@ -33,7 +33,7 @@ retry_strategy = Retry(
     total=3,  # Total number of retries
     backoff_factor=1,  # Wait 1s, 2s, 4s between retries
     status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
-    allowed_methods=["HEAD", "GET", "OPTIONS"]
+    allowed_methods=["HEAD", "GET", "POST", "OPTIONS"]
 )
 
 # Mount the retry strategy to the session
@@ -42,6 +42,7 @@ session.mount("http://", adapter)
 session.mount("https://", adapter)
 # --- End of shared session configuration ---
 
+# --- Helper functions for data fetching ---
 def fetch_financial_data(ticker):
     """
     Fetch financial data from data service, handling errors gracefully.
@@ -89,6 +90,42 @@ def fetch_index_data():
             
     return index_data
 
+def fetch_peer_data(ticker):
+    """Fetches industry and peer list from the data-service."""
+    try:
+        peers_url = f"{DATA_SERVICE_URL}/industry/peers/{ticker}"
+        response = session.get(peers_url, timeout=10)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.RequestException as e:
+        status_code = getattr(e.response, 'status_code', 503)
+        return None, (f"Could not fetch industry peers for {ticker}", status_code)
+
+def fetch_batch_financials(tickers):
+    """Fetches core financial data for a list of tickers in a single batch."""
+    try:
+        batch_url = f"{DATA_SERVICE_URL}/financials/core/batch"
+        payload = {"tickers": tickers, "metrics": ["revenue", "marketCap", "netIncome"]}
+        response = session.post(batch_url, json=payload, timeout=40)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.RequestException as e:
+        status_code = getattr(e.response, 'status_code', 503)
+        return None, (f"Could not fetch batch financial data", status_code)
+    
+def fetch_market_trends():
+    """Fetches historical market trend data."""
+    try:
+        trends_url = f"{DATA_SERVICE_URL}/market-trends"
+        response = session.get(trends_url, timeout=10)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.RequestException as e:
+        status_code = getattr(e.response, 'status_code', 503)
+        return None, (f"Could not fetch market trends data", status_code)
+
+# --- End of helper functions ---
+
 @app.route('/leadership/<path:ticker>', methods=['GET'])
 def leadership_analysis(ticker):
     """Main endpoint for leadership screening analysis"""
@@ -130,6 +167,31 @@ def leadership_analysis(ticker):
     if sp500_price_data is None:
         return jsonify({'error': 'Failed to fetch S&P 500 price data for rally analysis'}), 503
     
+    # --- Industry Peer Data Fetching ---
+    peers_data, error = fetch_peer_data(ticker)
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+
+    raw_peer_tickers = peers_data.get("peers", [])
+    if not raw_peer_tickers:
+        return jsonify({'error': f"No peer data found for {ticker}"}), 404
+
+    peer_tickers = [t.strip().replace('/', '-') for t in raw_peer_tickers if t]
+    all_tickers = list(set(peer_tickers + [ticker]))
+
+    batch_financials, error = fetch_batch_financials(all_tickers)
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+    
+    # The 'success' key contains the dictionary of results
+    batch_financial_data = batch_financials.get("success", {})
+    # --- End of Industry Peer Data Fetching ---
+
+    # Fetch market trends data 
+    market_trends_data, error = fetch_market_trends()
+    if error:
+        return jsonify({'error': error[0]}), error[1]
+
     # Run all leadership checks
     results = {}
     details = {}
@@ -169,11 +231,13 @@ def leadership_analysis(ticker):
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
         # Check industry leadership
-        leadership_result = check_industry_leadership(ticker)
+        leadership_result = check_industry_leadership(ticker, peers_data, batch_financial_data)
         if "rank" in leadership_result and leadership_result['rank'] is not None:
             results['is_industry_leader'] = leadership_result['rank'] <= 3
+            details['industry_leadership_details'] = leadership_result
         else:
             results['is_industry_leader'] = False
+            details['industry_leadership_details'] = leadership_result 
         
         # Market trend context check
         check_market_trend_context(index_data, details)
@@ -181,7 +245,7 @@ def leadership_analysis(ticker):
         
         # Evaluate market trend impact
         market_trend_context = details.get('market_trend_context', 'Unknown')
-        evaluate_market_trend_impact(stock_data, index_data, market_trend_context, details)
+        evaluate_market_trend_impact(stock_data, index_data, market_trend_context, market_trends_data, details)
         results['shallow_decline'] = details.get('shallow_decline', False)
         results['new_52_week_high'] = details.get('new_52_week_high', False)
         results['recent_breakout'] = details.get('recent_breakout', False)
@@ -199,7 +263,7 @@ def leadership_analysis(ticker):
                 passes_check = passes_check and results.get('new_52_week_high', False)
 
     except Exception as e:
-        print(f"Error running leadership checks: {e}")
+        app.logger.error(f"Error running leadership checks for {ticker}: {e}")
         return jsonify({'error': 'Error running leadership checks'}), 500
     
     # Calculate execution time
