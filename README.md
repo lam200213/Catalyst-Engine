@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-23
-Adding POST to the retry strategy; move the fetch_market_trends part in evaluate_market_trend_impact at leadership_logic to app.py
+Refactored the leadership-service to separate data fetching from business logic, improving adherence to the Single Responsibility Principle.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

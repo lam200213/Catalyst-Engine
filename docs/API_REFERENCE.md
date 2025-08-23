@@ -227,6 +227,27 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       ]
     }
 
+- **GET `/market-trend/current`**
+  - Proxies to: `leadership-service`
+  - Purpose: Gets the current overall market trend context (Bullish, Bearish, or Neutral) based on the technical posture of major indices.
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/market-trend/current
+    ```
+  - **Example Success Response:**
+    ```json
+    {
+      {"status":
+        {
+          "index_trends":{"^DJI":"Bullish","^GSPC":"Bullish","^IXIC":"Bullish"},
+          "message":"Market trend is Bullish, with 3/3 indices in a bullish posture.",
+          "pass":true,
+          "trend":"Bullish"
+        }
+      }
+    }
+    ```
+
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`
   - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.

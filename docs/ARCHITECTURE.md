@@ -36,8 +36,9 @@
 │   │   │   ├── test_integration.py
 │   │   │   └── test_leadership_logic.py
 │   │   ├── app.py
-│   │   ├── Dockerfile
+│   │   ├── data_fetcher.py          # Service Client: Handles communication with data-service
 │   │   ├── leadership_logic.py
+│   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
 │   │   ├── tests/
