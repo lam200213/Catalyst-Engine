@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-24
-Construct a batch endpoint in leadership-service to process the leadership screening in a batch, optimizing performance.
+Debugged on leadership-service due to the data structure change.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
