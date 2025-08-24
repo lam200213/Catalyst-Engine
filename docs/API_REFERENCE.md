@@ -47,6 +47,21 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
+- **POST `/cache/clear`**  
+  - Proxies to: data-service
+  - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
+
+  - **Example Usage:**
+      ```Bash
+        curl -X POST http://localhost:3000/cache/clear
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "message": "All data service caches have been cleared."
+      }
+
 - **GET `/screen/:ticker`**
   - Proxies to the Screening Service.
   - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
@@ -266,24 +281,70 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       "final_candidates_count": 12
     }
     ```
-    
-- **POST `/cache/clear`**  
-  - Proxies to: data-service
-  - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
-
-  - **Example Usage:**
-      ```Bash
-        curl -X POST http://localhost:3000/cache/clear
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      {
-        "message": "All data service caches have been cleared."
-      }
 
 # Internal Service Communication
 
 ## `scheduler-service` -> `analysis-service`
 
 For efficient batch processing, the **`scheduler-service`** calls the **`analysis-service`** using the `?mode=fast` query parameter. This instructs the `analysis-service` to perform a "fail-fast" evaluation, immediately stopping and returning a fail status for a ticker that does not meet a VCP criterion, thus conserving system resources.
+
+## Internal Data Service Endpoints
+- The following endpoints are used for internal service-to-service communication and are not exposed through the public API Gateway. They are documented here for completeness.
+
+- **POST `/market-trend`**  
+  - Proxies to: data-service
+  - Purpose: Stores the daily market trend status. This is typically called by the scheduler-service after fetching the current trend from the leadership-service.
+
+  - **Request Body:**
+      ```JSON
+      {
+        "date": "2025-07-26",
+        "status": "Bullish"
+      }
+      ```
+
+  - **Example Usage (from another service)**
+      ```PYTHON
+      {
+        import requests
+
+        data_service_url = "http://data-service:3001"
+        payload = {"date": "2025-07-26", "status": "Bullish"}
+        requests.post(f"{data_service_url}/market-trend", json=payload)}
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "message": "Market trend data stored successfully."
+      }
+      ```
+
+- **GET `/market-trends`**  
+  - Proxies to: data-service
+  - Purpose: Retrieves the market trend data for the last 56 days. This is used by the leadership-service to provide historical context for its analysis.
+
+  - **Example Usage (from another service)**
+      ```PYTHON
+      {
+        import requests
+
+        data_service_url = "http://data-service:3001"
+        response = requests.get(f"{data_service_url}/market-trends")
+        trends = response.json()
+      }
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      [
+        {
+          "date": "2025-07-26",
+          "status": "Bullish"
+        },
+        {
+          "date": "2025-07-25",
+          "status": "Bullish"
+        }
+      ]
+      ```
