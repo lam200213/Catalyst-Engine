@@ -1,6 +1,6 @@
 import time
 import json
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 import os
 import re # regex import for input validation
 import logging 
@@ -39,28 +39,18 @@ logging.basicConfig(
 )
 # --- End of Logging Setup ---
 
-@app.route('/leadership/<path:ticker>', methods=['GET'])
-def leadership_analysis(ticker):
-    """Main endpoint for leadership screening analysis"""
-    start_time = time.time()
-    
-    # Input validation to prevent path traversal
-    if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()):
-        return jsonify({'error': 'Invalid ticker format'}), 400
-    
-    # Additional check for path traversal
-    if '../' in ticker:
-        return jsonify({'error': 'Invalid ticker format'}), 400
-    
+# helper function to perform leadership analysis
+def _analyze_ticker_leadership(ticker):
+    """
+    Analyzes a single ticker for leadership criteria.
+    Returns a dictionary with the analysis result, or an error dictionary.
+    """
     # data fetching and error handling
     financial_data, status = fetch_financial_data(ticker)
     if not financial_data:
         app.logger.error(f"Failed to fetch financial data for {ticker}. Status: {status}")
-        if status == 503:
-            return jsonify({'error': 'Service unavailable: data-service'}), 503
-        else:
-            return jsonify({'error': f'Failed to fetch data from data-service'}), 502
-        
+        return {'ticker': ticker, 'error': 'Failed to fetch financial data', 'status': status}
+
     # --- DEBUGGING BLOCK ---
     # Print the exact data received to the container's logs
     print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
@@ -70,105 +60,100 @@ def leadership_analysis(ticker):
     print("--- END DEBUG ---", flush=True)
     # --- END DEBUGGING BLOCK ---
 
+    # Fetch price data
     stock_data = fetch_price_data(ticker)
     if stock_data is None:
         app.logger.error(f"Failed to fetch price data for {ticker}")
-        return jsonify({'error': 'Failed to fetch price data due to a connection or service error'}), 503
-    
-    index_data = fetch_index_data()
+        return {'ticker': ticker, 'error': 'Failed to fetch price data', 'status': 503}
 
     # Fetch historical price data for S&P 500 for the rally check
+    index_data = fetch_index_data()
     sp500_price_data = fetch_price_data('^GSPC')
     if sp500_price_data is None:
         app.logger.error(f"Failed to fetch S&P 500 price data for rally analysis")
-        return jsonify({'error': 'Failed to fetch S&P 500 price data for rally analysis'}), 503
-    
+        return {'ticker': ticker, 'error': 'Failed to fetch S&P 500 price data', 'status': 503}
+
+    # Fetch market trends data
+    market_trends_data, error = fetch_market_trends()
+    if error:
+        app.logger.error(f"Failed to fetch market trends data: {error[0]}")
+        return {'ticker': ticker, 'error': error[0], 'status': error[1]}
+
     # --- Industry Peer Data Fetching ---
     peers_data, error = fetch_peer_data(ticker)
     if error:
         app.logger.error(f"Failed to fetch peer data for {ticker}: {error[0]}")
-        return jsonify({'error': error[0]}), error[1]
+        return {'ticker': ticker, 'error': error[0], 'status': error[1]}
 
     raw_peer_tickers = peers_data.get("peers", [])
     if not raw_peer_tickers:
-        return jsonify({'error': f"No peer data found for {ticker}"}), 404
-
-    peer_tickers = [t.strip().replace('/', '-') for t in raw_peer_tickers if t]
-    all_tickers = list(set(peer_tickers + [ticker]))
-
-    batch_financials, error = fetch_batch_financials(all_tickers)
-    if error:
-        app.logger.error(f"Failed to fetch batch financials: {error[0]}")
-        return jsonify({'error': error[0]}), error[1]
-    
-    # The 'success' key contains the dictionary of results
-    batch_financial_data = batch_financials.get("success", {})
+        app.logger.warning(f"No peer data found for {ticker}")
+        # Proceeding without peer analysis is better than failing the whole request
+        batch_financial_data = {}
+    else:
+        peer_tickers = [t.strip().replace('/', '-') for t in raw_peer_tickers if t]
+        all_tickers = list(set(peer_tickers + [ticker]))
+        batch_financials, error = fetch_batch_financials(all_tickers)
+        if error:
+            app.logger.error(f"Failed to fetch batch financials: {error[0]}")
+            return {'ticker': ticker, 'error': error[0], 'status': error[1]}
+        # The 'success' key contains the dictionary of results
+        batch_financial_data = batch_financials.get("success", {})
     # --- End of Industry Peer Data Fetching ---
-
-    # Fetch market trends data 
-    market_trends_data, error = fetch_market_trends()
-    if error:
-        app.logger.error(f"Failed to fetch market trends data: {error[0]}")
-        return jsonify({'error': error[0]}), error[1]
 
     # Run all leadership checks
     results = {}
     details = {}
     
-    # Run all checks and collect results
     try:
-        # Market cap check
         check_is_small_to_mid_cap(financial_data, details)
         results['is_small_to_mid_cap'] = details.get('is_small_to_mid_cap', False)
         
-        # Early stage check
         check_is_early_stage(financial_data, details)
         results['is_recent_ipo'] = details.get('is_recent_ipo', False)
         
-        # Limited float check
         check_has_limited_float(financial_data, details)
         results['has_limited_float'] = details.get('has_limited_float', False)
         
-        # Accelerating growth check
         check_accelerating_growth(financial_data, details)
         results['has_accelerating_growth'] = details.get('has_accelerating_growth', False)
         
-        # YoY EPS growth check
         check_yoy_eps_growth(financial_data, details)
         results['has_strong_yoy_eps_growth'] = details.get('has_strong_yoy_eps_growth', False)
         
-        # Consecutive quarterly growth check
         check_consecutive_quarterly_growth(financial_data, details)
         results['has_consecutive_quarterly_growth'] = details.get('has_consecutive_quarterly_growth', False)
         
-        # Positive recent earnings check
         check_positive_recent_earnings(financial_data, details)
         results['has_positive_recent_earnings'] = details.get('has_positive_recent_earnings', False)
         
-        # Outperforms in rally check
         check_outperforms_in_rally(stock_data, sp500_price_data, details)
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
-        # Check industry leadership
         leadership_result = check_industry_leadership(ticker, peers_data, batch_financial_data)
         if "rank" in leadership_result and leadership_result['rank'] is not None:
             results['is_industry_leader'] = leadership_result['rank'] <= 3
             details['industry_leadership_details'] = leadership_result
         else:
             results['is_industry_leader'] = False
-            details['industry_leadership_details'] = leadership_result 
+            details['industry_leadership_details'] = leadership_result
         
-        # Market trend context check
         check_market_trend_context(index_data, details)
         results['market_trend_context'] = details.get('market_trend_context', 'Unknown')
         
-        # Evaluate market trend impact
         market_trend_context = details.get('market_trend_context', 'Unknown')
         evaluate_market_trend_impact(stock_data, index_data, market_trend_context, market_trends_data, details)
         results['shallow_decline'] = details.get('shallow_decline', False)
         results['new_52_week_high'] = details.get('new_52_week_high', False)
         results['recent_breakout'] = details.get('recent_breakout', False)
         
+        core_criteria = [
+            'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
+            'has_accelerating_growth', 'has_strong_yoy_eps_growth',
+            'has_consecutive_quarterly_growth', 'has_positive_recent_earnings',
+        ]
+        passes_check = all(results.get(key, False) for key in core_criteria)
+
         # Conditionally check market context criteria
         market_context = results.get('market_trend_context')
         if market_context == 'Bearish':
@@ -183,29 +168,7 @@ def leadership_analysis(ticker):
 
     except Exception as e:
         app.logger.error(f"Error running leadership checks for {ticker}: {e}")
-        return jsonify({'error': 'An internal error occurred during leadership checks'}), 500
-    
-    # Calculate execution time
-    execution_time = time.time() - start_time
-    # Define core criteria that must always pass
-    core_criteria = [
-        'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
-        'has_accelerating_growth', 'has_strong_yoy_eps_growth',
-        'has_consecutive_quarterly_growth', 'has_positive_recent_earnings',
-    ]
-
-    # Check if all core criteria pass
-    passes_check = all(details.get(key, {}).get('pass', False) for key in core_criteria)
-
-    # Prepare response
-    response = {
-        'ticker': ticker,
-        'passes': passes_check,
-        'details': results, # Rename 'results' to 'details' for consistency with plan
-        'metadata': {
-            'execution_time': round(execution_time, 3)
-        }
-    }
+        return {'ticker': ticker, 'error': 'An internal error occurred during checks', 'status': 500}
 
     # for detailed logging of failed checks.
     print(f"--- Leadership Analysis Details for {ticker} ---")
@@ -220,6 +183,73 @@ def leadership_analysis(ticker):
                 print(f"[PASS] {metric}: {message}")
     print("-------------------------------------------------")
 
+    return {
+        'ticker': ticker,
+        'passes': passes_check,
+        'details': results,
+    }
+
+
+@app.route('/leadership/<path:ticker>', methods=['GET'])
+def leadership_analysis(ticker):
+    """Main endpoint for leadership screening analysis"""
+    start_time = time.time()
+    
+    # Input validation to prevent path traversal
+    if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
+        return jsonify({'error': 'Invalid ticker format'}), 400
+    
+    analysis_result = _analyze_ticker_leadership(ticker)
+    if 'error' in analysis_result:
+            status_code = analysis_result.get('status', 500)
+            return jsonify({'error': analysis_result['error']}), status_code
+
+    execution_time = time.time() - start_time
+    analysis_result['metadata'] = {'execution_time': round(execution_time, 3)}
+
+    return jsonify(analysis_result)
+
+@app.route('/leadership/batch', methods=['POST'])
+def leadership_batch_analysis():
+    """Endpoint for batch leadership screening"""
+    start_time = time.time()
+    payload = request.get_json()
+    if not payload or 'tickers' not in payload:
+        return jsonify({"error": "Invalid request payload. 'tickers' is required."}), 400
+
+    tickers = payload['tickers']
+    if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
+        return jsonify({"error": "'tickers' must be a list of strings."}), 400
+
+    tickers = payload['tickers']
+    app.logger.info(f"Starting batch leadership analysis for {len(tickers)} tickers.")
+    
+    passing_candidates = []
+    
+    for ticker in tickers:
+        # Sanitize each ticker
+        if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
+            app.logger.warning(f"Skipping invalid ticker format in batch: {ticker}")
+            continue
+
+        result = _analyze_ticker_leadership(ticker)
+        
+        # We only care about tickers that pass the screening in a batch job
+        if 'error' not in result and result.get('passes', False):
+            passing_candidates.append(result)
+
+    execution_time = time.time() - start_time
+    app.logger.info(f"Batch leadership analysis completed in {execution_time:.2f}s. Found {len(passing_candidates)} passing candidates.")
+    
+    response = {
+        'passing_candidates': passing_candidates,
+        'metadata': {
+            'total_processed': len(tickers),
+            'total_passed': len(passing_candidates),
+            'execution_time': round(execution_time, 3)
+        }
+    }
+    
     return jsonify(response)
 
 @app.route('/health', methods=['GET'])

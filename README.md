@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-24
-Introduce better logging mechanism designed to provide clear, user-friendly feedback in the API response while keeping detailed technical diagnostics in the service logs. 
+Construct a batch endpoint in leadership-service to process the leadership screening in a batch, optimizing performance.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

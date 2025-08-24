@@ -160,37 +160,47 @@ def _run_leadership_screening(job_id, vcp_survivors):
     if not vcp_survivors:
         print(f"Job {job_id}: Skipping leadership screening, no VCP survivors.")
         return []
-    
-    leadership_candidates = []
-    for candidate in vcp_survivors:
-        ticker = candidate.get('ticker')
-        if not ticker:
-            continue
-            
-        try:
-            # Call the leadership service for screening
-            resp = requests.get(f"{LEADERSHIP_SERVICE_URL}/leadership/{ticker}", timeout=60)
-            if resp.status_code == 200:
-                try:
-                    result = resp.json()
-                    # Check if the candidate passes leadership criteria
 
-                    if result.get('passes', False):
-                        # Add the leadership results to the candidate info
-                        candidate['leadership_results'] = result.get('details', {})
-                        leadership_candidates.append(candidate)
-                        
-                except requests.exceptions.JSONDecodeError as e:
-                    print(f"Warning: Job {job_id}: Could not decode JSON for leadership screening of {ticker}: {e}. Skipping.")
-                    continue
-            else:
-                print(f"Warning: Job {job_id}: Leadership service returned status {resp.status_code} for {ticker}. Skipping.")
-        except requests.exceptions.RequestException as e:
-            print(f"Warning: Job {job_id}: Could not screen {ticker} for leadership: {e}. Skipping.")
-            continue
-    
-    print(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(leadership_candidates)} tickers.")
-    return leadership_candidates
+    # Extract just the ticker symbols to send in the request
+    vcp_tickers = [candidate.get('ticker') for candidate in vcp_survivors if candidate.get('ticker')]
+    if not vcp_tickers:
+        print(f"Job {job_id}: No valid tickers found in VCP survivors list.")
+        return []
+
+    print(f"Job {job_id}: Sending {len(vcp_tickers)} tickers to leadership-service for batch screening.")
+    try:
+        resp = requests.post(
+            f"{LEADERSHIP_SERVICE_URL}/leadership/batch",
+            json={"tickers": vcp_tickers},
+            timeout=3000  # Allow a long timeout for batch processing
+        )
+        resp.raise_for_status()
+        
+        # Handle JSON decoding errors gracefully
+        try:
+            result = resp.json()
+            passing_candidates_details = result.get('passing_candidates', [])
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"ERROR: Job {job_id}: Could not decode JSON from leadership-service batch endpoint: {e}")
+            return []
+
+        # Create a dictionary for quick lookup of leadership results by ticker
+        leadership_results_map = {item['ticker']: item['details'] for item in passing_candidates_details}
+        
+        # Integrate the leadership results back into the original vcp_survivors data structure
+        final_candidates = []
+        for candidate in vcp_survivors:
+            ticker = candidate.get('ticker')
+            if ticker in leadership_results_map:
+                candidate['leadership_results'] = leadership_results_map[ticker]
+                final_candidates.append(candidate)
+        
+        print(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(final_candidates)} tickers.")
+        return final_candidates
+
+    except requests.exceptions.RequestException as e:
+        print(f"ERROR: Job {job_id}: Failed to connect to leadership-service for batch screening: {e}")
+        return [] # Return empty list on failure to prevent entire job from crashing
 
 def _store_results(job_id, candidates, funnel_summary):
     """Stores candidate results and the job summary in the database."""
@@ -219,12 +229,13 @@ def _store_results(job_id, candidates, funnel_summary):
 
     try:
         processed_time = datetime.now(timezone.utc)
-        for candidate in candidates:
-            candidate['job_id'] = job_id
-            candidate['processed_at'] = processed_time
+        candidates_to_insert = [candidate.copy() for candidate in candidates]
+        for candidate_copy in candidates_to_insert:
+            candidate_copy['job_id'] = job_id
+            candidate_copy['processed_at'] = processed_time
         
-        results_coll.insert_many(candidates)
-        print(f"Job {job_id}: Inserted {len(candidates)} documents into the database.")
+        results_coll.insert_many(candidates_to_insert)
+        print(f"Job {job_id}: Inserted {len(candidates_to_insert)} documents into the database.")
         return True, None
     except errors.PyMongoError as e:
         print(f"ERROR: Job {job_id}: Failed to write candidate results to database: {e}")
@@ -305,7 +316,7 @@ def run_screening_pipeline():
     
     # 5. Run Stage 3 Leadership Screening on VCP survivors
     leadership_survivors = _run_leadership_screening(job_id, vcp_survivors)
-    print(f"Job {job_id}: Funnel: After leadership screening, {len(final_candidates)} final candidates found.")
+    print(f"Job {job_id}: Funnel: After leadership screening, {len(leadership_survivors)} final candidates found.")
     
     # 6. Prepare and store results and summary
     final_candidates = leadership_survivors
@@ -335,6 +346,7 @@ def run_screening_pipeline():
 
     excluded_keys = {"trend_survivors"}
     job_summary['vcp_survivors'] = [item['ticker'] for item in job_summary['vcp_survivors']]
+    job_summary['leadership_survivors'] = [item['ticker'] for item in job_summary['leadership_survivors']]
 
     # Create a filtered copy of job_summary
     filtered_result = {k: v for k, v in job_summary.items() if k not in excluded_keys}
