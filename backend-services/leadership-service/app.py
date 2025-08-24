@@ -3,6 +3,7 @@ import json
 from flask import Flask, jsonify
 import os
 import re # regex import for input validation
+import logging 
 from leadership_logic import (
     check_accelerating_growth,
     check_yoy_eps_growth,
@@ -30,6 +31,14 @@ app = Flask(__name__)
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 5000))
 
+# --- Structured Logging Setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+# --- End of Logging Setup ---
+
 @app.route('/leadership/<path:ticker>', methods=['GET'])
 def leadership_analysis(ticker):
     """Main endpoint for leadership screening analysis"""
@@ -46,11 +55,12 @@ def leadership_analysis(ticker):
     # data fetching and error handling
     financial_data, status = fetch_financial_data(ticker)
     if not financial_data:
+        app.logger.error(f"Failed to fetch financial data for {ticker}. Status: {status}")
         if status == 503:
             return jsonify({'error': 'Service unavailable: data-service'}), 503
         else:
-            return jsonify({'error': f'Failed to fetch data from data-service (status {status})'}), 502
-
+            return jsonify({'error': f'Failed to fetch data from data-service'}), 502
+        
     # --- DEBUGGING BLOCK ---
     # Print the exact data received to the container's logs
     print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
@@ -62,6 +72,7 @@ def leadership_analysis(ticker):
 
     stock_data = fetch_price_data(ticker)
     if stock_data is None:
+        app.logger.error(f"Failed to fetch price data for {ticker}")
         return jsonify({'error': 'Failed to fetch price data due to a connection or service error'}), 503
     
     index_data = fetch_index_data()
@@ -69,11 +80,13 @@ def leadership_analysis(ticker):
     # Fetch historical price data for S&P 500 for the rally check
     sp500_price_data = fetch_price_data('^GSPC')
     if sp500_price_data is None:
+        app.logger.error(f"Failed to fetch S&P 500 price data for rally analysis")
         return jsonify({'error': 'Failed to fetch S&P 500 price data for rally analysis'}), 503
     
     # --- Industry Peer Data Fetching ---
     peers_data, error = fetch_peer_data(ticker)
     if error:
+        app.logger.error(f"Failed to fetch peer data for {ticker}: {error[0]}")
         return jsonify({'error': error[0]}), error[1]
 
     raw_peer_tickers = peers_data.get("peers", [])
@@ -85,6 +98,7 @@ def leadership_analysis(ticker):
 
     batch_financials, error = fetch_batch_financials(all_tickers)
     if error:
+        app.logger.error(f"Failed to fetch batch financials: {error[0]}")
         return jsonify({'error': error[0]}), error[1]
     
     # The 'success' key contains the dictionary of results
@@ -94,6 +108,7 @@ def leadership_analysis(ticker):
     # Fetch market trends data 
     market_trends_data, error = fetch_market_trends()
     if error:
+        app.logger.error(f"Failed to fetch market trends data: {error[0]}")
         return jsonify({'error': error[0]}), error[1]
 
     # Run all leadership checks
@@ -168,7 +183,7 @@ def leadership_analysis(ticker):
 
     except Exception as e:
         app.logger.error(f"Error running leadership checks for {ticker}: {e}")
-        return jsonify({'error': 'Error running leadership checks'}), 500
+        return jsonify({'error': 'An internal error occurred during leadership checks'}), 500
     
     # Calculate execution time
     execution_time = time.time() - start_time

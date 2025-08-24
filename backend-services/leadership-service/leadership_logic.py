@@ -1,4 +1,4 @@
-import requests
+import logging
 import pandas as pd
 from datetime import datetime
 
@@ -19,6 +19,8 @@ DATA_SERVICE_URL = "http://data-service:3001"
 
 # A consistent structure for failure responses
 def failed_check(metric, message, **kwargs):
+    # Log the technical failure for developers
+    logging.warning(f"Check failed for metric '{metric}': {message} | Details: {kwargs}")
     return {metric: {"pass": False, "message": message, **kwargs}}
 
 def check_is_small_to_mid_cap(financial_data, details):
@@ -599,7 +601,7 @@ def check_accelerating_growth(financial_data, details):
                                         earnings_qtrs=len(earnings), financials_qtrs=len(financials)))
             return
 
-        def calculate_qoq_growth_rates(data, key1, key2=None):
+        def calculate_qoq_growth_rates(data, metric_name, key1, key2=None):
             """Calculates and checks for 3 accelerating QoQ growth rates."""
             rates = []
             for i in range(3):
@@ -613,18 +615,36 @@ def check_accelerating_growth(financial_data, details):
                 new_period = data[i]
                 old_period = data[i+1]
 
-                if key2: # For margin = key1 / key2 (e.g., Net Income / Revenue)
-                    new_val = new_period.get(key1) / new_period.get(key2)
-                    old_val = old_period.get(key1) / old_period.get(key2)
-                else: # For direct values (e.g., Earnings, Revenue)
-                    new_val = new_period.get(key1)
-                    old_val = old_period.get(key1)
+                # --- Graceful handling of zero division ---
+                try:
+                    if key2: # For margin = key1 / key2 (e.g., Net Income / Revenue)
+                        new_denominator = new_period.get(key2)
+                        old_denominator = old_period.get(key2)
+                        if new_denominator in [0, None] or old_denominator in [0, None]:
+                            return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because revenue was zero."}
+                        new_val = new_period.get(key1) / new_denominator
+                        old_val = old_period.get(key1) / old_denominator
+                    else: # For direct values like Earnings or Revenue
+                        new_val = new_period.get(key1)
+                        old_val = old_period.get(key1)
 
-                # Ensure values are valid for calculation
-                if old_val is None or new_val is None or old_val == 0:
-                     return {"pass": False, "rates": [], "message": f"Cannot calculate growth for {key1} due to zero/null base."}
-                
-                rates.append((new_val - old_val) / abs(old_val))
+                    if old_val is None or new_val is None:
+                        return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth due to missing data."}
+                    
+                    if old_val == 0:
+                        # This is the specific business reason for the failure.
+                        return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because the base value was zero."}
+                    
+                    rates.append((new_val - old_val) / abs(old_val))
+
+                except (TypeError, KeyError):
+                     return {"pass": False, "rates": [], "message": f"Missing data points for {metric_name} calculation."}
+                except ZeroDivisionError as e:
+                    # This is the technical log for the developer.
+                    logging.error(f"DEV LOG: ZeroDivisionError for {metric_name}: {e}")
+                    return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because a denominator was zero."}
+            
+            # --- End of graceful handling ---
             
             # Check for strictly increasing growth: Newest > Middle > Oldest
             is_accelerating = rates[0] > rates[1] > rates[2]
@@ -632,15 +652,16 @@ def check_accelerating_growth(financial_data, details):
             return {"pass": is_accelerating, "rates": [f'{r:.1%}' for r in rates], "message": message}
 
         # Check for acceleration across all three key metrics
-        earnings_accelerating = calculate_qoq_growth_rates(earnings, 'Earnings')
-        revenue_accelerating = calculate_qoq_growth_rates(earnings, 'Revenue')
-        margin_accelerating = calculate_qoq_growth_rates(financials, 'Net Income', 'Total Revenue')
+        earnings_accelerating = calculate_qoq_growth_rates(earnings, 'Earnings', 'Earnings')
+        revenue_accelerating = calculate_qoq_growth_rates(earnings, 'Revenue', 'Revenue')
+        margin_accelerating = calculate_qoq_growth_rates(financials, 'Net Margin', 'Net Income', 'Total Revenue')
 
         is_pass = earnings_accelerating['pass'] and revenue_accelerating['pass'] and margin_accelerating['pass']
+        message = "All metrics (Earnings, Revenue, Margin) show accelerating quarter-over-quarter growth." if is_pass else "One or more metrics failed to show accelerating growth."
         
         details[metric_key] = {
             "pass": is_pass,
-            "message": "Passes if Earnings, Revenue, and Margin all show accelerating quarter-over-quarter growth." if is_pass else "One or more metrics failed to show accelerating growth.",
+            "message": message,
             "earnings": earnings_accelerating,
             "revenue": revenue_accelerating,
             "margin": margin_accelerating
@@ -648,7 +669,8 @@ def check_accelerating_growth(financial_data, details):
 
     except (KeyError, TypeError, IndexError, ZeroDivisionError, AttributeError) as e:
         # Gracefully handle any data or calculation errors
-        details.update(failed_check(metric_key, f"An unexpected error occurred: {e}"))
+        logging.error(f"DEV LOG: Unhandled exception in check_accelerating_growth: {e}", exc_info=True)
+        details.update(failed_check(metric_key, "An unexpected error occurred during analysis."))
 
 
 def check_consecutive_quarterly_growth(financial_data, details):
