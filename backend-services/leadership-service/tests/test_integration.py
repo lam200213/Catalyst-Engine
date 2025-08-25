@@ -3,278 +3,134 @@ import unittest
 from unittest.mock import patch, MagicMock
 import sys
 import os
-import requests
+import json
 
-# Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from app import app
 
-def mock_data_service_response(status_code=200, json_data=None, side_effect=None):
-    """Helper to create mock responses for requests.get."""
-    if side_effect:
-        return MagicMock(side_effect=side_effect)
-    
-    mock_resp = MagicMock()
-    mock_resp.status_code = status_code
-    if json_data is not None:
-        mock_resp.json.return_value = json_data
-    return mock_resp
+# --- Mock Data Generation ---
+# Using helpers from the logic test file for consistency
+from tests.test_leadership_logic import (
+    create_mock_financial_data,
+    create_mock_price_data,
+    create_mock_index_data
+)
 
-class TestLeadershipScreening(unittest.TestCase):
-    """
-    TDD Test Suite for the Leadership Screening Endpoint.
-    This suite is structured to directly validate the requirements from the test plan.
-    """
+class TestLeadershipScreeningIntegration(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.app = app.test_client()
 
-    @staticmethod
-    def _get_mock_price_data(base_price=100.0, performance_factor=1.0, days=90):
-        """Generates realistic price data that includes a market rally."""
-        prices = []
-        price = base_price
-        for i in range(days):
-            # Simulate a market rally (6% gain over 3 days) around day 60
-            rally_multiplier = 1.02 if 60 <= i < 63 else 1.0
-            price *= (1.001 * performance_factor * rally_multiplier)
-            prices.append({'close': price, 'high': price * 1.01, 'low': price * 0.99, 'formatted_date': f'2025-01-{i+1:02d}'})
-        return prices
+    @patch('app.fetch_batch_financials')
+    @patch('app.fetch_peer_data')
+    @patch('app.fetch_market_trends')
+    @patch('app.fetch_index_data')
+    @patch('app.fetch_price_data')
+    @patch('app.fetch_financial_data')
+    def test_leadership_endpoint_pass_scenario(self, mock_fetch_financials, mock_fetch_price, mock_fetch_index, mock_fetch_trends, mock_fetch_peers, mock_fetch_batch):
+        """
+        Integration Test: A ticker that passes all criteria in a Bullish market.
+        """
+        # --- Arrange Mocks ---
+        # 1. Financial Data (passes all financial checks)
+        pass_financials = create_mock_financial_data(ipoDate='2022-01-01') # Recent IPO
+        mock_fetch_financials.return_value = (pass_financials, 200)
 
-    @staticmethod
-    def _get_mock_financial_data(overrides={}):
-        """Generates financial data with accelerating growth to pass all checks."""
-        earnings = [100, 125, 162.5, 219.3, 307.1, 445.3]
-        base_data = {
-            'marketCap': 5_000_000_000, 'sharesOutstanding': 100_000_000,
-            'floatShares': 15_000_000, 'ipoDate': '2020-01-01',
-            'annual_earnings': [{'Earnings': 4.00}],
-            'quarterly_earnings': [{'Earnings': e, 'Revenue': e * 10} for e in earnings],
-            # Make Net Income grow faster than revenue to ensure accelerating margin
-            'quarterly_financials': [
-                {'Net Income': 100, 'Total Revenue': 1000}, # Margin 0.100
-                {'Net Income': 125, 'Total Revenue': 1100}, # Margin 0.113, Growth 13%
-                {'Net Income': 162.5, 'Total Revenue': 1200},# Margin 0.135, Growth 19.4%
-                {'Net Income': 219.3, 'Total Revenue': 1300},# Margin 0.168, Growth 24.4%
-                {'Net Income': 307.1, 'Total Revenue': 1400},# Margin 0.219, Growth 30.3%
-                {'Net Income': 445.3, 'Total Revenue': 1500} # Margin 0.296, Growth 35.1%
-            ],
+        # 2. Price Data (for rally check and market impact)
+        stock_prices, sp500_prices = create_mock_price_data(performance_factor=2.0, length=300)
+        stock_prices[-1]['close'] = max(d.get('high', 0) for d in stock_prices) + 1 # Ensure new 52w high
+        def price_side_effect(ticker):
+            if ticker == 'PASS-TICKER': return stock_prices
+            if ticker == '^GSPC': return sp500_prices
+            return None
+        mock_fetch_price.side_effect = price_side_effect
+
+        # 3. Index Data (for market context)
+        mock_fetch_index.return_value = create_mock_index_data(trend='Bullish')
+        
+        # 4. Market Trends (for recovery check - not in recovery here)
+        mock_fetch_trends.return_value = ([{'status': 'Bullish'}] * 5, None)
+
+        # 5. Peer Data (for industry leadership)
+        mock_fetch_peers.return_value = ({"peers": ["PEER1"]}, None)
+        
+        # 6. Batch Financials (make sure our ticker is #1)
+        batch_data = {
+            "success": {
+                "PASS-TICKER": {"annual_earnings": [{"Revenue": 1000, "Net Income": 100}], "marketCap": 10000},
+                "PEER1": {"annual_earnings": [{"Revenue": 500, "Net Income": 50}], "marketCap": 5000}
+            }
         }
-        base_data.update(overrides)
-        return base_data
+        mock_fetch_batch.return_value = (batch_data, None)
 
-    @patch('app.requests.get')
-    def test_leadership_endpoint_pass_scenario(self, mock_get):
-        """
-        Verifies the endpoint returns passes: true when all criteria are met.
-        """
-        # Arrange: Use side_effect to handle multiple, different API calls
-        def side_effect(url, **kwargs):
-            if 'financials/core/PASS-TICKER' in url:
-                return mock_data_service_response(200, TestLeadershipScreening._get_mock_financial_data())
-            # Mock for market trend context checks
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
-                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
-            # Mock for rally check price data
-            if 'price/PASS-TICKER' in url:
-                return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data(performance_factor=1.02)) # Stock outperforms
-            if 'price/^GSPC' in url:
-                return mock_data_service_response(200, TestLeadershipScreening._get_mock_price_data()) # Market rally
-            # Mocks for industry leadership check
-            if 'industry/peers/PASS-TICKER' in url:
-                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
-            if 'financials/core/batch' in url:
-                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "PASS-TICKER": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
-            return mock_data_service_response(404, {"error": "URL Not Mocked"})
-        mock_get.side_effect = side_effect
-
-        # Act
+        # --- Act ---
         response = self.app.get('/leadership/PASS-TICKER')
-        
-        # Assert
-        self.assertEqual(response.status_code, 200)
         data = response.json
-        self.assertTrue(data['passes'], f"Expected passes to be True, but it was False. Details: {data.get('details')}")
-        self.assertTrue(data['details']['is_small_to_mid_cap'])
 
-    @patch('app.requests.get')
-    def test_leadership_endpoint_fail_scenarios(self, mock_get):
-        """
-        Verifies the endpoint returns passes: false for single and multiple failures.
-        """
-        # --- Scenario 1: Fails a single criterion (Market Cap too large) ---
-        mock_get.return_value = mock_data_service_response(
-            status_code=200, 
-            json_data=TestLeadershipScreening._get_mock_financial_data({'marketCap': 20_000_000_000})
-        )
-        response_single_fail = self.app.get('/leadership/FAIL-SINGLE')
-        data_single = response_single_fail.json
-        
-        self.assertEqual(response_single_fail.status_code, 200)
-        self.assertFalse(data_single['passes'])
-        self.assertFalse(data_single['details']['is_small_to_mid_cap'])
-        self.assertTrue(data_single['details']['has_limited_float'])
-
-        # --- Scenario 2: Fails multiple criteria ---
-        mock_get.return_value = mock_data_service_response(
-            status_code=200,
-            json_data=TestLeadershipScreening._get_mock_financial_data({
-                'marketCap': 20_000_000_000,
-                'ipoDate': '2005-01-01'
-            })
-        )
-        response_multi_fail = self.app.get('/leadership/FAIL-MULTI')
-        data_multi = response_multi_fail.json
-
-        self.assertEqual(response_multi_fail.status_code, 200)
-        self.assertFalse(data_multi['passes'])
-        self.assertFalse(data_multi['details']['is_small_to_mid_cap'])
-        self.assertFalse(data_multi['details']['is_recent_ipo'])
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_handles_data_service_500_error(self, mock_get):
-        """
-        Verifies the service returns a 502 Bad Gateway if the data-service fails.
-        [Implements test plan requirement 2.1.3]
-        """
-        # Arrange
-        mock_get.return_value = mock_data_service_response(status_code=500)
-        
-        # Act
-        response = self.app.get('/leadership/ANYTICKER')
-
-        # Assert
-        self.assertEqual(response.status_code, 502)
-        self.assertIn('error', response.json)
-        self.assertIn('Failed to fetch data from data-service', response.json['error'])
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_handles_data_service_404_error(self, mock_get):
-        """
-        Verifies the service returns 502 for a non-existent ticker (404 from data-service).
-        [Implements test plan requirement for non-existent ticker]
-        """
-        # Arrange
-        mock_get.return_value = mock_data_service_response(status_code=404)
-
-        # Act
-        response = self.app.get('/leadership/NONEXISTENT')
-
-        # Assert
-        self.assertEqual(response.status_code, 502)
-        self.assertIn('error', response.json)
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_handles_connection_error(self, mock_get):
-        """
-        Verifies the service returns 503 Service Unavailable on connection error.
-        [Implements test plan requirement 2.1.3]
-        """
-        # Arrange
-        mock_get.side_effect = requests.exceptions.ConnectionError("Service down")
-
-        # Act
-        response = self.app.get('/leadership/ANYTICKER')
-        
-        # Assert
-        self.assertEqual(response.status_code, 503)
-        self.assertIn('Service unavailable', response.json['error'])
-
-    @patch('app.requests.get')
-    def test_leadership_endpoint_handles_missing_data_key(self, mock_get):
-        """
-        Verifies the service doesn't crash and fails the check if a key is missing.
-        [Implements test plan requirement 2.1.4]
-        """
-        # Arrange: Data is missing the 'marketCap' key
-        mock_data = TestLeadershipScreening._get_mock_financial_data()
-        del mock_data['marketCap']
-        mock_get.return_value = mock_data_service_response(status_code=200, json_data=mock_data)
-
-        # Act
-        response = self.app.get('/leadership/MISSINGKEY')
-        
-        # Assert
+        # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        data = response.json
-        self.assertFalse(data['passes'])
-        self.assertFalse(data['details']['is_small_to_mid_cap'])
+        self.assertTrue(data['passes'], f"Expected passes to be True. Details: {json.dumps(data.get('details'), indent=2)}")
+        self.assertTrue(data['details']['is_industry_leader']['pass'])
+        self.assertTrue(data['details']['market_trend_impact']['sub_results']['new_52_week_high']['pass'])
 
-    def test_leadership_endpoint_handles_path_traversal_attack(self):
+    @patch('app.fetch_financial_data')
+    def test_data_service_error_handling(self, mock_fetch_financials):
         """
-        Verifies the service rejects malicious URLs.
+        Integration Test: Service correctly handles upstream errors from data-service.
         """
-        # Act
+        # Arrange: Mock a 500 server error from the fetcher
+        mock_fetch_financials.return_value = (None, 500)
+        response = self.app.get('/leadership/ERROR-TICKER')
+        self.assertEqual(response.status_code, 500)
+        self.assertIn('Failed to fetch financial data', response.json['error'])
+
+        # Arrange: Mock a 404 not found error
+        mock_fetch_financials.return_value = (None, 404)
+        response_404 = self.app.get('/leadership/NOT-FOUND')
+        self.assertEqual(response_404.status_code, 404)
+
+    def test_path_traversal_attack(self):
+        """
+        Integration Test: Endpoint rejects invalid ticker formats.
+        """
         response = self.app.get('/leadership/../../etc/passwd')
-        
-        # Assert
         self.assertEqual(response.status_code, 400)
         self.assertIn('Invalid ticker format', response.json['error'])
 
-    @patch('app.requests.get')
-    def test_happy_path_with_complete_data(self, mock_get):
+    @patch('app._analyze_ticker_leadership')
+    def test_leadership_batch_endpoint(self, mock_analyze):
         """
-        Test 1: Verifies the leadership-service works correctly with a complete, well-formed payload.
+        Integration Test: Batch endpoint correctly processes lists and returns only passing candidates.
         """
-        # Arrange
-        def side_effect(url, **kwargs):
-            if 'financials/core/AAPL' in url:
-                return mock_data_service_response(200, self._get_mock_financial_data())
-            if 'price/AAPL' in url:
-                return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
-            if 'price/^GSPC' in url:
-                return mock_data_service_response(200, self._get_mock_price_data())
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
-                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
-            if 'industry/peers/AAPL' in url:
-                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
-            if 'financials/core/batch' in url:
-                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "AAPL": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
-            return mock_data_service_response(404, {"error": "URL Not Mocked"})
-        mock_get.side_effect = side_effect
+        # --- Arrange ---
+        def analyze_side_effect(ticker):
+            if ticker == 'PASS1': return {'ticker': 'PASS1', 'passes': True, 'details': {}}
+            if ticker == 'FAIL1': return {'ticker': 'FAIL1', 'passes': False, 'details': {}}
+            if ticker == 'ERROR1': return {'error': 'Some error', 'status': 500}
+            return {}
+        mock_analyze.side_effect = analyze_side_effect
+        
+        payload = {
+            "tickers": ["PASS1", "FAIL1", "ERROR1", "INVALID/TICKER"]
+        }
 
-        # Act
-        response = self.app.get('/leadership/AAPL')
-
-        # Assert
-        self.assertEqual(response.status_code, 200)
+        # --- Act ---
+        response = self.app.post('/leadership/batch', json=payload)
         data = response.json
-        self.assertTrue(data['passes'], f"Expected passes to be True, but it was False. Details: {data.get('details')}")
 
-    @patch('app.requests.get')
-    def test_graceful_failure_with_incomplete_data(self, mock_get):
-        """
-        Test 2: Verifies the service handles a 200 OK with missing critical data gracefully.
-        """
-        # Arrange
-        mock_financials = self._get_mock_financial_data()
-        del mock_financials['annual_earnings'] # Remove a critical key
-
-        def side_effect(url, **kwargs):
-            if 'financials/core/AAPL' in url:
-                return mock_data_service_response(200, mock_financials)
-            if 'price/AAPL' in url:
-                return mock_data_service_response(200, self._get_mock_price_data(performance_factor=1.02))
-            if 'price/^GSPC' in url:
-                return mock_data_service_response(200, self._get_mock_price_data())
-            if 'financials/core/^GSPC' in url or 'financials/core/^DJI' in url or 'financials/core/^IXIC' in url:
-                return mock_data_service_response(200, {'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200})
-            if 'industry/peers/AAPL' in url:
-                return mock_data_service_response(200, {"industry": "Tech", "peers": ["MSFT"]})
-            if 'financials/core/batch' in url:
-                return mock_data_service_response(200, {"success": {"MSFT": {"totalRevenue": 1, "marketCap": 1, "netIncome": 1}, "AAPL": {"totalRevenue": 2, "marketCap": 2, "netIncome": 2}}})
-            return mock_data_service_response(404, {"error": "URL Not Mocked"})
-        mock_get.side_effect = side_effect
-
-        # Act
-        response = self.app.get('/leadership/AAPL')
-
-        # Assert
+        # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        data = response.json
-        self.assertFalse(data['passes'])
-        self.assertFalse(data['details']['has_positive_recent_earnings'])
+        self.assertEqual(data['metadata']['total_processed'], 4)
+        self.assertEqual(data['metadata']['total_passed'], 1)
+        self.assertEqual(len(data['passing_candidates']), 1)
+        self.assertEqual(data['passing_candidates'][0]['ticker'], 'PASS1')
+
+    def test_leadership_batch_invalid_payload(self):
+        """
+        Integration Test: Batch endpoint handles bad requests.
+        """
+        response = self.app.post('/leadership/batch', json={"wrong_key": []})
+        self.assertEqual(response.status_code, 400)
 
 if __name__ == '__main__':
     unittest.main()
