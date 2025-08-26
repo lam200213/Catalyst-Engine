@@ -13,7 +13,6 @@ from leadership_logic import (
     check_is_early_stage,
     check_has_limited_float,
     check_outperforms_in_rally,
-    check_market_trend_context,
     evaluate_market_trend_impact,
     check_industry_leadership
 )
@@ -138,12 +137,11 @@ def _analyze_ticker_leadership(ticker):
             results['is_industry_leader'] = False
             details['industry_leadership_details'] = leadership_result
         
-        check_market_trend_context(index_data, details)
-        results['market_trend_context'] = details.get('market_trend_context', 'Unknown')
         
+        evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
+
         # The key 'market_trend_context' now holds a dictionary, so we extract the string trend from it.
-        market_trend_context_str = details.get('market_trend_context', {}).get('trend', 'Unknown')
-        evaluate_market_trend_impact(stock_data, index_data, market_trend_context_str, market_trends_data, details)
+        results['market_trend_context'] = details.get('market_trend_context', {})
         # Assign the nested result to its own key, ie: shallow_decline, new_52_week_high, recent_breakout
         results['market_trend_impact'] = details.get('market_trend_impact', {})
         
@@ -157,13 +155,13 @@ def _analyze_ticker_leadership(ticker):
 
         # Conditionally check market context criteria
         market_trend_impact_details = results.get('market_trend_impact', {})
-        market_trend_context_str = results.get('market_trend_context')
+        market_trend_context_str = results.get('market_trend_context', {}).get('trend')
         if market_trend_context_str == 'Bearish':
             shallow_decline_passed = market_trend_impact_details.get('sub_results', {}).get('shallow_decline', {}).get('pass', False)
             passes_check = passes_check and shallow_decline_passed
         elif market_trend_context_str in ['Bullish', 'Neutral']:
             # In a recovery, a breakout OR a new high is a good sign
-            is_in_recovery = "Bearish" in details.get('recent_trends', [])
+            is_in_recovery = market_trend_impact_details.get('is_recovery_phase', False)
             breakout_passed = market_trend_impact_details.get('sub_results', {}).get('recent_breakout', {}).get('pass', False)
             new_high_passed = market_trend_impact_details.get('sub_results', {}).get('new_52_week_high', {}).get('pass', False)
             if is_in_recovery:
@@ -283,19 +281,6 @@ def industry_rank_analysis(ticker):
         status_code = result.get("status_code", 500)
         return jsonify({"error": result["error"]}), status_code
     return jsonify(result), 200
-
-@app.route('/market-trend/current', methods=['GET'])
-def current_market_trend():
-    """Endpoint to get the current market trend"""
-    try:
-        index_data = fetch_index_data()
-        details = {}
-        check_market_trend_context(index_data, details)
-        trend = details.get('market_trend_context', 'Unknown')
-        return jsonify({'status': trend}), 200
-    except Exception as e:
-        print(f"Error fetching market trend: {e}")
-        return jsonify({'error': 'Error fetching market trend'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

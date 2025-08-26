@@ -1,9 +1,13 @@
 # backend-services/leadership-service/data_fetcher.py 
-
 import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from flask import Flask 
+import pandas as pd 
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
 
 # Configuration
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
@@ -96,15 +100,58 @@ def fetch_batch_financials(tickers):
         status_code = getattr(e.response, 'status_code', 503)
         return None, (f"Could not fetch batch financial data", status_code)
     
+def get_last_n_workdays(n_days=8):
+    """Calculates the last N US business days."""
+    today = datetime.now()
+    # Generate a date range of business days ending today
+    # We generate a few more days than needed to account for holidays
+    date_list = pd.bdate_range(end=today, periods=n_days + 5, freq='B') 
+    # Get the last n_days from this list and format them
+    return [d.strftime('%Y-%m-%d') for d in date_list][-n_days:]
+
 def fetch_market_trends():
-    """Fetches historical market trend data."""
+    """
+    Ensures the last 8 workdays of market trend data are available.
+    It fetches what exists, identifies what's missing, and requests
+    on-demand calculation for the missing days.
+    """
     try:
-        trends_url = f"{DATA_SERVICE_URL}/market-trends"
+        # 1. Determine the required dates (last 8 workdays)
+        required_dates = get_last_n_workdays(8)
+        
+        # 2. Ask data-service for the trends it already has for this period
+        start_date, end_date = required_dates[0], required_dates[-1]
+        trends_url = f"{DATA_SERVICE_URL}/market-trends?start_date={start_date}&end_date={end_date}"
         response = session.get(trends_url, timeout=10)
         response.raise_for_status()
-        return response.json(), None
+        existing_trends = response.json()
+        
+        existing_dates = {trend['date'] for trend in existing_trends}
+        
+        # 3. Identify which dates are missing
+        missing_dates = [d for d in required_dates if d not in existing_dates]
+        
+        calculated_trends = []
+        # 4. If there are missing dates, ask data-service to calculate them
+        if missing_dates:
+            calc_url = f"{DATA_SERVICE_URL}/market-trend/calculate"
+            payload = {"dates": missing_dates}
+            calc_response = session.post(calc_url, json=payload, timeout=30)
+            calc_response.raise_for_status()
+            calculated_trends = calc_response.json().get("trends", [])
+
+        # 5. Combine existing and newly calculated trends
+        all_trends = existing_trends + calculated_trends
+        
+        # Sort and ensure we only return data for the required dates in the correct order
+        trend_map = {trend['date']: trend for trend in all_trends}
+        final_trends = [trend_map[date] for date in required_dates if date in trend_map]
+        
+        return final_trends, None
+
     except requests.exceptions.RequestException as e:
         status_code = getattr(e.response, 'status_code', 503)
+        app.logger.error(f"Failed to fetch or calculate market trends: {e}")
         return None, (f"Could not fetch market trends data", status_code)
 
 # --- End of helper functions ---

@@ -1,14 +1,16 @@
 # data-service/app.py
 import os
 from flask import Flask, request, jsonify
-from pymongo import MongoClient
 from datetime import date, datetime, timedelta, timezone
-from pymongo.errors import OperationFailure
+from pymongo import MongoClient
+from pymongo.errors import OperationFailure, PyMongoError
 import re
 from concurrent.futures import ThreadPoolExecutor
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
+# Import the logic
+from helper_functions import check_market_trend_context
 
 app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 3001))
@@ -72,6 +74,8 @@ def init_db():
     _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
     _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
 
+    market_trends.create_index([("date", 1)], unique=True, name="date_unique_idx")
+ 
 @app.route('/financials/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
     """
@@ -424,40 +428,86 @@ def get_industry_peers(ticker: str):
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
 
-@app.route('/market-trend', methods=['POST'])
-def post_market_trend():
-    data = request.get_json()
-    if not data or 'date' not in data or 'status' not in data:
-        return jsonify({"error": "Invalid request payload. 'date' and 'status' are required."}), 400
+@app.route('/market-trend/calculate', methods=['POST'])
+def calculate_market_trend():
+    """
+    On-demand endpoint to calculate, store, and return market trend for specific dates.
+    """
+    payload = request.get_json()
+    if not payload or 'dates' not in payload or not isinstance(payload['dates'], list):
+        return jsonify({"error": "Invalid payload. 'dates' list is required."}), 400
 
-    try:
-        market_trends.insert_one({
-            "date": data['date'],
-            "status": data['status'],
-            "createdAt": datetime.now(timezone.utc)
-        })
-        return jsonify({"message": "Market trend data stored successfully."}), 201
-    except Exception as e:
-        return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
+    dates_to_process = payload['dates']
+    calculated_trends = []
+    
+    # Fetch data for all three major indices in one go
+    indices = ['^GSPC', '^DJI', '^IXIC']
+    index_financial_data = {}
+    for index in indices:
+        # This reuses the existing endpoint and its caching
+        data = yfinance_provider.get_core_financials(index)
+        if not data:
+             return jsonify({"error": f"Could not fetch required index data for {index}"}), 503
+        index_financial_data[index] = data
+
+    for date_str in dates_to_process:
+        details = {}
+        # The logic function modifies the 'details' dict in place
+        check_market_trend_context(index_financial_data, details)
+        trend_result = details.get('market_trend_context')
+        
+        if trend_result:
+            document = {
+                "date": date_str,
+                "trend": trend_result.get("trend"),
+                "pass": trend_result.get("pass"),
+                "details": trend_result.get("index_trends"),
+                "createdAt": datetime.now(timezone.utc)
+            }
+            try:
+                # Upsert to avoid duplicates and handle race conditions
+                market_trends.update_one(
+                    {'date': date_str},
+                    {'$set': document},
+                    upsert=True
+                )
+                calculated_trends.append(document)
+            except PyMongoError as e:
+                app.logger.error(f"Failed to store market trend for {date_str}: {e}")
+                # Continue to next date
+        else:
+            app.logger.warning(f"Could not calculate market trend for date {date_str}")
+    
+    return jsonify({"trends": calculated_trends}), 200
 
 @app.route('/market-trends', methods=['GET'])
 def get_market_trends():
+    """
+    Retrieves stored market trends, optionally filtered by a date range.
+    """
     try:
-        end_date = datetime.now(timezone.utc)
-        start_date = end_date - timedelta(days=56)
-        trends = market_trends.find({
-            "createdAt": {"$gte": start_date, "$lte": end_date}
-        }).sort("createdAt", -1)
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
 
+        query = {}
+        if start_date_str and end_date_str:
+            # Build query to filter by date string field
+            query["date"] = {"$gte": start_date_str, "$lte": end_date_str}
+        
+        # Query the database
+        trends_cursor = market_trends.find(query, {'_id': 0}).sort("date", 1)
+        
         trends_list = []
-        for trend in trends:
+        for trend in trends_cursor:
+            # Access the 'trend' field, not 'status'
             trends_list.append({
-                "date": trend['date'],
-                "status": trend['status']
+                "date": trend.get('date'),
+                "trend": trend.get('trend') 
             })
 
         return jsonify(trends_list), 200
     except Exception as e:
+        app.logger.error(f"Error in get_market_trends: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':

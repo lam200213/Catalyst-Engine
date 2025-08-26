@@ -21,7 +21,7 @@ SCREENING_SERVICE_URL = os.getenv("SCREENING_SERVICE_URL", "http://screening-ser
 ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003")
 LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
-SCHEDULER_TIME = os.getenv("SCHEDULER_TIME", "16:00")
+SCHEDULER_TIME = os.getenv("SCHEDULER_TIME", "05:00")
 # --- Database Setup ---
 client = None
 results_collection = None
@@ -162,20 +162,7 @@ def _count_unique_industries(job_id, vcp_survivors):
     logger.info(f"Job {job_id}: Counted {unique_count} unique industries from {len(vcp_survivors)} VCP survivors.")
     return unique_count
 
-def _get_current_market_trend(job_id):
-    """Fetches the current market trend from the leadership service."""
-    try:
-        resp = requests.get(f"{LEADERSHIP_SERVICE_URL}/market-trend/current", timeout=30)
-        resp.raise_for_status()
-        trend_data = resp.json()
-        current_trend = trend_data.get('status', 'Unknown')
-        logger.info(f"Job {job_id}: Successfully fetched current market trend: {current_trend}")
-        return current_trend
-    except requests.exceptions.RequestException:
-        logger.error(f"Job {job_id}: Could not fetch current market trend. Defaulting to 'Unknown'.", exc_info=True)
-        return "Unknown" # Default to a neutral state on failure
-
-def _run_leadership_screening(job_id, vcp_survivors, market_trend):
+def _run_leadership_screening(job_id, vcp_survivors):
     """Run leadership screening on VCP survivors, passing in the current market trend."""
     if not vcp_survivors:
         logger.info(f"Job {job_id}: Skipping leadership screening, no VCP survivors.")
@@ -192,7 +179,6 @@ def _run_leadership_screening(job_id, vcp_survivors, market_trend):
         # Pass the pre-fetched market_trend to the batch endpoint for efficiency.
         payload = {
             "tickers": vcp_tickers,
-            "market_trend": market_trend
         }
         resp = requests.post(
             f"{LEADERSHIP_SERVICE_URL}/leadership/batch",
@@ -273,41 +259,6 @@ def _store_results(job_id, summary_doc, candidates_doc):
         logger.exception(f"Job {job_id}: Failed to write candidate results to database.")
         return False, ({"error": "Failed to write candidate results to database", "details": str(e)}, 500)
 # --- Scheduled Job ---
-def store_daily_market_trend():
-    try:
-        # Fetch the current market trend from the leadership-service
-        trend_response = requests.get(f"{LEADERSHIP_SERVICE_URL}/market-trend/current", timeout=15)
-        trend_response.raise_for_status()
-        trend_data = trend_response.json()
-
-        # Prepare the data to be stored in the data-service
-        trend_status = trend_data.get('status')
-        if not trend_status:
-            logger.error("Failed to get market trend status from leadership-service")
-            return
-
-        # Store the trend data in the data-service
-        store_response = requests.post(
-            f"{DATA_SERVICE_URL}/market-trend",
-            json={'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'), 'status': trend_status},
-            timeout=15
-        )
-        store_response.raise_for_status()
-        logger.info("Successfully stored market trend status in data-service")
-
-    except requests.exceptions.RequestException:
-        logger.exception("Failed to store market trend status.")
-
-# Initialize the scheduler
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-# Schedule the job to run daily at the configured time
-scheduler.add_job(
-    store_daily_market_trend,
-    CronTrigger(hour=int(SCHEDULER_TIME.split(':')[0]), minute=int(SCHEDULER_TIME.split(':')[1]))
-)
-
 # --- Orchestration Logic ---
 def run_screening_pipeline():
     """
@@ -345,11 +296,8 @@ def run_screening_pipeline():
     # 4. Run "How to Count Unique Industries" task
     unique_industries_count = _count_unique_industries(job_id, vcp_survivors)
 
-    # 5a. Determine current market trend once for the entire batch.
-    current_market_trend = _get_current_market_trend(job_id)
-
-    # 5b. Run Stage 3 Leadership Screening on VCP survivors
-    leadership_survivors = _run_leadership_screening(job_id, vcp_survivors, current_market_trend)
+    # 5. Run Stage 3 Leadership Screening on VCP survivors
+    leadership_survivors = _run_leadership_screening(job_id, vcp_survivors)
     logger.info(f"Job {job_id}: Funnel: After leadership screening, {len(leadership_survivors)} final candidates found.")
     
     # 6. Prepare and store results and summary
@@ -395,6 +343,16 @@ def run_screening_pipeline():
         **filtered_result, # Unpack the summary into the response
         "unique_industries_count": unique_industries_count,
     }, 200
+
+# Initialize the scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+# Schedule the job to run daily at the configured time
+scheduler.add_job(
+    run_screening_pipeline,
+    CronTrigger(hour=int(SCHEDULER_TIME.split(':')[0]), minute=int(SCHEDULER_TIME.split(':')[1]))
+)
 
 # --- API Endpoint ---
 @app.route('/jobs/screening/start', methods=['POST'])
