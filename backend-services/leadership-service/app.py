@@ -102,8 +102,8 @@ def _analyze_ticker_leadership(ticker):
     # --- End of Industry Peer Data Fetching ---
 
     # Run all leadership checks
-    results = {}
-    details = {}
+    results = {} # used to create a clean, top-level summary of the pass/fail status for "each" major criterion
+    details = {} # used as a data aggregator to collect "all" the rich, detailed information from each individual check function.
     
     try:
         check_is_small_to_mid_cap(financial_data, details)
