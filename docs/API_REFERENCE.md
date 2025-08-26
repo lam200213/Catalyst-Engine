@@ -182,27 +182,34 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```json
     {
       "ticker": "AAPL",
-      "results": {
-        "is_small_to_mid_cap": true,
-        "is_recent_ipo": true,
-        "has_limited_float": true,
-        "has_accelerating_growth": true,
-        "has_strong_yoy_eps_growth": true,
-        "yoy_eps_growth_level": "High Growth",
-        "has_consecutive_quarterly_growth": true,
-        "consecutive_quarterly_growth_level": "Standard Growth",
-        "has_positive_recent_earnings": true,
-        "outperforms_in_rally": true,
-        "market_trend_context": "Bullish",
-        "shallow_decline": false,
-        "new_52_week_high": true,
-        "recent_breakout": false,
-        "is_industry_leader": true
+      "passes": true,
+      "details": {
+        "is_small_to_mid_cap": {
+          "pass": true,
+          "message": "Market cap $2,8T is within the range of $300M to $10B."
+        },
+        "is_recent_ipo": {
+          "pass": false,
+          "message": "IPO was 43.7 years ago, which is older than the 10-year threshold."
+        },
+        "has_limited_float": {
+          "pass": false,
+          "message": "Float is 99.8%, which is above the 20% threshold."
+        },
+        "has_accelerating_growth": {
+          "pass": true,
+          "message": "All metrics (Earnings, Revenue, Margin) show accelerating quarter-over-quarter growth."
+        },
+        "is_industry_leader": {
+            "pass": true,
+            "rank": 1
+        }
       },
       "metadata": {
         "execution_time": 0.458
       }
     }
+    ```
 
 - **GET `/leadership/industry_rank/:ticker`**  
   - Proxies to: `leadership-service`
@@ -242,26 +249,21 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       ]
     }
 
-- **GET `/market-trend/current`**
-  - Proxies to: `leadership-service`
-  - Purpose: Gets the current overall market trend context (Bullish, Bearish, or Neutral) based on the technical posture of major indices.
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/market-trend/current
-    ```
+- **GET `/health`**  
+  - Proxies to: leadership-service
+  - Purpose: A standard health check endpoint used for service monitoring to confirm that the service is running and responsive.
+
+  - **Example Usage (from a monitoring tool or another service)**
+      ```bash
+      curl http://leadership-service:3005/health
+      ```
+
   - **Example Success Response:**
-    ```json
-    {
-      {"status":
-        {
-          "index_trends":{"^DJI":"Bullish","^GSPC":"Bullish","^IXIC":"Bullish"},
-          "message":"Market trend is Bullish, with 3/3 indices in a bullish posture.",
-          "pass":true,
-          "trend":"Bullish"
-        }
+      ```JSON
+      {
+        "status": "healthy"
       }
-    }
-    ```
+      ```
 
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`
@@ -291,38 +293,90 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 ## Internal Data Service Endpoints
 - The following endpoints are used for internal service-to-service communication and are not exposed through the public API Gateway. They are documented here for completeness.
 
-- **POST `/market-trend`**  
+- **POST `/financials/core/batch`**  
   - Proxies to: data-service
-  - Purpose: Stores the daily market trend status. This is typically called by the scheduler-service after fetching the current trend from the leadership-service.
+  - Purpose: Retrieves core financial data for a batch of tickers. This is used by the leadership-service to efficiently gather the necessary data for its industry peer ranking analysis.
 
   - **Request Body:**
       ```JSON
       {
-        "date": "2025-07-26",
-        "status": "Bullish"
+        "tickers": ["NVDA", "AVGO", "FAKETICKER"]
       }
       ```
 
   - **Example Usage (from another service)**
       ```PYTHON
-      {
-        import requests
+      import requests
 
-        data_service_url = "http://data-service:3001"
-        payload = {"date": "2025-07-26", "status": "Bullish"}
-        requests.post(f"{data_service_url}/market-trend", json=payload)}
+      data_service_url = "http://data-service:3001"
+      payload = {"tickers": ["NVDA", "AVGO", "FAKETICKER"]}
+      response = requests.post(f"{data_service_url}/financials/core/batch", json=payload)
       ```
 
   - **Example Success Response:**
       ```JSON
       {
-        "message": "Market trend data stored successfully."
+        "success": {
+          "NVDA": {
+            "marketCap": 2220000000000,
+            "sharesOutstanding": 2460000000,
+            "ipoDate": "1999-01-22"
+          },
+          "AVGO": {
+            "marketCap": 605000000000,
+            "sharesOutstanding": 463000000,
+            "ipoDate": "2009-08-06"
+          }
+        },
+        "failed": ["FAKETICKER"]
+      }
+      ```
+
+- **POST `/market-trend/calculate`**  
+  - Proxies to: data-service
+  - Purpose: On-demand endpoint to calculate, store, and return market trends for a specific list of dates. This is an internal utility endpoint.
+
+  - **Request Body:**
+      ```JSON
+      {
+        "dates": ["2025-08-26", "2025-08-25"]
+      }
+      ```
+
+  - **Example Usage (from another service)**
+      ```PYTHON
+        import requests
+
+        data_service_url = "http://data-service:3001"
+        payload = {"dates": ["2025-08-26"]}
+        response = requests.post(f"{data_service_url}/market-trend/calculate", json=payload)
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "trends": [
+          {
+            "date": "2025-08-26",
+            "trend": "Bullish",
+            "pass": true,
+            "details": {
+              "^GSPC": "Bullish",
+              "^DJI": "Bullish",
+              "^IXIC": "Bullish"
+            },
+            "createdAt": "..."
+          }
+        ]
       }
       ```
 
 - **GET `/market-trends`**  
   - Proxies to: data-service
-  - Purpose: Retrieves the market trend data for the last 56 days. This is used by the leadership-service to provide historical context for its analysis.
+  - Purpose: Retrieves stored historical market trends. Can be filtered by a date range. Used by the leadership-service to provide historical context for its analysis.
+  - Query Parameters:
+    - start_date (optional): The start date for the filter (e.g., 2025-07-01).
+    - end_date (optional): The end date for the filter (e.g., 2025-08-01).
 
   - **Example Usage (from another service)**
       ```PYTHON
@@ -330,8 +384,13 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
         import requests
 
         data_service_url = "http://data-service:3001"
+        # Get all trends
         response = requests.get(f"{data_service_url}/market-trends")
         trends = response.json()
+
+        # Get trends for a specific range
+        response_filtered = requests.get(f"{data_service_url}/market-trends?start_date=2025-07-01&end_date=2025-07-31")
+        trends_filtered = response_filtered.json()
       }
       ```
 
@@ -347,4 +406,74 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
           "status": "Bullish"
         }
       ]
+      ```
+
+- **POST `/screen/batch`**  
+  - Proxies to: screening-service
+  - Purpose: Processes a list of tickers and returns only those that pass the 8 foundational SEPA trend criteria. It's a critical component of the main screening pipeline, called by the scheduler-service.
+
+  - **Request Body:**
+      ```JSON
+      {
+        "tickers": ["AAPL", "GOOGL", "TSLA"]
+      }
+      ```
+
+  - **Example Usage (from another service)**
+      ```PYTHON
+      import requests
+
+      screening_service_url = "http://screening-service:3002"
+      payload = {"tickers": ["AAPL", "GOOGL", "TSLA"]}
+      response = requests.post(f"{screening_service_url}/screen/batch", json=payload)
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "passing_tickers": ["AAPL", "GOOGL"]
+      }
+      ```
+
+- **POST `/leadership/batch`**  
+  - Proxies to: leadership-service
+  - Purpose: Screens a batch of tickers (typically those that have passed the trend and VCP screens) against the 10 "Leadership Profile" criteria. Called by the scheduler-service to efficiently find the top candidates.
+
+  - **Request Body:**
+      ```JSON
+      {
+        "tickers": ["AAPL", "GOOGL", "TSLA"]
+      }
+      ```
+
+  - **Example Usage (from another service)**
+      ```PYTHON
+      import requests
+
+      leadership_service_url = "http://leadership-service:3005"
+      payload = {"tickers": ["AAPL", "GOOGL", "TSLA"]}
+      response = requests.post(f"{leadership_service_url}/leadership/batch", json=payload)
+      ```
+
+  - **Example Success Response:**
+      ```JSON
+      {
+        "passing_candidates": [
+          {
+            "ticker": "AAPL",
+            "passes": true,
+            "details": {
+              "is_small_to_mid_cap": {
+                  "pass": true,
+                  "message": "Market cap is within the required range."
+              }
+            }
+          }
+        ],
+        "metadata": {
+          "total_processed": 2,
+          "total_passed": 1,
+          "execution_time": 1.234
+        }
+      }
       ```

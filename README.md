@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-26
-Solve the market trend data-fetching issue, shift from a scheduled "push" model to an on-demand "pull" model. The data-service will become the single source of truth for calculating and providing market trend data, doing so only when another service requests it. This eliminates the dependency on the scheduler and ensures data is always available.
+Update test cases regarding the previous commit. Update related API documentation. 
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

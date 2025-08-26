@@ -72,6 +72,74 @@ class TestDataServiceDbInit(unittest.TestCase):
         with self.assertRaises(OperationFailure):
             init_db()
 
+# Test Class for Market Trend Endpoints
+@patch('app.init_db')
+class TestMarketTrendEndpoints(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        self.app = app.test_client()
+        self.market_trends_patcher = patch('app.market_trends', MagicMock())
+        self.mock_market_trends = self.market_trends_patcher.start()
+
+    def tearDown(self):
+        self.market_trends_patcher.stop()
+
+    @patch('app.yfinance_provider.get_core_financials')
+    def test_calculate_market_trend_success(self, mock_get_financials, mock_init_db):
+        """
+        Tests the on-demand calculation of market trends via POST /market-trend/calculate.
+        """
+        # Arrange
+        dates_to_calc = ["2025-08-25", "2025-08-26"]
+        # Mock the financial data fetch for the indices
+        mock_get_financials.return_value = {
+            'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 
+            'high_52_week': 4800, 'low_52_week': 4000
+        }
+        
+        # Act
+        response = self.app.post('/market-trend/calculate', json={'dates': dates_to_calc})
+        
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json
+        self.assertEqual(len(data['trends']), 2)
+        self.assertEqual(data['trends'][0]['date'], "2025-08-25")
+        self.assertIn('trend', data['trends'][0]) # e.g., 'Bullish'
+        
+        # Verify it was stored in the database via upsert
+        self.assertEqual(self.mock_market_trends.update_one.call_count, 2)
+        # Check one of the calls to ensure the data is structured correctly for MongoDB
+        first_call_args, _ = self.mock_market_trends.update_one.call_args_list[0]
+        self.assertEqual(first_call_args[0], {'date': '2025-08-25'}) # The query filter
+        self.assertIn('trend', first_call_args[1]['$set']) # The update document
+
+    def test_get_market_trends_with_range(self, mock_init_db):
+        """
+        Tests retrieval of market trends using a date range via GET /market-trends.
+        """
+        # Arrange
+        mock_trend_data = [
+            {"date": "2025-08-25", "trend": "Bullish"},
+            {"date": "2025-08-26", "trend": "Neutral"}
+        ]
+        # Simulate the find query returning a cursor
+        mock_cursor = MagicMock()
+        mock_cursor.sort.return_value = mock_trend_data
+        self.mock_market_trends.find.return_value = mock_cursor
+
+        # Act
+        response = self.app.get('/market-trends?start_date=2025-08-25&end_date=2025-08-26')
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, mock_trend_data)
+        # Verify the database was queried with the correct date range filter
+        self.mock_market_trends.find.assert_called_once_with(
+            {"date": {"$gte": "2025-08-25", "$lte": "2025-08-26"}}, 
+            {'_id': 0}
+        )
+
 # Test class for caching logic
 @patch('app.init_db') # Patch init_db to prevent it from running in these tests
 class TestDataServiceCacheLogic(unittest.TestCase):

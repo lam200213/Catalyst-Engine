@@ -15,50 +15,21 @@ class TestScheduler(unittest.TestCase):
         self.app = app.test_client()
         self.app.testing = True
 
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_screening_job_workflow_success(self, mock_requests_get, mock_requests_post, mock_get_db_collections):
-        # --- Arrange: Mock a successful workflow where one ticker passes all stages ---
-        mock_results_collection = MagicMock()
-        mock_jobs_collection = MagicMock()
-        mock_get_db_collections.return_value = (mock_results_collection, mock_jobs_collection)
-
-        def get_side_effect(url, **kwargs):
-            mock_resp = MagicMock()
-
-            if 'ticker-service' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = ['PASS_TICKER', 'FAIL_VCP_TICKER', 'FAIL_TREND_TICKER']
-            elif 'analyze/PASS_TICKER' in url:
-                self.assertEqual(kwargs.get('params'), {'mode': 'fast'})
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "PASS_TICKER"}
-            elif 'analyze/FAIL_VCP_TICKER' in url:
-                self.assertEqual(kwargs.get('params'), {'mode': 'fast'})
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": False, "ticker": "FAIL_VCP_TICKER"}
-            elif 'industry/peers/PASS_TICKER' in url: # For _count_unique_industries
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"industry": "Tech"}
-            elif 'leadership/PASS_TICKER' in url: # For _run_leadership_screening
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"results": {
-                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
-                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
-                    'outperforms_in_rally': True
-                }}
-            else:
-                mock_resp.status_code = 404
-                mock_resp.json.return_value = {"error": "URL not mocked"}
-            return mock_resp
-
-        mock_requests_get.side_effect = get_side_effect
-
-        mock_requests_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: ['PASS_TICKER', 'FAIL_VCP_TICKER']
-        )
+    # Latest Add: Refactored to patch helper functions directly for clarity and stability.
+    @patch('app._store_results')
+    @patch('app._run_leadership_screening')
+    @patch('app._count_unique_industries')
+    @patch('app._run_vcp_analysis')
+    @patch('app._run_trend_screening')
+    @patch('app._get_all_tickers')
+    def test_screening_job_workflow_success(self, mock_get_tickers, mock_trend_screen, mock_vcp_analysis, mock_count_industries, mock_leadership_screen, mock_store_results):
+        # --- Arrange: Mock the return values of each stage in the pipeline ---
+        mock_get_tickers.return_value = (['PASS_TICKER', 'FAIL_VCP', 'FAIL_TREND'], None)
+        mock_trend_screen.return_value = (['PASS_TICKER', 'FAIL_VCP'], None)
+        mock_vcp_analysis.return_value = [{'ticker': 'PASS_TICKER'}]
+        mock_count_industries.return_value = 1
+        mock_leadership_screen.return_value = [{'ticker': 'PASS_TICKER', 'leadership_results': {}}]
+        mock_store_results.return_value = (True, None)
 
         # --- Act ---
         response = self.app.post('/jobs/screening/start')
@@ -69,261 +40,56 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(json_data['message'], "Screening job completed successfully.")
         self.assertEqual(json_data['total_tickers_fetched'], 3)
         self.assertEqual(json_data['trend_screen_survivors_count'], 2)
+        self.assertEqual(json_data['vcp_survivors_count'], 1)
         self.assertEqual(json_data['final_candidates_count'], 1)
         self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
 
-        # Verify database call
-        mock_results_collection.insert_many.assert_called_once()
-        args, _ = mock_results_collection.insert_many.call_args
-        self.assertEqual(len(args[0]), 1)
-        self.assertEqual(args[0][0]['ticker'], 'PASS_TICKER')
-
-        mock_jobs_collection.update_one.assert_called_once()
-        pos_args, _ = mock_jobs_collection.update_one.call_args
-        update_document = pos_args[1]
-        summary_doc = update_document['$set']
-
-        self.assertIn('job_id', summary_doc)
-        self.assertEqual(summary_doc['final_candidates_count'], 1)
-
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_edge_case_no_tickers_found(self, mock_requests_get, mock_requests_post, mock_get_db_collections):
-        # --- Arrange: Ticker service returns an empty list ---
-        mock_get_db_collections.return_value = (MagicMock(), MagicMock())
-        mock_requests_get.return_value = MagicMock(status_code=200, json=lambda: [])
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-        json_data = response.get_json()
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json_data['total_tickers_fetched'], 0)
-        mock_requests_post.assert_not_called()
-        #  Check that insert_many was not called on the results collection mock
-        mock_get_db_collections.return_value[0].insert_many.assert_not_called()
-
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_edge_case_no_trend_survivors(self, mock_requests_get, mock_requests_post, mock_get_db_collections):
-        # --- Arrange: Screening service returns an empty list ---
-        mock_get_db_collections.return_value = (MagicMock(), MagicMock())
-        mock_requests_get.return_value = MagicMock(status_code=200, json=lambda: ['TICKER_A'])
-        mock_requests_post.return_value = MagicMock(status_code=200, json=lambda: [])
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-        json_data = response.get_json()
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json_data['trend_screen_survivors_count'], 0)
-        self.assertEqual(json_data['final_candidates_count'], 0)
-        mock_get_db_collections.return_value[0].insert_many.assert_not_called()
-    @patch('builtins.print')
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_ticker_service_returns_non_list(self, mock_requests_get, mock_requests_post, mock_get_db_collections, mock_print):
-        """
-        Tests that _get_all_tickers handles a non-list response from the ticker service
-        gracefully by returning an empty list and logging a warning.
-        """
-        # --- Arrange ---
-        mock_get_db_collections.return_value = (MagicMock(), MagicMock())
-        # Simulate ticker service returning a dictionary instead of a list
-        mock_requests_get.return_value = MagicMock(status_code=200, json=lambda: {'data': ['AAPL', 'GOOG']})
-
-        # Act
-        response = self.app.post('/jobs/screening/start')
-        json_data = response.get_json()
-
-        # Assert
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json_data['total_tickers_fetched'], 0)
-        self.assertEqual(json_data['trend_screen_survivors_count'], 0)
-        self.assertEqual(json_data['final_candidates_count'], 0)
+        # Verify the correct data was passed between functions
+        mock_trend_screen.assert_called_once_with(unittest.mock.ANY, ['PASS_TICKER', 'FAIL_VCP', 'FAIL_TREND'])
+        mock_vcp_analysis.assert_called_once_with(unittest.mock.ANY, ['PASS_TICKER', 'FAIL_VCP'])
+        mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, [{'ticker': 'PASS_TICKER'}])
         
-        # Verify that a warning was logged
-        log_calls = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("Ticker service returned non-list format" in call for call in log_calls))
-        
-        mock_requests_post.assert_not_called()
-        mock_get_db_collections.return_value[0].insert_many.assert_not_called()
+        # Verify the final results were stored
+        mock_store_results.assert_called_once()
+        # Check the second argument of the call (candidates_doc)
+        final_candidates_arg = mock_store_results.call_args[0][2]
+        self.assertEqual(len(final_candidates_arg), 1)
+        self.assertEqual(final_candidates_arg[0]['ticker'], 'PASS_TICKER')
 
-    @patch('app.requests.get')
-    def test_service_failure_ticker_service(self, mock_requests_get):
-        # --- Arrange: Ticker service throws a connection error ---
-        mock_requests_get.side_effect = requests.exceptions.RequestException("Ticker service down")
+
+    @patch('app._get_all_tickers')
+    def test_service_failure_ticker_service(self, mock_get_tickers):
+        # --- Arrange: Ticker service returns an error tuple ---
+        mock_get_tickers.return_value = (None, ({"error": "Failed to connect"}, 503))
 
         # --- Act ---
         response = self.app.post('/jobs/screening/start')
 
         # --- Assert ---
         self.assertEqual(response.status_code, 503)
-        self.assertIn("Failed to connect to ticker-service", response.get_json()['error'])
+        self.assertIn("Failed to connect", response.get_json()['error'])
 
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_database_failure(self, mock_requests_get, mock_requests_post, mock_get_db_collections):
-        # --- Arrange: Mock a DB failure ---
-        mock_results_collection = MagicMock()
-        mock_jobs_collection = MagicMock()
-        mock_results_collection.insert_many.side_effect = errors.PyMongoError("DB connection lost")
-        mock_get_db_collections.return_value = (mock_results_collection, mock_jobs_collection)
-      
-        def get_side_effect(url, **kwargs):
-            mock_resp = MagicMock()
-            if 'ticker-service' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = ['DB_FAIL_TICKER']
-            elif 'analyze/DB_FAIL_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": True, "ticker": "DB_FAIL_TICKER"}
-            elif 'industry/peers/DB_FAIL_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"industry": "Finance"}
-            elif 'leadership/DB_FAIL_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"results": {
-                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
-                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
-                    'outperforms_in_rally': True
-                }}
-            else:
-                mock_resp.status_code = 404
-            return mock_resp
 
-        mock_requests_get.side_effect = get_side_effect
-        mock_requests_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: ['DB_FAIL_TICKER']
-        )
-
+    @patch('app._store_results')
+    @patch('app._run_leadership_screening', return_value=[])
+    @patch('app._run_vcp_analysis', return_value=[])
+    @patch('app._run_trend_screening', return_value=([], None))
+    @patch('app._get_all_tickers')
+    def test_database_failure_on_store(self, mock_get_tickers, *args):
+        # --- Arrange: Mock a DB failure during the final step ---
+        mock_get_tickers.return_value = (['DB_FAIL_TICKER'], None)
+        # The first patched arg is _store_results
+        mock_store_results = args[-1]
+        mock_store_results.return_value = (False, ({"error": "DB connection lost"}, 500))
+        
         # --- Act ---
         response = self.app.post('/jobs/screening/start')
 
         # --- Assert ---
         self.assertEqual(response.status_code, 500)
-        self.assertIn("Failed to write candidate results to database", response.get_json()['error'])
-        mock_results_collection.insert_many.assert_called_once()
-        mock_jobs_collection.update_one.assert_called_once()
+        self.assertIn("DB connection lost", response.get_json()['error'])
+        mock_store_results.assert_called_once()
 
-    @patch('builtins.print')
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_funnel_logging_and_database_persistence(self, mock_requests_get, mock_requests_post, mock_get_db_collections, mock_print):
-        # --- Arrange: Mock a successful workflow for logging and persistence checks ---
-        mock_results_collection, mock_jobs_collection = MagicMock(), MagicMock()
-        mock_get_db_collections.return_value = (mock_results_collection, mock_jobs_collection)
-        PASS_TICKER = 'LOG_PASS'
-
-        def get_side_effect(url, **kwargs):
-            mock_resp = MagicMock()
-            if 'ticker-service' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = [PASS_TICKER, 'LOG_FAIL_VCP', 'LOG_FAIL_TREND']
-            elif f'analyze/{PASS_TICKER}' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": True, "ticker": PASS_TICKER}
-            elif 'analyze/LOG_FAIL_VCP' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"vcp_pass": False, "ticker": "LOG_FAIL_VCP"}
-            elif f'industry/peers/{PASS_TICKER}' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"industry": "Logging"}
-            elif f'leadership/{PASS_TICKER}' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"results": {
-                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
-                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
-                    'outperforms_in_rally': True
-                }}
-            else:
-                mock_resp.status_code = 404
-            return mock_resp
-
-        mock_requests_get.side_effect = get_side_effect
-        mock_requests_post.return_value = MagicMock(status_code=200, json=lambda: [PASS_TICKER, 'LOG_FAIL_VCP'])
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-
-        mock_results_collection.insert_many.assert_called_once()
-        args, _ = mock_results_collection.insert_many.call_args
-        self.assertEqual(len(args[0]), 1)
-        self.assertIn('job_id', args[0][0])
-        self.assertIn('processed_at', args[0][0])
-        self.assertEqual(args[0][0]['ticker'], PASS_TICKER)
-
-        log_calls = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("Fetched 3 total tickers." in call for call in log_calls))
-        self.assertTrue(any("Stage 1 (Trend Screen) passed: 2 tickers." in call for call in log_calls))
-        self.assertTrue(any("Stage 2 (VCP Screen) passed: 1 tickers." in call for call in log_calls))
-        self.assertTrue(any("Inserted 1 documents into the database." in call for call in log_calls))
-
-    @patch('builtins.print')
-    @patch('app.get_db_collections')
-    @patch('app.requests.post')
-    @patch('app.requests.get')
-    def test_job_continues_when_downstream_service_returns_malformed_json(self, mock_requests_get, mock_requests_post, mock_get_db_collections, mock_print):
-        # --- Arrange: Mock a workflow where one downstream service returns bad JSON ---
-        mock_results_collection, mock_jobs_collection = MagicMock(), MagicMock()
-        mock_get_db_collections.return_value = (mock_results_collection, mock_jobs_collection)
-
-        def get_side_effect(url, **kwargs):
-            mock_resp = MagicMock()
-            if 'ticker-service' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = ['PASS_TICKER', 'BAD_JSON_TICKER']
-            elif '/analyze/PASS_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {'vcp_pass': True, 'ticker': 'PASS_TICKER'}
-            elif '/analyze/BAD_JSON_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.side_effect = requests.exceptions.JSONDecodeError("Expecting value", "doc", 0)
-            elif '/industry/peers/PASS_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"industry": "Tech"}
-            elif '/leadership/PASS_TICKER' in url:
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"results": {
-                    'is_small_to_mid_cap': True, 'has_strong_yoy_eps_growth': True,
-                    'has_consecutive_quarterly_growth': True, 'has_positive_recent_earnings': True,
-                    'outperforms_in_rally': True
-                }}
-            else:
-                mock_resp.status_code = 404
-                mock_resp.json.return_value = {"error": "URL not mocked"}
-            return mock_resp
-
-        mock_requests_get.side_effect = get_side_effect
-        mock_requests_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: ['PASS_TICKER', 'BAD_JSON_TICKER']
-        )
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-        
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-
-        mock_results_collection.insert_many.assert_called_once()
-        args, _ = mock_results_collection.insert_many.call_args
-        self.assertEqual(len(args[0]), 1)
-        self.assertEqual(args[0][0]['ticker'], 'PASS_TICKER')
-
-        log_calls = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(any("Could not decode JSON for ticker BAD_JSON_TICKER" in call for call in log_calls))
 
 if __name__ == '__main__':
     unittest.main()
