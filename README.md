@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-08-29
-Correct critical bug and logical mismatch in leadership-service: Inverted "Shallow Decline" Logic
+Refactor the leadership-service to align the industry leadership check with the established pattern `{"pass": ..., "message": ...}`
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

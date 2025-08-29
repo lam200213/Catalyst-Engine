@@ -670,7 +670,7 @@ def check_consecutive_quarterly_growth(financial_data, details):
     except (KeyError, TypeError, IndexError, ZeroDivisionError):
         details.update(failed_check(metric_key, "An unexpected error occurred during calculation."))
 
-def check_industry_leadership(ticker, peers_data, batch_financial_data):
+def check_industry_leadership(ticker, peers_data, batch_financial_data, details):
     """
     Analyzes a company's industry peers and ranks them based on revenue and market cap.
 
@@ -678,17 +678,20 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data):
         ticker (str): The stock ticker symbol of the company to analyze.
         peers_data (dict): The JSON response from the /industry/peers/<ticker> endpoint.
         batch_financial_data (dict): The JSON response from the /financials/core/batch endpoint.
+        details (dict): A dictionary to store the result.
 
     Returns:
         dict: A JSON object containing the ticker's rank and industry details,
               or an error message if data cannot be processed.
     """
+    metric_key = 'is_industry_leader'
     try:
         # -- data handling -- 
         industry_name = peers_data.get("industry")
 
         if not industry_name:
-            return {"error": f"No industry data found for {ticker}"}
+            details.update(failed_check(metric_key, f"No industry data found for {ticker}."))
+            return 
         
         # Filter out any peers with incomplete data and prepare for DataFrame
         processed_data = []
@@ -710,7 +713,8 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data):
                     })
 
         if not processed_data:
-            return {"error": "No complete financial data available for ranking after filtering."}
+            details.update(failed_check(metric_key, "No complete financial data available for ranking after filtering."))
+            return
 
         # -- screening -- 
         # Create a pandas DataFrame
@@ -722,37 +726,38 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data):
         df['market_cap_rank'] = df['marketCap'].rank(ascending=False, method='min')
         df['earnings_rank'] = df['netIncome'].rank(ascending=False, method='min')
 
-        # Combine ranks (lower combined rank is better)
-        df['combined_rank'] = df['revenue_rank'] + df['market_cap_rank'] + df['earnings_rank']
+        # Combine score (lower combined rank is better)
+        df['combined_score'] = df['revenue_rank'] + df['market_cap_rank'] + df['earnings_rank']
+
+        # The stock with the lowest score (e.g., 3) will receive the best final_rank (1).
+        df['final_rank'] = df['combined_score'].rank(method='min').astype(int)
 
         # Sort by combined rank to get the final ranking
-        df = df.sort_values(by='combined_rank').reset_index(drop=True)
+        df = df.sort_values(by='final_rank').reset_index(drop=True)
 
         # Find the rank of the original ticker
         ticker_rank_info = df[df['ticker'] == ticker]
 
         if not ticker_rank_info.empty:
-            # Add 1 because pandas ranks are 0-indexed if reset_index is used without drop=True,
-            # but rank() itself is 1-indexed. combined_rank is already a sum of 1-indexed ranks.
-            # We want the position in the sorted DataFrame, which is 0-indexed.
-            # So, if the first item is rank 1, its index is 0.
-            # The rank should be its position + 1.
-            final_rank = ticker_rank_info.index[0] + 1
+            final_rank = int(ticker_rank_info['final_rank'].iloc[0])
         else:
             final_rank = None # Should not happen if original ticker was included in all_tickers
 
-        # Convert numpy.int64 to Python int
-        final_rank = int(final_rank) if final_rank is not None else None
-        df['combined_rank'] = df['combined_rank'].astype(int)
+        is_pass = final_rank is not None and final_rank <= 3
+        message = (
+            f"Passes. Ticker ranks #{final_rank} out of {len(df)} in its industry."
+            if is_pass
+            else f"Fails. Ticker ranks #{final_rank} out of {len(df)}, outside the top 3."
+        )
 
-        return {
-            "ticker": ticker,
+        details[metric_key] = {
+            "pass": is_pass,
             "industry": industry_name,
             "rank": final_rank,
             "total_peers_ranked": len(df),
-            "ranked_peers_data": df.to_dict(orient='records') # Optional: include full ranked data
+            "ranked_peers_data": df.to_dict(orient='records'), # Optional: include full ranked data
+            "message": message,
         }
-    
     except Exception as e:
-        print(f"Error in check_industry_leadership for {ticker}: {e}")
-        return {"error": f"An unexpected error occurred: {e}"}
+        logging.error(f"Error in check_industry_leadership for {ticker}: {e}", exc_info=True)
+        details.update(failed_check(metric_key, f"An unexpected error occurred: {e}"))

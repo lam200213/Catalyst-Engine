@@ -129,14 +129,8 @@ def _analyze_ticker_leadership(ticker):
         check_outperforms_in_rally(stock_data, sp500_price_data, details)
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
-        leadership_result = check_industry_leadership(ticker, peers_data, batch_financial_data)
-        if "rank" in leadership_result and leadership_result['rank'] is not None:
-            results['is_industry_leader'] = leadership_result['rank'] <= 3
-            details['industry_leadership_details'] = leadership_result
-        else:
-            results['is_industry_leader'] = False
-            details['industry_leadership_details'] = leadership_result
-        
+        check_industry_leadership(ticker, peers_data, batch_financial_data, details)
+        results['is_industry_leader'] = details.get('is_industry_leader', {"pass": False, "message": "Check failed to run."})
         
         evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
 
