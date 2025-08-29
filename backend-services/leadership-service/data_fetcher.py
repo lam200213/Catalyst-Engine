@@ -101,7 +101,7 @@ def fetch_batch_financials(tickers):
         return None, (f"Could not fetch batch financial data", status_code)
     
 def get_last_n_workdays(n_days=8):
-    """Calculates the last N US business days."""
+    """Calculates the last N US business days, starting with the oldest date and ending with the most recent one."""
     today = datetime.now()
     # Generate a date range of business days ending today
     # We generate a few more days than needed to account for holidays
@@ -114,6 +114,7 @@ def fetch_market_trends():
     Ensures the last 8 workdays of market trend data are available.
     It fetches what exists, identifies what's missing, and requests
     on-demand calculation for the missing days.
+    order: oldest-to-newest
     """
     try:
         # 1. Determine the required dates (last 8 workdays)

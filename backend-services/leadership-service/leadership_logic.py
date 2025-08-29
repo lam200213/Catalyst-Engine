@@ -411,9 +411,10 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
     metric_key = 'market_trend_impact'
     try:
         # Initialize evaluation results
-        shallow_decline = False
         new_52_week_high = False
         recent_breakout = False
+        is_pass = False
+        message = "No specific leadership signal detected for current market context."
         sub_results = {}
 
         # The current market context is the most recent entry in the list
@@ -436,29 +437,27 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
 
         if market_trend_context == 'Bearish':
             # Shallow Decline Check
-            # A stock's correction from its 52-week high must not be more than 2.5 times the current correction of the S&P 500 (SPY)
+            # A stock's correction from its 52-week high must not be more than the current correction of the S&P 500 (SPY)
             if stock_data and '^GSPC' in index_data:
                 sp500_data = index_data['^GSPC']
                 sp500_high = sp500_data.get('high_52_week')
                 sp500_current = sp500_data.get('current_price')
-                sp500_decline = ((sp500_high - sp500_current) / sp500_high) if sp500_high and sp500_current else 0
+                if sp500_high and sp500_current and sp500_high > 0:
+                    sp500_decline = (sp500_high - sp500_current) / sp500_high
 
                 # Find stock's 52-week high and current price
                 if len(stock_data) >= 252:  # Approximately 1 year of trading days
                     stock_high = max(day['high'] for day in stock_data[-252:])
                     stock_current = stock_data[-1]['close']
-                    stock_decline = ((stock_high - stock_current) / stock_high) if stock_high else 0
+                    if stock_high > 0:
+                        stock_decline = (stock_high - stock_current) / stock_high
 
-                    # Check if stock's decline is not more than 2.5 times the S&P 500's decline
-                    if sp500_decline > 0 and stock_decline <= (sp500_decline * 2.5):
-                        shallow_decline = True
+            # Check if stock's decline is less than the S&P 500's decline
+            is_pass = sp500_decline > 0 and stock_decline < sp500_decline
+            message = f"Stock decline ({stock_decline:.1%}) is {'shallower' if is_pass else 'not shallower'} than S&P 500 decline ({sp500_decline:.1%})."
+            sub_results['shallow_decline'] = {"pass": is_pass, "message": message}
 
-            sub_results['shallow_decline'] = {
-                "pass": shallow_decline,
-                "message": "Stock decline is shallow relative to S&P 500." if shallow_decline else "Stock decline exceeds threshold relative to S&P 500."
-            }
-
-        elif market_trend_context in ['Neutral', 'Bullish']:
+        elif is_recovery_phase:
             # New High Check
             # Check if the stock is among the first to reach a new 52-week high
             if stock_data and len(stock_data) >= 252:
@@ -495,10 +494,10 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
                     if price_breakout and volume_breakout:
                         recent_breakout = True
 
-            sub_results['recent_breakout'] = {
-                "pass": recent_breakout,
-                "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
-            }
+                sub_results['recent_breakout'] = {
+                    "pass": recent_breakout,
+                    "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
+                }
 
         is_pass = all(sub['pass'] for sub in sub_results.values()) if sub_results else False
         message = f"Market trend impact evaluated in {market_trend_context} context."

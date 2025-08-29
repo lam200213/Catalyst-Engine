@@ -483,7 +483,7 @@ def calculate_market_trend():
 @app.route('/market-trends', methods=['GET'])
 def get_market_trends():
     """
-    Retrieves stored market trends, optionally filtered by a date range.
+    Retrieves stored market trends, optionally filtered by a date range, in ascending order
     """
     try:
         start_date_str = request.args.get('start_date')
@@ -494,7 +494,7 @@ def get_market_trends():
             # Build query to filter by date string field
             query["date"] = {"$gte": start_date_str, "$lte": end_date_str}
         
-        # Query the database
+        # Query the database in ascending order
         trends_cursor = market_trends.find(query, {'_id': 0}).sort("date", 1)
         
         trends_list = []
