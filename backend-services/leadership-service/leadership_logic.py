@@ -6,8 +6,9 @@ from datetime import datetime
 MIN_MARKET_CAP = 300_000_000      # $300M
 MAX_MARKET_CAP = 10_000_000_000    # $10B
 
-# Constants for float percentage threshold
-LIMITED_FLOAT_THRESHOLD = 0.20    # 20%
+# Constants for float share classification
+LOW_FLOAT_SHARES = 10_000_000      # Under 10 million shares
+MEDIUM_FLOAT_SHARES = 100_000_000  # Between 10 million and 100 million shares
 
 # Constants for time periods
 RECENT_IPO_YEARS = 10              # Last 10 years
@@ -112,42 +113,49 @@ def check_is_early_stage(financial_data, details):
 
 def check_has_limited_float(financial_data, details):
     """
-    Check if the company has a relatively small number of shares available for public trading.
-    
+    Checks if the company has a low or medium float based on the absolute number of shares.
+
+    - Low Float: < 10 million shares
+    - Medium Float: 10 million to 100 million shares
+    - High Float: > 100 million shares
+
+    The check passes if the float is 'low' or 'medium'.
+
     Args:
-        financial_data (dict): Financial data containing 'sharesOutstanding' and 'floatShares' keys.
+        financial_data (dict): A dictionary containing 'floatShares'.
         details (dict): A dictionary to store the result.
-        
-    Returns:
-        None: The result is stored in the 'has_limited_float' key of the details dictionary.
     """
     metric_key = 'has_limited_float'
 
     try:
-        shares_outstanding = financial_data.get('sharesOutstanding')
         float_shares = financial_data.get('floatShares')
         
         # Handle missing or None values
-        if shares_outstanding is None or float_shares is None or shares_outstanding <= 0:
-            details.update(failed_check(metric_key, "Shares outstanding or float shares data not available.", 
-                                        shares_outstanding=shares_outstanding, float_shares=float_shares))
+        if float_shares is None:
+            details.update(failed_check(metric_key, "Float shares data not available.", 
+                                        float_shares=float_shares))
             return
         
-        # Calculate the float percentage
-        float_percentage = float_shares / shares_outstanding
+        # Classify the float
+        if float_shares < LOW_FLOAT_SHARES:
+            classification = "Low"
+        elif float_shares <= MEDIUM_FLOAT_SHARES:
+            classification = "Medium"
+        else:
+            classification = "High"
+
+        # Check if the float percentage is below high
+        is_pass = classification in ["Low", "Medium"]
         
-        # Check if the float percentage is below the threshold
-        is_pass = float_percentage <= LIMITED_FLOAT_THRESHOLD
         message = (
-            f"Float is {float_percentage:.1%}, which is below the {LIMITED_FLOAT_THRESHOLD:.0%} threshold."
+            f"Passes. Float is '{classification}' with {float_shares:,.0f} shares."
             if is_pass
-            else f"Float is {float_percentage:.1%}, which is above the {LIMITED_FLOAT_THRESHOLD:.0%} threshold."
+            else f"Fails. Float is '{classification}' with {float_shares:,.0f} shares, which is considered high."
         )
         
         details[metric_key] = {
             "pass": is_pass,
-            "float_percentage": f"{float_percentage:.1%}",
-            "threshold": f"<= {LIMITED_FLOAT_THRESHOLD:.0%}",
+            "float_shares": float_shares,
             "message": message
         }
 
