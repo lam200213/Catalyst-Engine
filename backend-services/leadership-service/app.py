@@ -73,7 +73,8 @@ def _analyze_ticker_leadership(ticker):
         return {'ticker': ticker, 'error': 'Failed to fetch S&P 500 price data', 'status': 503}
 
     # Fetch market trends data
-    market_trends_data, error = fetch_market_trends()
+    n_days = 365
+    market_trends_data, error = fetch_market_trends(n_days)
     if error:
         app.logger.error(f"Failed to fetch market trends data: {error[0]}")
         return {'ticker': ticker, 'error': error[0], 'status': error[1]}
@@ -143,25 +144,9 @@ def _analyze_ticker_leadership(ticker):
         core_criteria = [
             'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
             'has_accelerating_growth', 'has_strong_yoy_eps_growth',
-            'has_consecutive_quarterly_growth', 'has_positive_recent_earnings', 'is_industry_leader'
+            'has_consecutive_quarterly_growth', 'has_positive_recent_earnings', 'is_industry_leader', 'market_trend_impact'
         ]
         passes_check = all(check_pass(results.get(key)) for key in core_criteria)
-
-        # Conditionally check market context criteria
-        market_trend_impact_details = results.get('market_trend_impact', {})
-        market_trend_context_str = results.get('market_trend_context', {}).get('trend')
-        if market_trend_context_str == 'Bearish':
-            shallow_decline_passed = market_trend_impact_details.get('sub_results', {}).get('shallow_decline', {}).get('pass', False)
-            passes_check = passes_check and shallow_decline_passed
-        elif market_trend_context_str in ['Bullish', 'Neutral']:
-            # In a recovery, a breakout OR a new high is a good sign
-            is_in_recovery = market_trend_impact_details.get('is_recovery_phase', False)
-            breakout_passed = market_trend_impact_details.get('sub_results', {}).get('recent_breakout', {}).get('pass', False)
-            new_high_passed = market_trend_impact_details.get('sub_results', {}).get('new_52_week_high', {}).get('pass', False)
-            if is_in_recovery:
-                passes_check = passes_check and (breakout_passed or new_high_passed)
-            else: # In a standard bull/neutral market, look for a new high
-                passes_check = passes_check and new_high_passed
 
     except Exception as e:
         app.logger.error(f"Error running leadership checks for {ticker}: {e}")

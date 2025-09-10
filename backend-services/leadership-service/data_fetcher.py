@@ -109,16 +109,16 @@ def get_last_n_workdays(n_days=8):
     # Get the last n_days from this list and format them
     return [d.strftime('%Y-%m-%d') for d in date_list][-n_days:]
 
-def fetch_market_trends():
+def fetch_market_trends(n_days=8):
     """
-    Ensures the last 8 workdays of market trend data are available.
+    Ensures the last n workdays of market trend data are available.
     It fetches what exists, identifies what's missing, and requests
     on-demand calculation for the missing days.
     order: oldest-to-newest
     """
     try:
-        # 1. Determine the required dates (last 8 workdays)
-        required_dates = get_last_n_workdays(8)
+        # 1. Determine the required dates 
+        required_dates = get_last_n_workdays(n_days)
         
         # 2. Ask data-service for the trends it already has for this period
         start_date, end_date = required_dates[0], required_dates[-1]

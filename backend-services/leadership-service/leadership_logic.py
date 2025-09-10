@@ -24,6 +24,78 @@ def failed_check(metric, message, **kwargs):
     logging.warning(f"Check failed for metric '{metric}': {message} | Details: {kwargs}")
     return {metric: {"pass": False, "message": message, **kwargs}}
 
+def _find_market_turning_point(market_trends_data):
+    """
+    Finds the date of a confirmed market turning point, defined as the first
+    'Bullish' day that follows a 'Bearish' or 'Neutral' period.
+
+    This correctly identifies patterns like 'Bearish -> Neutral -> Bullish'.
+    
+    Args:
+        market_trends_data (list): A list of market trend dicts, sorted oldest to newest.
+
+    Returns:
+        str or None: The date string ('YYYY-MM-DD') of the turning point, or None if not found.
+    """
+    if len(market_trends_data) < 3:
+        return None
+
+    # Iterate backwards from the most recent day to find the pattern.
+    for i in range(len(market_trends_data) - 1, 1, -1):
+        current_day_trend = market_trends_data[i].get('trend')
+        previous_day_trend = market_trends_data[i-1].get('trend')
+
+        # Step 1: Find the first 'Bullish' day. This is our potential turning point.
+        if current_day_trend == 'Bullish':
+            
+            # Step 2: Check if the day before was NOT Bullish. This ensures it's the *start* of a new bullish phase.
+            if previous_day_trend in ['Bearish', 'Neutral']:
+                
+                # Step 3: Scan further back to confirm this bullish day was preceded by a bearish period.
+                # This ensures we are coming out of a downturn.
+                for j in range(i - 1, -1, -1):
+                    if market_trends_data[j].get('trend') == 'Bearish':
+                        # Confirmation! We found a 'Bullish' day that follows a period
+                        # of 'Neutral' or 'Bearish' days, which itself came after a 'Bearish' trend.
+                        return market_trends_data[i].get('date')
+
+    # If the loop completes without finding the full pattern, no turning point is confirmed.
+    return None
+
+def _check_new_high_in_window(stock_data, window_days, start_date_str=None):
+    """
+    Checks if a stock made a new 52-week high within a given time window.
+    """
+    if len(stock_data) < 252 + window_days:
+        return False
+
+    df = pd.DataFrame(stock_data)
+    df['date'] = pd.to_datetime(df['formatted_date'])
+
+    if start_date_str:
+        start_date = pd.to_datetime(start_date_str)
+        end_date = start_date + pd.Timedelta(days=window_days - 1)
+        window_df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+        pre_window_end_date = start_date - pd.Timedelta(days=1)
+    else:
+        window_df = df.tail(window_days)
+        if window_df.empty: return False
+        pre_window_end_date = window_df['date'].iloc[0] - pd.Timedelta(days=1)
+
+    if window_df.empty:
+        return False
+
+    one_year_prior = pre_window_end_date - pd.Timedelta(days=365)
+    pre_window_df = df[(df['date'] >= one_year_prior) & (df['date'] <= pre_window_end_date)]
+    
+    if pre_window_df.empty:
+        return False
+
+    reference_52w_high = pre_window_df['high'].max()
+    new_high_made = window_df['high'].max() > reference_52w_high
+    
+    return new_high_made
+
 def check_is_small_to_mid_cap(financial_data, details):
     """
     Check if the company has a market capitalization between a specified lower and upper bound.
@@ -405,7 +477,10 @@ def check_outperforms_in_rally(stock_data, sp500_data, details):
 def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details):
     """ 
     Evaluate the stock's behavior relative to the market trend context.
-
+    - Bearish: Checks for shallow decline relative to S&P 500.
+    - Recovery Phase: Checks if stock made a new 52-week high within 20 days of a market turning point.
+    - Bullish/Neutral: Checks if stock made a new 52-week high in the last 10 or 20 days.
+    
     PS: Data of price history is in order of oldest-to-newest.
     Args:
         stock_data (list): List of stock price data dictionaries.
@@ -418,33 +493,34 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
     """
     metric_key = 'market_trend_impact'
     try:
-        # Initialize evaluation results
-        new_52_week_high = False
-        recent_breakout = False
-        is_pass = False
-        message = "No specific leadership signal detected for current market context."
-        sub_results = {}
 
         # The current market context is the most recent entry in the list
         if not market_trends_data:
             details.update(failed_check(metric_key, "Market trends data not available."))
             return
 
+        # --- 1. Determine Market Context ---
         current_market_trend_info = market_trends_data[-1]
         market_trend_context = current_market_trend_info.get('trend', 'Unknown')
         details['market_trend_context'] = current_market_trend_info # Store the full context
+        turning_point_date = _find_market_turning_point(market_trends_data)
 
-        recent_trends_statuses = [trend['trend'] for trend in market_trends_data]
-        recent_trends = recent_trends_statuses[-8:]
+        is_recovery_phase = False
+        if turning_point_date:
+            days_since_turn = (datetime.now() - datetime.strptime(turning_point_date, '%Y-%m-%d')).days
+            if 0 <= days_since_turn <= 20: # Recovery phase is defined as 20 days post-turn
+                is_recovery_phase = True
 
-        # Determine if the market is in a recovery phase
-        is_recovery_phase = (
-            market_trend_context in ['Neutral', 'Bullish'] and
-            any(trend == 'Bearish' for trend in recent_trends)
-        )
+        # --- 2. Execute Checks Based on Context ---
+        # Initialize evaluation results
+        is_pass = False
+        message = "No specific leadership signal detected for current market context."
+        sub_results = {}
 
         if market_trend_context == 'Bearish':
             # Shallow Decline Check
+            stock_decline, sp500_decline = None, None
+
             # A stock's correction from its 52-week high must not be more than the current correction of the S&P 500 (SPY)
             if stock_data and '^GSPC' in index_data:
                 sp500_data = index_data['^GSPC']
@@ -466,23 +542,19 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
             sub_results['shallow_decline'] = {"pass": is_pass, "message": message}
 
         elif is_recovery_phase:
-            # New High Check
-            # Check if the stock is among the first to reach a new 52-week high
-            if stock_data and len(stock_data) >= 252:
-                stock_high = max(day['high'] for day in stock_data[-252:-1])  # High excluding today
-                current_price = stock_data[-1]['close']
-
-                # Check if current price is a new 52-week high
-                if current_price > stock_high:
-                    new_52_week_high = True
+            # New High Check During Market Recovery
+            new_high_in_20d_after_turn = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
+            is_pass = new_high_in_20d_after_turn
+            message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
+                       f"a new 52-week high within 20 days of the turning point.")
 
             sub_results['new_52_week_high'] = {
-                "pass": new_52_week_high,
-                "message": "Stock reached a new 52-week high." if new_52_week_high else "Stock did not reach a new 52-week high."
+                "pass": is_pass,
+                "message": message
             }
 
             # Breakout Check During Market Recovery
-            if is_recovery_phase and stock_data and len(stock_data) >= 20:
+            if turning_point_date and stock_data and len(stock_data) >= 20:
                 # Look for a breakout in the last 20 trading days
                 recent_prices = [day['close'] for day in stock_data[-20:]]
                 recent_volumes = [day['volume'] for day in stock_data[-20:] if 'volume' in day]
@@ -507,13 +579,37 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
                     "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
                 }
 
-        is_pass = all(sub['pass'] for sub in sub_results.values()) if sub_results else False
+        elif market_trend_context in ['Bullish', 'Neutral']:
+            # Check for new high in the last 20 days and during Market Recovery
+            if turning_point_date:
+                new_high_in_20d_after_turn = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
+
+                message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
+                        f"a new 52-week high within 20 days of the turning point.")
+                sub_results['new_52_week_high_after_turn'] = {
+                    "pass": is_pass,
+                    "message": message
+                }
+
+            new_high_in_last_20d = _check_new_high_in_window(stock_data, 20)
+            is_pass = new_high_in_last_20d
+
+            message = (f"Stock {'showed' if is_pass else 'did not show'} "
+                       f"recent strength by making a new 52-week high in the last 20 days.")
+            sub_results['new_high_last_20d'] = {
+                "pass": new_high_in_last_20d,
+                "message": message
+            }
+
+        # --- 3. Finalize Result ---
+        is_pass = any(sub.get('pass', False) for sub in sub_results.values())
         message = f"Market trend impact evaluated in {market_trend_context} context."
 
         details[metric_key] = {
             "pass": is_pass,
             "market_trend_context": market_trend_context,
             "is_recovery_phase": is_recovery_phase,
+            "turning_point_date": turning_point_date,
             "sub_results": sub_results,
             "message": message
         }
