@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 import datetime as dt
+from curl_cffi import requests as cffi_requests
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from providers import yfinance_provider
@@ -66,18 +67,20 @@ class TestYfinanceProviderCore(unittest.TestCase):
         self.assertEqual(data['high_52_week'], 4150)
         self.assertEqual(data['low_52_week'], 3900)
 
-@patch('providers.yfinance_provider._fetch_financials_with_yfinance')
-@patch('providers.yfinance_provider.session.get')
-def test_get_core_financials_api_error(self, mock_cffi_get, mock_fetch_yf):
-    """Tests the get_core_financials function for API errors."""
-    # Arrange
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_cffi_get.return_value = mock_response
-    mock_fetch_yf.return_value = None  # Ensure fallback also returns None
+    @patch('providers.yfinance_provider._fetch_financials_with_yfinance')
+    @patch('providers.yfinance_provider.session.get')
+    def test_get_core_financials_api_error(self, mock_cffi_get, mock_fetch_yf):
+        """Tests the get_core_financials function for API errors."""
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        # Configure the mock to raise an exception when raise_for_status() is called
+        mock_response.raise_for_status.side_effect = cffi_requests.errors.RequestsError("API Error 500", response=mock_response)
+        mock_cffi_get.return_value = mock_response
+        mock_fetch_yf.return_value = None  # Ensure fallback also returns None
 
-    # Act
-    data = yfinance_provider.get_core_financials('AAPL')
+        # Act
+        data = yfinance_provider.get_core_financials('AAPL')
 
-    # Assert
-    self.assertIsNone(data)
+        # Assert
+        self.assertIsNone(data)

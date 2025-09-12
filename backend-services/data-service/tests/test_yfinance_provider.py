@@ -64,8 +64,8 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         date_cols = pd.to_datetime(['2023-09-30'])
 
         # Create mock DataFrames for earnings
-        mock_q_earnings_df = pd.DataFrame([[1000], [100]], index=['Revenue', 'Earnings'], columns=date_cols)
-        mock_a_earnings_df = pd.DataFrame([[4000], [400]], index=['Revenue', 'Earnings'], columns=date_cols)
+        mock_q_income_stmt_df = pd.DataFrame([[1000], [100]], index=['Total Revenue', 'Net Income'], columns=date_cols)
+        mock_a_income_stmt_df = pd.DataFrame([[4000], [400]], index=['Total Revenue', 'Net Income'], columns=date_cols)
         
         # Configure the mock yfinance Ticker object
         mock_instance = mock_yfinance_ticker.return_value
@@ -75,8 +75,8 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
             'floatShares': 14.9e9,
             'firstTradeDateMilliseconds': 345479400000 # Unix timestamp for 1980-12-12 (the unit is in milliseconds)
         }
-        mock_instance.quarterly_earnings = mock_q_earnings_df
-        mock_instance.earnings = mock_a_earnings_df
+        mock_instance.quarterly_income_stmt = mock_q_income_stmt_df
+        mock_instance.income_stmt = mock_a_income_stmt_df
 
 
         # --- Act ---
@@ -130,7 +130,8 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         # --- Arrange ---
         # Mock a successful response from the new yfinance helper
         mock_fetch_yf.return_value = {
-            'quarterly': [{'date': '2023-09-30', 'Revenue': 1200, 'Net Income': 120, 'Earnings': 1.2}]
+            'ticker': 'AAPL',
+            'quarterly_earnings': [{'date': '2023-09-30', 'Revenue': 1200, 'Net Income': 120, 'Earnings': 1.2}]
         }
 
         # --- Act ---

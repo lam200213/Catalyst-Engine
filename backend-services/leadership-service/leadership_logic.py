@@ -1,6 +1,10 @@
 import logging
 import pandas as pd
 from datetime import datetime
+import json
+
+# Get a logger that's a child of the app.logger, so it inherits the file handler
+logger = logging.getLogger('app.logic')
 
 # Constants for market cap ranges (in USD)
 MIN_MARKET_CAP = 300_000_000      # $300M
@@ -37,19 +41,40 @@ def _find_market_turning_point(market_trends_data):
     Returns:
         str or None: The date string ('YYYY-MM-DD') of the turning point, or None if not found.
     """
+    # --- Start of Debug Logging ---
+    logger.info("--- Debugging _find_market_turning_point ---")
+    logger.info(f"Received {len(market_trends_data)} days of market trend data.")
+    # Log the full dataset for analysis. Use json.dumps for readability.
+    if market_trends_data:
+        logger.info("Full market_trends_data received:\n" + json.dumps(market_trends_data, indent=2))
+    # --- End of Debug Logging ---
+
     if len(market_trends_data) < 3:
+        logger.warning("Not enough trend data to find a turning point (requires >= 3 days).")
         return None
 
     # Iterate backwards from the most recent day to find the pattern.
     for i in range(len(market_trends_data) - 1, 1, -1):
-        current_day_trend = market_trends_data[i].get('trend')
-        previous_day_trend = market_trends_data[i-1].get('trend')
+        current_day = market_trends_data[i]
+        previous_day = market_trends_data[i-1]
+        
+        current_day_trend = current_day.get('trend')
+        previous_day_trend = previous_day.get('trend')
+
+        # Log each iteration
+        logger.info(
+            f"Checking index {i} (Date: {current_day.get('date')}): "
+            f"Current Trend='{current_day_trend}', Previous Trend='{previous_day_trend}'"
+        )
 
         # Step 1: Find the first 'Bullish' day. This is our potential turning point.
         if current_day_trend == 'Bullish':
             
             # Step 2: Check if the day before was NOT Bullish. This ensures it's the *start* of a new bullish phase.
             if previous_day_trend in ['Bearish', 'Neutral']:
+                # Log when a potential turning point is found
+                logger.info(f"  > Potential turning point found at {current_day.get('date')}. "
+                            f"Pattern: {previous_day_trend} -> {current_day_trend}.")
                 
                 # Step 3: Scan further back to confirm this bullish day was preceded by a bearish period.
                 # This ensures we are coming out of a downturn.
@@ -57,44 +82,71 @@ def _find_market_turning_point(market_trends_data):
                     if market_trends_data[j].get('trend') == 'Bearish':
                         # Confirmation! We found a 'Bullish' day that follows a period
                         # of 'Neutral' or 'Bearish' days, which itself came after a 'Bearish' trend.
-                        return market_trends_data[i].get('date')
+                        found_date = market_trends_data[i].get('date')
+                        logger.info(f"    >> CONFIRMED: Preceding 'Bearish' trend found on {market_trends_data[j].get('date')}. "
+                                    f"Returning turning point date: {found_date}")
+                        logger.info("--- End of _find_market_turning_point Debug ---")
+                        return found_date
+
+                # Log if the confirmation fails
+                logger.warning(f"  > FAILED CONFIRMATION for {current_day.get('date')}: "
+                               f"No preceding 'Bearish' trend was found in the lookback window.")
 
     # If the loop completes without finding the full pattern, no turning point is confirmed.
+    logger.info("No confirmed turning point found in the provided data.")
+    logger.info("--- End of _find_market_turning_point Debug ---")
     return None
 
 def _check_new_high_in_window(stock_data, window_days, start_date_str=None):
     """
-    Checks if a stock made a new 52-week high within a given time window.
+    Checks if a stock made a new high within a given time window compared to its preceding history.
+    This version is robust and does not require a fixed 252-day lookback.
     """
-    if len(stock_data) < 252 + window_days:
+    logger.info("--- Inside _check_new_high_in_window (Robust Version) ---")
+    
+    # We need at least enough data for the window plus one preceding day to compare against.
+    if len(stock_data) < window_days + 1:
+        logger.warning(f"Insufficient data: Found {len(stock_data)} days, need at least {window_days + 1}. Returning False.")
         return False
 
     df = pd.DataFrame(stock_data)
     df['date'] = pd.to_datetime(df['formatted_date'])
+    logger.info(f"DataFrame created with {len(df)} rows. Date range: {df['date'].min().strftime('%Y-%m-%d')} to {df['date'].max().strftime('%Y-%m-%d')}")
 
     if start_date_str:
+        # This logic path remains for specific date-bound checks like 'Recovery Phase'
         start_date = pd.to_datetime(start_date_str)
         end_date = start_date + pd.Timedelta(days=window_days - 1)
         window_df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-        pre_window_end_date = start_date - pd.Timedelta(days=1)
+        pre_window_df = df[df['date'] < start_date]
+        logger.info(f"Evaluating specific window: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     else:
+        # Simplified logic for 'Bullish' context: Compare the last N days to all prior history.
         window_df = df.tail(window_days)
-        if window_df.empty: return False
-        pre_window_end_date = window_df['date'].iloc[0] - pd.Timedelta(days=1)
+        pre_window_df = df.iloc[:-window_days]
+        logger.info(f"Evaluating last {window_days} trading days against preceding history.")
 
-    if window_df.empty:
+    if window_df.empty or pre_window_df.empty:
+        logger.warning(f"Could not create valid analysis windows. Window empty: {window_df.empty}, Pre-window empty: {pre_window_df.empty}. Returning False.")
         return False
 
-    one_year_prior = pre_window_end_date - pd.Timedelta(days=365)
-    pre_window_df = df[(df['date'] >= one_year_prior) & (df['date'] <= pre_window_end_date)]
+    # The critical comparison
+    reference_high = pre_window_df['high'].max()
+    max_high_in_window = window_df['high'].max()
     
-    if pre_window_df.empty:
-        return False
+    logger.info(f"Analysis window starts: {window_df['date'].iloc[0].strftime('%Y-%m-%d')}")
+    logger.info(f"Analysis window ends: {window_df['date'].iloc[-1].strftime('%Y-%m-%d')}")
+    logger.info(f"Reference period ends: {pre_window_df['date'].iloc[-1].strftime('%Y-%m-%d')}")
 
-    reference_52w_high = pre_window_df['high'].max()
-    new_high_made = window_df['high'].max() > reference_52w_high
+    logger.info(f"CRITICAL CHECK: Max high in recent window = {max_high_in_window}")
+    logger.info(f"CRITICAL CHECK: Reference high from preceding period = {reference_high}")
+
+    new_high_made = max_high_in_window > reference_high
     
-    return new_high_made
+    logger.info(f"FINAL COMPARISON: {max_high_in_window} > {reference_high} is {new_high_made}")
+    logger.info("--- Exiting _check_new_high_in_window ---")
+    
+    return bool(new_high_made)
 
 def check_is_small_to_mid_cap(financial_data, details):
     """

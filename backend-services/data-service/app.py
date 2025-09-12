@@ -1,5 +1,6 @@
 # data-service/app.py
 import os
+import pandas as pd
 from flask import Flask, request, jsonify
 from datetime import date, datetime, timedelta, timezone
 from pymongo import MongoClient
@@ -431,54 +432,90 @@ def get_industry_peers(ticker: str):
 @app.route('/market-trend/calculate', methods=['POST'])
 def calculate_market_trend():
     """
-    On-demand endpoint to calculate, store, and return market trend for specific dates.
+    On-demand endpoint to correctly calculate, store, and return market trend for specific historical dates.
     """
     payload = request.get_json()
     if not payload or 'dates' not in payload or not isinstance(payload['dates'], list):
         return jsonify({"error": "Invalid payload. 'dates' list is required."}), 400
 
-    dates_to_process = payload['dates']
-    calculated_trends = []
-    
-    # Fetch data for all three major indices in one go
-    indices = ['^GSPC', '^DJI', '^IXIC']
-    index_financial_data = {}
-    for index in indices:
-        # This reuses the existing endpoint and its caching
-        data = yfinance_provider.get_core_financials(index)
-        if not data:
-             return jsonify({"error": f"Could not fetch required index data for {index}"}), 503
-        index_financial_data[index] = data
+    dates_to_process = sorted(list(set(payload['dates']))) # Unique and sorted
+    if not dates_to_process:
+        return jsonify({"trends": []}), 200
 
-    for date_str in dates_to_process:
-        details = {}
-        # The logic function modifies the 'details' dict in place
-        check_market_trend_context(index_financial_data, details)
-        trend_result = details.get('market_trend_context')
-        
-        if trend_result:
-            document = {
-                "date": date_str,
-                "trend": trend_result.get("trend"),
-                "pass": trend_result.get("pass"),
-                "details": trend_result.get("index_trends"),
-                "createdAt": datetime.now(timezone.utc)
-            }
-            try:
-                # Upsert to avoid duplicates and handle race conditions
-                market_trends.update_one(
-                    {'date': date_str},
-                    {'$set': document},
-                    upsert=True
-                )
-                calculated_trends.append(document)
-            except PyMongoError as e:
-                app.logger.error(f"Failed to store market trend for {date_str}: {e}")
-                # Continue to next date
-        else:
-            app.logger.warning(f"Could not calculate market trend for date {date_str}")
+    calculated_trends = []
+    failed_dates = []
     
-    return jsonify({"trends": calculated_trends}), 200
+    indices = ['^GSPC', '^DJI', '^IXIC']
+    
+    # --- 1. Fetch Sufficient Historical Data ---
+    # Fetch ~1.5 years of data to ensure 50-day SMA can be calculated for all dates.
+    start_date_for_fetch = (datetime.strptime(dates_to_process[0], '%Y-%m-%d') - timedelta(days=550)).strftime('%Y-%m-%d')
+    
+    # Use the batch price fetcher for efficiency.
+    batch_price_data = yfinance_provider.get_stock_data(indices, start_date=start_date_for_fetch)
+
+    if not all(idx in batch_price_data for idx in indices):
+        return jsonify({"error": "Failed to fetch historical data for one or more major indices."}), 503
+
+    # --- 2. Process Data with Pandas for Efficient Lookups ---
+    index_dfs = {}
+    for index in indices:
+        df = pd.DataFrame(batch_price_data[index])
+        df['formatted_date'] = pd.to_datetime(df['formatted_date'])
+        df.set_index('formatted_date', inplace=True)
+        # Calculate all required indicators for the entire series at once
+        df['sma_50'] = df['close'].rolling(window=50).mean()
+        df['sma_200'] = df['close'].rolling(window=200).mean()
+        df['high_52_week'] = df['high'].rolling(window=252).max()
+        df['low_52_week'] = df['low'].rolling(window=252).min()
+        index_dfs[index] = df
+
+    # --- 3. Iterate Through Requested Dates and Calculate Trend ---
+    for date_str in dates_to_process:
+        try:
+            target_date = pd.to_datetime(date_str)
+            index_data_for_date = {}
+
+            # For each index, get the price and pre-calculated indicators for the target date
+            for index in indices:
+                df = index_dfs[index]
+                # Use .loc to get data for the specific date
+                day_data = df.loc[target_date]
+                index_data_for_date[index] = {
+                    'current_price': day_data['close'],
+                    'sma_50': day_data['sma_50'],
+                    'sma_200': day_data['sma_200'],
+                    'high_52_week': day_data['high_52_week'],
+                    'low_52_week': day_data['low_52_week']
+                }
+
+            # Now call the trend logic function with correct historical data
+            details = {}
+            check_market_trend_context(index_data_for_date, details)
+            trend_result = details.get('market_trend_context')
+
+            if trend_result and trend_result.get('trend'):
+                document = {
+                    "date": date_str,
+                    "trend": trend_result.get("trend"),
+                    "pass": trend_result.get("pass"),
+                    "details": trend_result.get("index_trends"),
+                    "createdAt": datetime.now(timezone.utc)
+                }
+                market_trends.update_one({'date': date_str}, {'$set': document}, upsert=True)
+                calculated_trends.append(document)
+            else:
+                raise KeyError("Trend calculation failed.")
+
+        except (KeyError, IndexError) as e:
+            # This happens if the date is not a trading day (holiday) or data is missing
+            app.logger.warning(f"Could not calculate market trend for date {date_str}: No data available. Details: {e}")
+            failed_dates.append(date_str)
+        except Exception as e:
+            app.logger.error(f"An unexpected error occurred processing date {date_str}: {e}")
+            failed_dates.append(date_str)
+
+    return jsonify({"trends": calculated_trends, "failed_dates": failed_dates}), 200
 
 @app.route('/market-trends', methods=['GET'])
 def get_market_trends():

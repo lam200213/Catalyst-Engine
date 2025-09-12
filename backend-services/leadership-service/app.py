@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request
 import os
 import re # regex import for input validation
 import logging 
+from logging.handlers import RotatingFileHandler
 from leadership_logic import (
     check_accelerating_growth,
     check_yoy_eps_growth,
@@ -31,11 +32,38 @@ DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 5000))
 
 # --- Structured Logging Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+def setup_logging(app):
+    """Configures comprehensive logging for the Flask app."""
+    # Create a rotating file handler to prevent log files from growing too large
+    # It will create up to 5 backup files of 5MB each.
+    file_handler = RotatingFileHandler(
+        'leadership_analysis.log', 
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+
+    # Create a console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Define the log format
+    log_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(log_formatter)
+    console_handler.setFormatter(log_formatter)
+
+    # Add handlers to the app's logger
+    app.logger.addHandler(file_handler)
+    app.logger.addHandler(console_handler)
+    app.logger.setLevel(logging.INFO)
+    
+    # Prevent the root logger from handling messages again
+    app.logger.propagate = False
+
+setup_logging(app)
 # --- End of Logging Setup ---
 
 # helper function to perform leadership analysis

@@ -84,35 +84,145 @@ class TestMarketTrendEndpoints(unittest.TestCase):
     def tearDown(self):
         self.market_trends_patcher.stop()
 
-    @patch('app.yfinance_provider.get_core_financials')
-    def test_calculate_market_trend_success(self, mock_get_financials, mock_init_db):
+    def _generate_mock_price_data(self, base_date_str, num_days, final_price=None):
         """
-        Tests the on-demand calculation of market trends via POST /market-trend/calculate.
+        Helper to generate time-series data for mocking.
+        Optionally sets a specific price for the final day.
         """
-        # Arrange
-        dates_to_calc = ["2025-08-25", "2025-08-26"]
-        # Mock the financial data fetch for the indices
-        mock_get_financials.return_value = {
-            'current_price': 4500, 'sma_50': 4400, 'sma_200': 4200, 
-            'high_52_week': 4800, 'low_52_week': 4000
+        base_date = datetime.strptime(base_date_str, '%Y-%m-%d')
+        data = []
+        for i in range(num_days):
+            price = 100 + i
+            if i == num_days - 1 and final_price is not None:
+                price = final_price
+            data.append({
+                'formatted_date': (base_date - timedelta(days=num_days - 1 - i)).strftime('%Y-%m-%d'),
+                'close': price,
+                'high': price + 2, # Mock high price
+                'low': price - 2   # Mock low price
+            })
+        return data
+
+
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_calculate_market_trend_success(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests the on-demand calculation of market trends, ensuring it correctly
+        processes historical data to determine the trend.
+        """
+        # --- Arrange ---
+        calc_date = "2025-08-25"
+        # Generate 300 days of data to safely accommodate 200-day SMA and 252-day (52-week) rolling windows.
+        mock_history = self._generate_mock_price_data(calc_date, 300)
+        
+        # The provider returns data for all 3 indices
+        mock_get_stock_data.return_value = {
+            '^GSPC': mock_history,
+            '^DJI': mock_history,
+            '^IXIC': mock_history,
         }
         
-        # Act
-        response = self.app.post('/market-trend/calculate', json={'dates': dates_to_calc})
+        # --- Act ---
+        response = self.app.post('/market-trend/calculate', json={'dates': [calc_date]})
         
-        # Assert
+        # --- Assert ---
         self.assertEqual(response.status_code, 200)
         data = response.json
-        self.assertEqual(len(data['trends']), 2)
-        self.assertEqual(data['trends'][0]['date'], "2025-08-25")
-        self.assertIn('trend', data['trends'][0]) # e.g., 'Bullish'
+        self.assertEqual(len(data['trends']), 1)
+        self.assertEqual(data['trends'][0]['date'], calc_date)
+        # All indices are above their 50-day SMA in this mock data
+        self.assertEqual(data['trends'][0]['trend'], 'Bullish') 
         
         # Verify it was stored in the database via upsert
-        self.assertEqual(self.mock_market_trends.update_one.call_count, 2)
-        # Check one of the calls to ensure the data is structured correctly for MongoDB
-        first_call_args, _ = self.mock_market_trends.update_one.call_args_list[0]
-        self.assertEqual(first_call_args[0], {'date': '2025-08-25'}) # The query filter
-        self.assertIn('trend', first_call_args[1]['$set']) # The update document
+        self.mock_market_trends.update_one.assert_called_once()
+        call_args, _ = self.mock_market_trends.update_one.call_args
+        self.assertEqual(call_args[0], {'date': calc_date}) # The query filter
+        self.assertIn('trend', call_args[1]['$set']) # The update document
+        
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_calculate_market_trend_bearish_scenario(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests that the endpoint correctly identifies a Bearish trend when the
+        current price is below the 50-day SMA.
+        """
+        # --- Arrange ---
+        calc_date = "2025-08-25"
+        # Generate 300 days of data. Historical prices are high, SMA will be high. Final price is 50.
+        mock_history = self._generate_mock_price_data(calc_date, 300, final_price=50)
+
+        mock_get_stock_data.return_value = {
+            '^GSPC': mock_history,
+            '^DJI': mock_history,
+            '^IXIC': mock_history,
+        }
+        
+        # --- Act ---
+        response = self.app.post('/market-trend/calculate', json={'dates': [calc_date]})
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        data = response.json
+        self.assertIn('trends', data)
+        self.assertEqual(len(data['trends']), 1)
+        self.assertEqual(data['trends'][0]['date'], calc_date)
+        # With the final price well below the historical average, the trend should be Bearish.
+        self.assertEqual(data['trends'][0]['trend'], 'Bearish')
+
+    @patch('app.yfinance_provider.get_stock_data')
+    def test_calculate_market_trend_handles_non_trading_day(self, mock_get_stock_data, mock_init_db):
+        """
+        Tests that the endpoint gracefully handles a date for which no price data
+        is available (e.g., a weekend or holiday).
+        """
+        # --- Arrange ---
+        trading_day = "2025-08-25"
+        non_trading_day = "2025-08-24" # Assume this is a Sunday
+        
+        # Generate sufficient historical data for calculations on the trading day.
+        mock_history = self._generate_mock_price_data(trading_day, 300)
+        # Explicitly remove the non-trading day from the mock history to ensure it's not found.
+        mock_history_filtered = [d for d in mock_history if d['formatted_date'] != non_trading_day]
+        
+        mock_get_stock_data.return_value = {
+            '^GSPC': mock_history_filtered,
+            '^DJI': mock_history_filtered,
+            '^IXIC': mock_history_filtered,
+        }
+        
+        # --- Act ---
+        # Request both a valid and an invalid date
+        response = self.app.post('/market-trend/calculate', json={'dates': [trading_day, non_trading_day]})
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        data = response.json
+        
+        # One date should succeed
+        self.assertEqual(len(data['trends']), 1)
+        self.assertEqual(data['trends'][0]['date'], trading_day)
+        
+        # The non-trading day should be in the failed list
+        self.assertEqual(len(data['failed_dates']), 1)
+        self.assertIn(non_trading_day, data['failed_dates'])
+        
+        # Ensure the database was still updated for the successful date
+        self.mock_market_trends.update_one.assert_called_once()
+
+    def test_calculate_market_trend_invalid_payload(self, mock_init_db):
+        """
+        Tests that the endpoint returns a 400 Bad Request for various invalid payloads.
+        """
+        invalid_payloads = [
+            {},                     # Empty payload
+            {"dates": "not-a-list"}, # 'dates' is not a list
+            {"wrong_key": []}       # Missing 'dates' key
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                response = self.app.post('/market-trend/calculate', json=payload)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn('error', response.json)
 
     def test_get_market_trends_with_range(self, mock_init_db):
         """
@@ -123,9 +233,13 @@ class TestMarketTrendEndpoints(unittest.TestCase):
             {"date": "2025-08-25", "trend": "Bullish"},
             {"date": "2025-08-26", "trend": "Neutral"}
         ]
-        # Simulate the find query returning a cursor
+        # Simulate the find query returning a cursor. The endpoint implementation
+        # now rebuilds the list, so we must mock the cursor's return value.
         mock_cursor = MagicMock()
-        mock_cursor.sort.return_value = mock_trend_data
+        mock_cursor.sort.return_value = [
+            {"date": "2025-08-25", "trend": "Bullish", "details": {}}, # Mock full document
+            {"date": "2025-08-26", "trend": "Neutral", "details": {}}
+        ]
         self.mock_market_trends.find.return_value = mock_cursor
 
         # Act

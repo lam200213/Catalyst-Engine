@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-09-10
-Refactored the evaluate_market_trend_impact() in leadership-service, and redefining recovery_phase by pinpointing market turning point; Simpifiy the checking of criteria; Edited fetch_market_trends() to fetch trends in customized days. 
+2025-09-12
+Debugged _check_new_high_in_window() on unable to track new 52 week high; Debugging on data-service test files.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
