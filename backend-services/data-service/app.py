@@ -9,7 +9,7 @@ from pymongo.errors import OperationFailure, PyMongoError
 import re
 from concurrent.futures import ThreadPoolExecutor
 import logging
-from logging.handlers import RotatingFileHandler
+# from logging.handlers import RotatingFileHandler
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -319,8 +319,16 @@ def get_data(ticker: str):
 
     data = None
     if source == 'yfinance':
+        # If no new_start_date is given, default to a 1-year data range.
+        # This is used for initial data population or full cache refreshes.
+        # Otherwise, an incremental fetch is performed using start_date.
+        period_to_fetch = "1y" if not new_start_date else None
         # yfinance supports incremental fetching via the `start_date` parameter.
-        data = yfinance_provider.get_stock_data(ticker, start_date=new_start_date)
+        data = yfinance_provider.get_stock_data(
+            ticker, 
+            start_date=new_start_date, 
+            period=period_to_fetch
+        )
     elif source == 'finnhub':
         # Finnhub provider currently only supports full fetches.
         data = finnhub_provider.get_stock_data(ticker)

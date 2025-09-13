@@ -42,7 +42,7 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         expected_sanitized_ticker = 'BRK-A'
 
         # --- Act ---
-        yfinance_provider._get_single_ticker_data(dirty_ticker)
+        yfinance_provider._get_single_ticker_data(dirty_ticker, period="1y")
 
         # --- Assert ---
         # Verify that the request method was called

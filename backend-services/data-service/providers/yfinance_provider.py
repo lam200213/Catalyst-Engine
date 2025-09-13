@@ -116,7 +116,7 @@ def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
         print(f"Error transforming Yahoo Finance data for {ticker}: {e}")
         return None
 
-def get_stock_data(tickers: str | list[str], start_date: dt.date = None) -> dict | list | None:
+def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None) -> dict | list | None:
     """
     Fetches historical stock data from Yahoo Finance using curl_cffi
     and formats it into the application's standard list-of-dictionaries format.
@@ -124,20 +124,20 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None) -> dict
     Handles both single ticker (str) and multiple tickers (list).
     """
     if isinstance(tickers, str):
-        return _get_single_ticker_data(tickers, start_date)
+        return _get_single_ticker_data(tickers, start_date, period)
 
     if isinstance(tickers, list):
         results = {}
         for ticker in tickers:
             # Note: start_date is ignored for batch requests for simplicity.
             # Each ticker is fetched individually.
-            results[ticker] = _get_single_ticker_data(ticker, start_date=None)
+            results[ticker] = _get_single_ticker_data(ticker, start_date=None, period=period)
         return results
 
     # Invalid input type
     return None
 
-def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | None:
+def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str = None) -> list | None:
     """
     Fetches historical stock data for a single ticker from Yahoo Finance.
     """
@@ -154,17 +154,20 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None) -> list | N
 
     # --- Date Range Logic ---
     # This section determines the appropriate Yahoo Finance API URL based on whether
-    # a `start_date` is provided. This supports incremental data fetching.
+    # a `start_date` for an incremental fetch or a period (e.g., "1y") is provided. This supports incremental data fetching.
     if start_date:
         # If a start_date is provided, construct a URL with a specific date range.
         # `period1` is the start timestamp, `period2` is the current time.
         start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
         end_ts = int(time.time())
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?period1={start_ts}&period2={end_ts}&interval=1d&crumb={crumb}"
+    elif period:
+        # If a period is provided, use the 'range' parameter.
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?range={period}&interval=1d&crumb={crumb}"
     else:
-        # If no start_date is given, default to a 1-year data range.
-        # This is used for initial data population or full cache refreshes.
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?range=1y&interval=1d&crumb={crumb}"
+        # Enforce explicit control from the calling service.
+        raise ValueError("Either start_date or period must be provided to fetch stock data.")
+
 
     headers = {'User-Agent': _get_random_user_agent()}
     proxy = _get_random_proxy()

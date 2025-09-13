@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-13
-Modified leadership_logic.py to show the exact date a stock reached its 52-week high; 
+Refactored data-service to move the control over the data retrieval duration from the provider layer to the service layer (app.py), with updated corresponding test cases.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

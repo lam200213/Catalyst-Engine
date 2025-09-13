@@ -294,7 +294,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
 
         # Assert: The provider was called with the day AFTER the last cached date
         expected_start_date = last_cached_date_obj + timedelta(days=1)
-        mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date)
+        mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date, period=None)
         # Assert that the existing cache record was updated, not a new one inserted
         self.mock_price_cache.update_one.assert_called_once()
     
@@ -338,7 +338,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json, {"error": f"Could not retrieve price data for {ticker} from yfinance."})
-        mock_get_stock_data.assert_called_once_with(ticker, start_date=None)
+        mock_get_stock_data.assert_called_once_with(ticker, start_date=None, period="1y")
 
     def test_clear_cache_endpoint(self, mock_init_db):
         """Tests that the POST /cache/clear endpoint works."""
