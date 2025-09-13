@@ -82,6 +82,6 @@ dev-debug.log
 # tasks.json
 # tasks/ 
 
-#debug
+# debug
+response-collection/
 json-yfinance_provider.py
-response.json

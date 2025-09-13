@@ -2,6 +2,7 @@ Flask
 Flask-PyMongo
 numpy
 pandas
+pandas_market_calendars
 requests
 pymongo
 PyMongo[srv]

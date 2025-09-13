@@ -1,6 +1,9 @@
 # data-service/helper_functions.py
 import logging
 
+# Use a specific logger to capture calculation details
+calc_logger = logging.getLogger('app.calculation')
+
 # A consistent structure for failure responses
 def failed_check(metric, message, **kwargs):
     # Log the technical failure for developers
@@ -42,6 +45,9 @@ def check_market_trend_context(index_data, details):
             high_52_week = index_info.get('high_52_week')
             low_52_week = index_info.get('low_52_week')
             
+            # Detailed logging for debugging
+            # calc_logger.info(f"Market Context Check for {index}: Price={current_price}, SMA50={sma_50}")
+
             # Validate required data is present
             if any(value is None for value in [current_price, sma_50, sma_200, high_52_week, low_52_week]):
                 details.update(failed_check(metric_key, f"Missing technical indicators for index {index}."))

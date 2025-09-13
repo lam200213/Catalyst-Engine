@@ -3,10 +3,13 @@ import os
 import pandas as pd
 from flask import Flask, request, jsonify
 from datetime import date, datetime, timedelta, timezone
+import pandas_market_calendars as mcal
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError
 import re
 from concurrent.futures import ThreadPoolExecutor
+import logging
+from logging.handlers import RotatingFileHandler
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
@@ -15,6 +18,30 @@ from helper_functions import check_market_trend_context
 
 app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 3001))
+
+# --- Structured Logging Setup ---
+def setup_logging(app_instance):
+    """Configures comprehensive logging for the Flask app."""
+    # Get the top-level logger for the 'app' namespace
+    app_logger = logging.getLogger('app')
+
+    # Do not add handlers if they already exist
+    if not app_logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+
+        log_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        console_handler.setFormatter(log_formatter)
+
+        app_logger.addHandler(console_handler)
+        app_logger.setLevel(logging.INFO)
+
+# Call the setup function when the app is initialized
+setup_logging(app)
+# --- End of Logging Setup ---
 
 # Global variables for MongoDB client and collections
 client = None
@@ -391,6 +418,10 @@ def clear_cache():
         if industry_cache is not None:
             industry_cache.drop()
             print("DATA-SERVICE: Dropped industry_cache collection.")
+        if market_trends is not None:
+            market_trends.drop()
+            print("DATA-SERVICE: Dropped market_trends collection.")
+            
         
         # Re-initialize the collections and their TTL indexes
         init_db()
@@ -438,12 +469,25 @@ def calculate_market_trend():
     if not payload or 'dates' not in payload or not isinstance(payload['dates'], list):
         return jsonify({"error": "Invalid payload. 'dates' list is required."}), 400
 
-    dates_to_process = sorted(list(set(payload['dates']))) # Unique and sorted
-    if not dates_to_process:
-        return jsonify({"trends": []}), 200
+    raw_dates = sorted(list(set(payload['dates']))) # Unique and sorted
+    if not raw_dates:
+        return jsonify({"trends": [], "failed_dates": []}), 200
+
+    # Use a market calendar to get only valid trading days
+    nyse = mcal.get_calendar('NYSE')
+    start_date_for_calendar = raw_dates[0]
+    end_date_for_calendar = raw_dates[-1]
+    schedule = nyse.schedule(start_date=start_date_for_calendar, end_date=end_date_for_calendar)
+    
+    # Filter the requested dates to only include valid market open days
+    valid_trading_dates_set = set(schedule.index.strftime('%Y-%m-%d'))
+    dates_to_process = [d for d in raw_dates if d in valid_trading_dates_set]
+    
+    # Identify non-trading days to report back as "failed" upfront
+    non_trading_days = [d for d in raw_dates if d not in valid_trading_dates_set]
 
     calculated_trends = []
-    failed_dates = []
+    failed_dates = non_trading_days
     
     indices = ['^GSPC', '^DJI', '^IXIC']
     
@@ -494,7 +538,8 @@ def calculate_market_trend():
             check_market_trend_context(index_data_for_date, details)
             trend_result = details.get('market_trend_context')
 
-            if trend_result and trend_result.get('trend'):
+             # Data Integrity Check - Only store valid, non-null results
+            if trend_result and trend_result.get('trend') is not None:
                 document = {
                     "date": date_str,
                     "trend": trend_result.get("trend"),
@@ -505,10 +550,11 @@ def calculate_market_trend():
                 market_trends.update_one({'date': date_str}, {'$set': document}, upsert=True)
                 calculated_trends.append(document)
             else:
-                raise KeyError("Trend calculation failed.")
+                # If trend calculation returns None or fails, log it as a failure.
+                raise KeyError("Trend calculation resulted in a null or invalid value.")
 
         except (KeyError, IndexError) as e:
-            # This happens if the date is not a trading day (holiday) or data is missing
+            # This happens if the date is a trading day but data is still missing from provider
             app.logger.warning(f"Could not calculate market trend for date {date_str}: No data available. Details: {e}")
             failed_dates.append(date_str)
         except Exception as e:

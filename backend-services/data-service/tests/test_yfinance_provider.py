@@ -24,6 +24,7 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         # --- Arrange ---
         # Mock the session to return a valid JSON structure to avoid unrelated errors.
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             'chart': {
                 'result': [{

@@ -44,20 +44,24 @@ def _find_market_turning_point(market_trends_data):
     # --- Start of Debug Logging ---
     logger.info("--- Debugging _find_market_turning_point ---")
     logger.info(f"Received {len(market_trends_data)} days of market trend data.")
-    # Log the full dataset for analysis. Use json.dumps for readability.
-    if market_trends_data:
-        logger.info("Full market_trends_data received:\n" + json.dumps(market_trends_data, indent=2))
     # --- End of Debug Logging ---
 
-    if len(market_trends_data) < 3:
-        logger.warning("Not enough trend data to find a turning point (requires >= 3 days).")
+    # Filter out any entries with a null or missing trend value for robust processing.
+    valid_trends = [d for d in market_trends_data if d and d.get('trend')]
+    if len(valid_trends) < 3:
+        logger.warning(f"Not enough valid trend data to find a turning point (requires >= 3). Found {len(valid_trends)} valid entries.")
         return None
+    
+    # --- Start of Debug Logging ---
+    # Log the filtered data
+    logger.info("Filtered market_trends_data for valid trends:\n" + json.dumps(valid_trends, indent=2))
+    # --- End of Debug Logging ---
 
-    # Iterate backwards from the most recent day to find the pattern.
-    for i in range(len(market_trends_data) - 1, 1, -1):
-        current_day = market_trends_data[i]
-        previous_day = market_trends_data[i-1]
-        
+    # Iterate backwards from the most recent day to find the pattern using the cleaned data.
+    for i in range(len(valid_trends) - 1, 0, -1):
+        current_day = valid_trends[i]
+        previous_day = valid_trends[i-1] # The previous *valid* day
+
         current_day_trend = current_day.get('trend')
         previous_day_trend = previous_day.get('trend')
 
@@ -79,11 +83,11 @@ def _find_market_turning_point(market_trends_data):
                 # Step 3: Scan further back to confirm this bullish day was preceded by a bearish period.
                 # This ensures we are coming out of a downturn.
                 for j in range(i - 1, -1, -1):
-                    if market_trends_data[j].get('trend') == 'Bearish':
+                    if valid_trends[j].get('trend') == 'Bearish':
                         # Confirmation! We found a 'Bullish' day that follows a period
                         # of 'Neutral' or 'Bearish' days, which itself came after a 'Bearish' trend.
-                        found_date = market_trends_data[i].get('date')
-                        logger.info(f"    >> CONFIRMED: Preceding 'Bearish' trend found on {market_trends_data[j].get('date')}. "
+                        found_date = valid_trends[i].get('date')
+                        logger.info(f"    >> CONFIRMED: Preceding 'Bearish' trend found on {valid_trends[j].get('date')}. "
                                     f"Returning turning point date: {found_date}")
                         logger.info("--- End of _find_market_turning_point Debug ---")
                         return found_date
@@ -636,7 +640,7 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
             if turning_point_date:
                 new_high_in_20d_after_turn = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
 
-                message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
+                message = (f"When market was in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
                         f"a new 52-week high within 20 days of the turning point.")
                 sub_results['new_52_week_high_after_turn'] = {
                     "pass": is_pass,
