@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-13
-Debugged the issue of unable to track market_turning_point, by refactoring the logic: pre-filters the requested dates to only include valid NYSE trading days at /market-trend/calculate; skipping over any null data points (gaps) without failing at _find_market_turning_point(); updated cache clearing.
+Modified leadership_logic.py to show the exact date a stock reached its 52-week high; 
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

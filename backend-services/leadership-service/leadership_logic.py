@@ -42,8 +42,8 @@ def _find_market_turning_point(market_trends_data):
         str or None: The date string ('YYYY-MM-DD') of the turning point, or None if not found.
     """
     # --- Start of Debug Logging ---
-    logger.info("--- Debugging _find_market_turning_point ---")
-    logger.info(f"Received {len(market_trends_data)} days of market trend data.")
+    # logger.info("--- Debugging _find_market_turning_point ---")
+    # logger.info(f"Received {len(market_trends_data)} days of market trend data.")
     # --- End of Debug Logging ---
 
     # Filter out any entries with a null or missing trend value for robust processing.
@@ -54,7 +54,7 @@ def _find_market_turning_point(market_trends_data):
     
     # --- Start of Debug Logging ---
     # Log the filtered data
-    logger.info("Filtered market_trends_data for valid trends:\n" + json.dumps(valid_trends, indent=2))
+    # logger.info("Filtered market_trends_data for valid trends:\n" + json.dumps(valid_trends, indent=2))
     # --- End of Debug Logging ---
 
     # Iterate backwards from the most recent day to find the pattern using the cleaned data.
@@ -66,10 +66,10 @@ def _find_market_turning_point(market_trends_data):
         previous_day_trend = previous_day.get('trend')
 
         # Log each iteration
-        logger.info(
-            f"Checking index {i} (Date: {current_day.get('date')}): "
-            f"Current Trend='{current_day_trend}', Previous Trend='{previous_day_trend}'"
-        )
+        # logger.info(
+        #     f"Checking index {i} (Date: {current_day.get('date')}): "
+        #     f"Current Trend='{current_day_trend}', Previous Trend='{previous_day_trend}'"
+        # )
 
         # Step 1: Find the first 'Bullish' day. This is our potential turning point.
         if current_day_trend == 'Bullish':
@@ -77,8 +77,8 @@ def _find_market_turning_point(market_trends_data):
             # Step 2: Check if the day before was NOT Bullish. This ensures it's the *start* of a new bullish phase.
             if previous_day_trend in ['Bearish', 'Neutral']:
                 # Log when a potential turning point is found
-                logger.info(f"  > Potential turning point found at {current_day.get('date')}. "
-                            f"Pattern: {previous_day_trend} -> {current_day_trend}.")
+                # logger.info(f"  > Potential turning point found at {current_day.get('date')}. "
+                #             f"Pattern: {previous_day_trend} -> {current_day_trend}.")
                 
                 # Step 3: Scan further back to confirm this bullish day was preceded by a bearish period.
                 # This ensures we are coming out of a downturn.
@@ -146,11 +146,16 @@ def _check_new_high_in_window(stock_data, window_days, start_date_str=None):
     logger.info(f"CRITICAL CHECK: Reference high from preceding period = {reference_high}")
 
     new_high_made = max_high_in_window > reference_high
+
+    date_of_high = None
+    if new_high_made:
+        # Find the date of the highest high in the window
+        date_of_high = window_df.loc[window_df['high'].idxmax()]['date'].strftime('%Y-%m-%d')
     
     logger.info(f"FINAL COMPARISON: {max_high_in_window} > {reference_high} is {new_high_made}")
     logger.info("--- Exiting _check_new_high_in_window ---")
     
-    return bool(new_high_made)
+    return bool(new_high_made), date_of_high
 
 def check_is_small_to_mid_cap(financial_data, details):
     """
@@ -647,13 +652,14 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
                     "message": message
                 }
 
-            new_high_in_last_20d = _check_new_high_in_window(stock_data, 20)
+            new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20)
             is_pass = new_high_in_last_20d
 
             message = (f"Stock {'showed' if is_pass else 'did not show'} "
-                       f"recent strength by making a new 52-week high in the last 20 days.")
+                       f"recent strength by making a new 52-week high in the last 20 days, {high_date}.")
             sub_results['new_high_last_20d'] = {
                 "pass": new_high_in_last_20d,
+                "high_date": high_date,
                 "message": message
             }
 
