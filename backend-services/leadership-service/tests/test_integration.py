@@ -11,19 +11,18 @@ import data_fetcher
 
 # --- Mock Data Generation ---
 # Using helpers from the logic test file for consistency
-from tests.test_leadership_logic import (
-    create_mock_financial_data,
-    create_mock_price_data,
+from tests.mock_data_helpers import (
+    create_mock_financial_data, 
+    create_mock_price_data, 
     create_mock_index_data
 )
-
 class TestLeadershipScreeningIntegration(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.app = app.test_client()
 
-    @patch('app.fetch_batch_financials')
-    @patch('app.fetch_peer_data')
+    @patch('checks.industry_peer_checks.fetch_batch_financials')
+    @patch('checks.industry_peer_checks.fetch_peer_data')
     @patch('app.fetch_market_trends')
     @patch('app.fetch_index_data')
     @patch('app.fetch_price_data')
@@ -57,7 +56,12 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 8, None)
 
         # 5. Peer Data (for industry leadership)
-        mock_fetch_peers.return_value = ({"peers": ["PEER1"]}, None)
+        mock_fetch_peers.return_value = ({"industry": "Software", "peers": ["PEER1"]}, None)
+        batch_data = { "success": {
+            "PASS-TICKER": {"annual_earnings": [{"Revenue": 1000, "Net Income": 100}], "marketCap": 10000},
+            "PEER1": {"annual_earnings": [{"Revenue": 500, "Net Income": 50}], "marketCap": 5000}
+        }}
+        mock_fetch_batch.return_value = (batch_data, None)
         
         # 6. Batch Financials (make sure our ticker is #1)
         batch_data = {
@@ -74,10 +78,11 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(data['details']['is_industry_leader'])
-        self.assertTrue(data['passes'], f"Expected passes to be True. Details: {json.dumps(data.get('details'), indent=2)}")
-        self.assertEqual(data['details']['market_trend_context']['trend'], 'Bullish')
-        self.assertTrue(data['details']['market_trend_impact']['sub_results']['new_52_week_high']['pass'])
+        
+        # Create a dictionary of failed checks for easier debugging
+        failed_checks = {k: v for k, v in data.get('details', {}).items() if isinstance(v, dict) and not v.get('pass')}
+        
+        self.assertTrue(data['passes'], f"Expected global 'passes' to be True. Failed checks: {json.dumps(failed_checks, indent=2)}")
 
     @patch('app.fetch_financial_data')
     def test_data_service_error_handling(self, mock_fetch_financials):

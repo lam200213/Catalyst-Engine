@@ -230,8 +230,13 @@ def get_batch_data():
 
     if missed_tickers:
         if source == 'yfinance':
-            # The yfinance provider now supports batch fetching
-            fetched_data = yfinance_provider.get_stock_data(missed_tickers)
+            period_to_fetch = "1y"
+            fetched_data = yfinance_provider.get_stock_data(
+                missed_tickers, 
+                start_date=None, 
+                period=period_to_fetch
+            )
+
             if fetched_data:
                 for ticker, data in fetched_data.items():
                     if data:
@@ -501,7 +506,10 @@ def calculate_market_trend():
     
     # --- 1. Fetch Sufficient Historical Data ---
     # Fetch ~1.5 years of data to ensure 50-day SMA can be calculated for all dates.
-    start_date_for_fetch = (datetime.strptime(dates_to_process[0], '%Y-%m-%d') - timedelta(days=550)).strftime('%Y-%m-%d')
+    # Convert the first date string to a datetime object for calculation.
+    first_date_obj = datetime.strptime(dates_to_process[0], '%Y-%m-%d').date()
+    # Perform the date subtraction.
+    start_date_for_fetch = first_date_obj - timedelta(days=550)
     
     # Use the batch price fetcher for efficiency.
     batch_price_data = yfinance_provider.get_stock_data(indices, start_date=start_date_for_fetch)

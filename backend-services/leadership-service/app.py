@@ -5,24 +5,14 @@ import os
 import re # regex import for input validation
 import logging 
 from logging.handlers import RotatingFileHandler
-from leadership_logic import (
-    check_accelerating_growth,
-    check_yoy_eps_growth,
-    check_consecutive_quarterly_growth,
-    check_positive_recent_earnings,
-    check_is_small_to_mid_cap,
-    check_is_early_stage,
-    check_has_limited_float,
-    check_outperforms_in_rally,
-    evaluate_market_trend_impact,
-    check_industry_leadership
-)
+from checks import financial_health_checks
+from checks import market_relative_checks
+from checks import industry_peer_checks
+
 from data_fetcher import (
     fetch_financial_data,
     fetch_price_data,
     fetch_index_data,
-    fetch_peer_data,
-    fetch_batch_financials,
     fetch_market_trends
 )
 app = Flask(__name__)
@@ -107,68 +97,44 @@ def _analyze_ticker_leadership(ticker):
         app.logger.error(f"Failed to fetch market trends data: {error[0]}")
         return {'ticker': ticker, 'error': error[0], 'status': error[1]}
 
-    # --- Industry Peer Data Fetching ---
-    peers_data, error = fetch_peer_data(ticker)
-    if error:
-        app.logger.error(f"Failed to fetch peer data for {ticker}: {error[0]}")
-        return {'ticker': ticker, 'error': error[0], 'status': error[1]}
-
-    raw_peer_tickers = peers_data.get("peers", [])
-    if not raw_peer_tickers:
-        app.logger.warning(f"No peer data found for {ticker}")
-        # Proceeding without peer analysis is better than failing the whole request
-        batch_financial_data = {}
-    else:
-        peer_tickers = [t.strip().replace('/', '-') for t in raw_peer_tickers if t]
-        all_tickers = list(set(peer_tickers + [ticker]))
-        batch_financials, error = fetch_batch_financials(all_tickers)
-        if error:
-            app.logger.error(f"Failed to fetch batch financials: {error[0]}")
-            return {'ticker': ticker, 'error': error[0], 'status': error[1]}
-        # The 'success' key contains the dictionary of results
-        batch_financial_data = batch_financials.get("success", {})
-    # --- End of Industry Peer Data Fetching ---
-
     # Run all leadership checks
     results = {} # used to create a clean, top-level summary of the pass/fail status for "each" major criterion
     details = {} # used as a data aggregator to collect "all" the rich, detailed information from each individual check function.
     
     try:
-        check_is_small_to_mid_cap(financial_data, details)
+        financial_health_checks.check_is_small_to_mid_cap(financial_data, details)
         results['is_small_to_mid_cap'] = details.get('is_small_to_mid_cap', False)
         
-        check_is_early_stage(financial_data, details)
+        financial_health_checks.check_is_early_stage(financial_data, details)
         results['is_recent_ipo'] = details.get('is_recent_ipo', False)
         
-        check_has_limited_float(financial_data, details)
+        financial_health_checks.check_has_limited_float(financial_data, details)
         results['has_limited_float'] = details.get('has_limited_float', False)
         
-        check_accelerating_growth(financial_data, details)
+        financial_health_checks.check_accelerating_growth(financial_data, details)
         results['has_accelerating_growth'] = details.get('has_accelerating_growth', False)
         
-        check_yoy_eps_growth(financial_data, details)
+        financial_health_checks.check_yoy_eps_growth(financial_data, details)
         results['has_strong_yoy_eps_growth'] = details.get('has_strong_yoy_eps_growth', False)
         
-        check_consecutive_quarterly_growth(financial_data, details)
+        financial_health_checks.check_consecutive_quarterly_growth(financial_data, details)
         results['has_consecutive_quarterly_growth'] = details.get('has_consecutive_quarterly_growth', False)
         
-        check_positive_recent_earnings(financial_data, details)
+        financial_health_checks.check_positive_recent_earnings(financial_data, details)
         results['has_positive_recent_earnings'] = details.get('has_positive_recent_earnings', False)
         
-        check_outperforms_in_rally(stock_data, sp500_price_data, details)
+        market_relative_checks.check_outperforms_in_rally(stock_data, sp500_price_data, details)
         results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
         
-        check_industry_leadership(ticker, peers_data, batch_financial_data, details)
-        results['is_industry_leader'] = details.get('is_industry_leader', {"pass": False, "message": "Check failed to run."})
-        
-        evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
-
-        # The key 'market_trend_context' now holds a dictionary, so we extract the string trend from it.
+        market_relative_checks.evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
+        # The key 'market_trend_context' holds a dictionary, so we extract the string trend from it.
         results['market_trend_context'] = details.get('market_trend_context', {})
         # Assign the nested result to its own key, ie: shallow_decline, new_52_week_high, recent_breakout
         results['market_trend_impact'] = details.get('market_trend_impact', {})
         
-        
+        industry_peer_checks.get_and_check_industry_leadership(ticker, details)
+        results['is_industry_leader'] = details.get('is_industry_leader', {"pass": False, "message": "Check failed to run."})
+
         core_criteria = [
             'is_small_to_mid_cap', 'is_recent_ipo', 'has_limited_float',
             'has_accelerating_growth', 'has_strong_yoy_eps_growth',
@@ -281,12 +247,19 @@ def industry_rank_analysis(ticker):
     """
     if not ticker or not isinstance(ticker, str):
         return jsonify({'error': 'Invalid ticker parameter'}), 400
-    
-    result = check_industry_leadership(ticker)
-    
-    if "error" in result:
-        status_code = result.get("status_code", 500)
-        return jsonify({"error": result["error"]}), status_code
+    if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
+        return jsonify({'error': 'Invalid ticker format'}), 400
+
+    # Create a dictionary to hold the results for this specific request.
+    details = {}
+
+    industry_peer_checks.get_and_check_industry_leadership(ticker, details)
+    result = details.get('is_industry_leader')
+
+    if not result or result.get("pass") is None:
+        # This handles cases where the check failed internally (e.g., data fetching error)
+        return jsonify({"error": result.get("message", "Failed to perform industry analysis.")}), 500
+
     return jsonify(result), 200
 
 if __name__ == '__main__':

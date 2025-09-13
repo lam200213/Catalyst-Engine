@@ -129,9 +129,9 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period:
     if isinstance(tickers, list):
         results = {}
         for ticker in tickers:
-            # Note: start_date is ignored for batch requests for simplicity.
+            # Note: The `start_date` from the main call is passed down for each ticker in the batch.
             # Each ticker is fetched individually.
-            results[ticker] = _get_single_ticker_data(ticker, start_date=None, period=period)
+            results[ticker] = _get_single_ticker_data(ticker, start_date=start_date, period=period)
         return results
 
     # Invalid input type

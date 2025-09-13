@@ -85,3 +85,7 @@ dev-debug.log
 # debug
 response-collection/
 json-yfinance_provider.py
+
+
+
+yfin-temp.py

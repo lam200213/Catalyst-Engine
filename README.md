@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-13
-Refactored data-service to move the control over the data retrieval duration from the provider layer to the service layer (app.py), with updated corresponding test cases.
+Splitting leadership_logic.py into three more focused modules inside a new checks subdirectory, aligning to the Single Responsibility Principle; updated test files as well. Minor fix regarding to the previous data-service change.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

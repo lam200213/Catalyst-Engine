@@ -34,10 +34,15 @@
 │   ├── leadership-service/  # Python/Flask - Applies leadership criteria
 │   │   ├── tests/
 │   │   │   ├── test_integration.py
-│   │   │   └── test_leadership_logic.py
+│   │   │   ├── test_financial_health_checks.py
+│   │   │   ├── test_market_relative_checks.py
+│   │   │   ├── test_industry_peer_checks.py
 │   │   ├── app.py
+│   │   ├── checks/
+│   │   │   ├── financial_health_checks.py
+│   │   │   ├── market_relative_checks.py
+│   │   │   ├── industry_peer_checks.py
 │   │   ├── data_fetcher.py          # Service Client: Handles communication with data-service
-│   │   ├── leadership_logic.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
