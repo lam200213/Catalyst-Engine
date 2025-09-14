@@ -49,9 +49,6 @@ def create_mock_price_data(performance_factor, length=50, **kwargs):
         date_str = (datetime.now() - timedelta(days=length - 1 - i)).strftime('%Y-%m-%d')
         
         sp500_daily_change = 1.0005 # Base daily change
-        # Force a strong rally condition to ensure detection
-        if passing_flag and length - 40 <= i < length - 30:
-            sp500_daily_change = 1.015  # 1.5% daily increase for 10 days to trigger rally detection
 
         sp500_price *= sp500_daily_change
         

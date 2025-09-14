@@ -123,9 +123,6 @@ def _analyze_ticker_leadership(ticker):
         financial_health_checks.check_positive_recent_earnings(financial_data, details)
         results['has_positive_recent_earnings'] = details.get('has_positive_recent_earnings', False)
         
-        market_relative_checks.check_outperforms_in_rally(stock_data, sp500_price_data, details)
-        results['outperforms_in_rally'] = details.get('outperforms_in_rally', False)
-        
         market_relative_checks.evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
         # The key 'market_trend_context' holds a dictionary, so we extract the string trend from it.
         results['market_trend_context'] = details.get('market_trend_context', {})

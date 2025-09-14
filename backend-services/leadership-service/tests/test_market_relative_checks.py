@@ -11,16 +11,6 @@ from tests.mock_data_helpers import create_mock_price_data, create_mock_index_da
 
 class TestMarketRelativeChecks(unittest.TestCase):
 
-    def test_check_outperforms_in_rally(self):
-        details = {}
-        stock_pass, sp500_pass = create_mock_price_data(performance_factor=2.0, passing_data=True)
-        check_outperforms_in_rally(stock_pass, sp500_pass, details)
-        self.assertTrue(details['outperforms_in_rally']['pass'], details['outperforms_in_rally']['message'])
-        
-        stock_fail, sp500_fail = create_mock_price_data(performance_factor=0.5, passing_data=True)
-        check_outperforms_in_rally(stock_fail, sp500_fail, details)
-        self.assertFalse(details['outperforms_in_rally']['pass'])
-
     def test_evaluate_market_trend_impact(self):
         details = {}
         stock_data, _ = create_mock_price_data(1, length=300)

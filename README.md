@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-09-13
-Splitting leadership_logic.py into three more focused modules inside a new checks subdirectory, aligning to the Single Responsibility Principle; updated test files as well. Minor fix regarding to the previous data-service change.
+2025-09-14
+Remove check_outperforms_in_rally() in leadership-service (app.py, /check, test files) as its purpose overlapped with evaluate_market_trend_impact().
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

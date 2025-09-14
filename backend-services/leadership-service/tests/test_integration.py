@@ -37,7 +37,7 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         pass_financials = create_mock_financial_data(ipoDate='2022-01-01', passing_data=True) 
         mock_fetch_financials.return_value = (pass_financials, 200)
 
-        # 2. Price Data (for rally check and market impact)
+        # 2. Price Data (for market impact)
         # Use the 'passing_data=True' flag to ensure a rally is simulated.
         stock_prices, sp500_prices = create_mock_price_data(performance_factor=2.0, length=300, passing_data=True)
         stock_prices[-1]['close'] = max(d.get('high', 0) for d in stock_prices) + 1 # Ensure new 52w high  
