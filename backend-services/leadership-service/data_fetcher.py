@@ -6,6 +6,7 @@ from urllib3.util.retry import Retry
 from flask import Flask 
 import pandas as pd 
 from datetime import datetime, timedelta
+import pandas_market_calendars as mcal
 
 app = Flask(__name__)
 
@@ -102,12 +103,21 @@ def fetch_batch_financials(tickers):
     
 def get_last_n_workdays(n_days=8):
     """Calculates the last N US business days, starting with the oldest date and ending with the most recent one."""
-    today = datetime.now()
-    # Generate a date range of business days ending today
-    # We generate a few more days than needed to account for holidays
-    date_list = pd.bdate_range(end=today, periods=n_days + 5, freq='B') 
-    # Get the last n_days from this list and format them
-    return [d.strftime('%Y-%m-%d') for d in date_list][-n_days:]
+    nyse = mcal.get_calendar('NYSE')
+    # Anchor the calculation to yesterday to ensure the trading day has completed.
+    end_date = datetime.now().date() - timedelta(days=1)
+    
+    # Go back far enough to ensure we capture n_days even with holidays. A 10-day buffer is safe.
+    start_date = end_date - timedelta(days=n_days + 10) 
+    
+    # Get the schedule of valid trading days up to and including yesterday.
+    schedule = nyse.schedule(start_date=start_date, end_date=end_date)
+    
+    # The schedule's index contains the datetime objects of valid market days.
+    # We format them and take the last n_days from the list.
+    trading_days = schedule.index.strftime('%Y-%m-%d').tolist()
+    
+    return trading_days[-n_days:]
 
 def fetch_market_trends(n_days=8):
     """

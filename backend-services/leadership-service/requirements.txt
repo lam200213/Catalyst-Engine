@@ -2,6 +2,7 @@ Flask
 requests
 numpy
 pandas
+pandas_market_calendars
 requests
 pytest
 pytest-benchmark

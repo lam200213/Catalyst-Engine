@@ -501,7 +501,13 @@ def calculate_market_trend():
 
     calculated_trends = []
     failed_dates = non_trading_days
-    
+
+    # Set a guard clause to handle cases where no valid trading dates are found
+    # in the request after filtering. This prevents the IndexError.
+    if not dates_to_process:
+        app.logger.warning(f"No valid trading dates to process from the request payload after filtering. Raw dates: {raw_dates}")
+        return jsonify({"trends": calculated_trends, "failed_dates": raw_dates}), 200
+
     indices = ['^GSPC', '^DJI', '^IXIC']
     
     # --- 1. Fetch Sufficient Historical Data ---
