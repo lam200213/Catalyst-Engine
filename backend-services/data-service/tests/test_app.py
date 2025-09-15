@@ -408,7 +408,8 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         })
 
         # Verify the data provider was only called for tickers NOT in the cache
-        mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'])
+        # including the default arguments for a batch miss.
+        mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'], start_date=None, period='1y')
         
         # Verify that the newly fetched data was inserted into the cache
         self.mock_price_cache.insert_many.assert_called_once()

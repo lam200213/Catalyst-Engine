@@ -10,7 +10,7 @@ import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
 #DEBUG
-import sys
+import logging
 import json
 
 session = cffi_requests.Session()
@@ -27,12 +27,8 @@ YF_ROW_CLASS = 'yf-t22klz'
 YF_HEADER_ROW_CLASS = 'yf-1yyu1pc'
 # --- End Selectors ---
 
-# --- HIGH-VISIBILITY LOGGING TO CONFIRM FILE IS LOADED ---
-# This will print the moment the Python interpreter loads this file.
-# If you don't see this in the logs, the container is using old code.
-sys.stderr.write("--- yfinance_provider.py MODULE LOADED ---\n")
-sys.stderr.flush()
-# --- END HIGH-VISIBILITY LOGGING ---
+# Get a child logger that will propagate to the main 'app' logger
+logger = logging.getLogger(__name__)
 
 # A list of user-agents to rotate through
 USER_AGENTS = [
@@ -58,7 +54,7 @@ def _get_yahoo_auth():
         if _YAHOO_CRUMB:
             return _YAHOO_CRUMB
 
-        print("PROVIDER-DEBUG: No auth crumb found. Fetching new one...", flush=True)
+        logger.debug("No auth crumb found. Fetching new one...")
         try:
             # The 'getcrumb' endpoint is a reliable way to get a valid crumb
             crumb_url = "https://query1.finance.yahoo.com/v1/test/getcrumb"
@@ -75,11 +71,10 @@ def _get_yahoo_auth():
             )
             crumb_response.raise_for_status()
             _YAHOO_CRUMB = crumb_response.text
-            print(f"PROVIDER-DEBUG: Successfully fetched new crumb: {_YAHOO_CRUMB}", flush=True)
+            logger.debug(f"Successfully fetched new crumb: {_YAHOO_CRUMB}")
             return _YAHOO_CRUMB
         except cffi_requests.errors.RequestsError as e:
-            sys.stderr.write(f"--- CRITICAL: Failed to get Yahoo auth crumb: {e} ---\n")
-            sys.stderr.flush()
+            logger.critical(f"Failed to get Yahoo auth crumb: {e}")
             return None
 
 def _get_random_user_agent() -> str:
@@ -113,7 +108,7 @@ def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
             })
         return standardized_data
     except (KeyError, IndexError, TypeError) as e:
-        print(f"Error transforming Yahoo Finance data for {ticker}: {e}")
+        logger.error(f"Error transforming Yahoo Finance data for {ticker}: {e}")
         return None
 
 def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None) -> dict | list | None:
@@ -183,7 +178,7 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
         # Raise an exception for bad status codes to be caught below
         response.raise_for_status()
         if response.status_code != 200:
-            print(f"Yahoo Finance API returned status {response.status_code} for {ticker}")
+            logger.error(f"Yahoo Finance API returned status {response.status_code} for {ticker}")
             return None
 
         data = response.json()
@@ -192,11 +187,11 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
 
     except cffi_requests.errors.RequestsError as e:
         if e.response:
-            print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
-        print(f"A curl_cffi request error occurred for {ticker}: {e}", flush=True)
+            logger.error(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}")
+            logger.error(f"A curl_cffi request error occurred for {ticker}: {e}")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
+        logger.error(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")
         return None
 
 def _transform_income_statements(statements, shares_outstanding):
@@ -229,7 +224,7 @@ def _fetch_financials_with_yfinance(ticker):
     
     This is the primary, preferred method for fetching core financial data.
     """
-    print(f"PROVIDER-DEBUG: Attempting to fetch financials for {ticker} using yfinance library.")
+    logger.debug(f"Attempting to fetch financials for {ticker} using yfinance library.")
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
@@ -245,7 +240,7 @@ def _fetch_financials_with_yfinance(ticker):
         
         # The 'info' dictionary must exist and contain essential data to be useful.
         if not info or 'marketCap' not in info:
-            print(f"PROVIDER-DEBUG: yfinance info missing key fields for {ticker}.")
+            logger.debug(f"yfinance info missing key fields for {ticker}.")
             return None
 
         # --- IPO Date Handling ---
@@ -265,9 +260,9 @@ def _fetch_financials_with_yfinance(ticker):
                     ipo_date = dt.datetime.fromtimestamp(ipo_date_timestamp_val).strftime('%Y-%m-%d')
                 except (ValueError, TypeError) as e:
                     # Log if the timestamp is invalid (e.g., out of range).
-                    print(f"PROVIDER-DEBUG: Could not convert epoch '{ipo_date_timestamp}' to date for {ticker}. Error: {e}")
+                    logger.debug(f"Could not convert epoch '{ipo_date_timestamp}' to date for {ticker}. Error: {e}")
             else:
-                print(f"PROVIDER-DEBUG: Expected epoch for 'firstTradeDateEpoch' to be a number, but got {type(ipo_date_timestamp)} for {ticker}.")
+                logger.debug(f"Expected epoch for 'firstTradeDateEpoch' to be a number, but got {type(ipo_date_timestamp)} for {ticker}.")
         
         # --- Financial Statement Formatting ---
         q_income_stmt = stock.quarterly_income_stmt
@@ -308,7 +303,7 @@ def _fetch_financials_with_yfinance(ticker):
         }
     except Exception as e:
         # Catch any other unexpected errors from the yfinance library call.
-        print(f"PROVIDER-DEBUG: An unhandled exception occurred in the yfinance library for {ticker}. Error: {e}")
+        logger.error(f"An unhandled exception occurred in the yfinance library for {ticker}: {e}")
         return None
     
 def get_core_financials(ticker_symbol):
@@ -319,13 +314,13 @@ def get_core_financials(ticker_symbol):
     This function now prioritizes the yfinance library and uses the direct API call as a fallback.
     """
     start_time = time.time()
-    print(f"PROVIDER-DEBUG: Attempting to get core financials for {ticker_symbol}", flush=True)
+    logger.debug(f"Attempting to get core financials for {ticker_symbol}")
 
     # --- Special Handling for Market Indices ---
     if ticker_symbol in ['^GSPC', '^DJI', '^IXIC']:
         hist = _get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
         if not hist:
-            print(f"PROVIDER-DEBUG: No historical data for index {ticker_symbol}", flush=True)
+            logger.debug(f"No historical data for index {ticker_symbol}")
             return None
 
         df = pd.DataFrame(hist)
@@ -347,11 +342,11 @@ def get_core_financials(ticker_symbol):
     extended_financials_data = _fetch_financials_with_yfinance(ticker_symbol)
     if extended_financials_data:
         duration = time.time() - start_time
-        print(f"PROVIDER-DEBUG: yfinance library call for {ticker_symbol} took {duration:.2f} seconds.", flush=True)
+        logger.debug(f"yfinance library call for {ticker_symbol} took {duration:.2f} seconds.")
         return extended_financials_data
 
     # --- Fallback Fetching Strategy (Direct API Call) ---
-    print(f"PROVIDER-DEBUG: Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.", flush=True)
+    logger.debug(f"Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.")
     try:
         crumb = _get_yahoo_auth()
         if not crumb:
@@ -366,7 +361,7 @@ def get_core_financials(ticker_symbol):
         
         result = response.json().get('quoteSummary', {}).get('result')
         if not result:
-            print(f"PROVIDER-DEBUG: Yahoo API fallback response has no 'result' field.", flush=True)
+            logger.debug("Yahoo API fallback response has no 'result' field.")
             return None
         
         info = result[0]
@@ -394,23 +389,19 @@ def get_core_financials(ticker_symbol):
         }
         
         duration = time.time() - start_time
-        print(f"PROVIDER-DEBUG: Yahoo Finance API fallback call for {ticker_symbol} took {duration:.2f} seconds.", flush=True)
+        logger.debug(f"Yahoo Finance API fallback call for {ticker_symbol} took {duration:.2f} seconds.")
         return data
 
     except cffi_requests.errors.RequestsError as e:
         if e.response and e.response.status_code == 404:
-            print(f"PROVIDER-DEBUG: Fallback for {ticker_symbol} also failed with 404. Ticker is confirmed unavailable.", flush=True)
+            logger.debug(f"Fallback for {ticker_symbol} also failed with 404. Ticker is confirmed unavailable.")
         else:
             if e.response:
-                print(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}", flush=True)
-            print(f"A curl_cffi request error occurred during fallback for {ticker_symbol}: {e}", flush=True)
+                logger.error(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}")
+            logger.error(f"A curl_cffi request error occurred during fallback for {ticker_symbol}: {e}")
         return None
     except Exception as e:
-        sys.stderr.write(f"--- EXCEPTION CAUGHT in get_core_financials fallback for {ticker_symbol} ---\n")
-        sys.stderr.write(f"    Exception Type: {type(e).__name__}\n")
-        sys.stderr.write(f"    Exception Details: {str(e)}\n")
-        sys.stderr.write(f"--- END EXCEPTION ---\n")
-        sys.stderr.flush()
+        logger.exception(f"Exception in get_core_financials fallback for {ticker_symbol}")
         return None
 
 def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) -> dict:
@@ -426,7 +417,7 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
             data = future.result()
             results[ticker] = data
         except Exception as e:
-            print(f"ERROR: Failed to process {ticker} in batch. Error: {e}", flush=True)
+            logger.error(f"Failed to process {ticker} in batch. Error: {e}")
             results[ticker] = None
             
     return results

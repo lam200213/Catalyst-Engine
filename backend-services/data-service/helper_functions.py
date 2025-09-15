@@ -1,13 +1,13 @@
 # data-service/helper_functions.py
 import logging
 
-# Use a specific logger to capture calculation details
-calc_logger = logging.getLogger('app.calculation')
+# Use logger
+logger = logging.getLogger(__name__)
 
 # A consistent structure for failure responses
 def failed_check(metric, message, **kwargs):
     # Log the technical failure for developers
-    logging.warning(f"Check failed for metric '{metric}': {message} | Details: {kwargs}")
+    logger.warning(f"Check failed for metric '{metric}': {message} | Details: {kwargs}")
     return {metric: {"pass": False, "message": message, **kwargs}}
 
 def check_market_trend_context(index_data, details):

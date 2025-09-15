@@ -9,39 +9,53 @@ from pymongo.errors import OperationFailure, PyMongoError
 import re
 from concurrent.futures import ThreadPoolExecutor
 import logging
-# from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler
 
 # Import provider modules
 from providers import yfinance_provider, finnhub_provider, marketaux_provider
 # Import the logic
 from helper_functions import check_market_trend_context
 
+logger = logging.getLogger(__name__)
 app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 3001))
 
-# --- Structured Logging Setup ---
-def setup_logging(app_instance):
+def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
-    # Get the top-level logger for the 'app' namespace
-    app_logger = logging.getLogger('app')
+    # Create a rotating file handler to prevent log files from growing too large.
+    file_handler = RotatingFileHandler(
+        'data_service.log',
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
 
-    # Do not add handlers if they already exist
-    if not app_logger.handlers:
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
+    # Create a console handler for stdout
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
 
-        log_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        console_handler.setFormatter(log_formatter)
+    # Define the log format
+    log_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(log_formatter)
+    console_handler.setFormatter(log_formatter)
 
-        app_logger.addHandler(console_handler)
-        app_logger.setLevel(logging.INFO)
+    # Get the root logger and configure it.
+    # This makes the settings apply to the entire application.
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+        root_logger.setLevel(logging.INFO)
 
-# Call the setup function when the app is initialized
-setup_logging(app)
+    # Also set the app logger's level to ensure it processes messages.
+    app.logger.setLevel(logging.INFO)
+
 # --- End of Logging Setup ---
+setup_logging(app)
+logger.info("Data service logging initialized.")
 
 # Global variables for MongoDB client and collections
 client = None
@@ -68,18 +82,18 @@ def _create_ttl_index(collection, field, ttl_seconds, name):
     try:
         # Attempt to create the index with the new TTL and name
         collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
-        print(f"TTL index '{name}' on '{collection.name}' is set to {ttl_seconds} seconds.")
+        logger.info(f"TTL index '{name}' on '{collection.name}' set to {ttl_seconds} seconds.")
     except OperationFailure as e:
         # Error code 85 is for "IndexOptionsConflict"
         if e.code == 85:
-            print(f"Index conflict on '{collection.name}'. Dropping old index and recreating.")
+            logger.warning(f"Index conflict on '{collection.name}'. Dropping old index and recreating.")
             
             # Drop the index by its actual name, which caused the conflict.
             collection.drop_index(name)
             
             # Re-create the index with the correct TTL and new name
             collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
-            print(f"Successfully recreated TTL index with new name '{name}' on '{collection.name}'.")
+            logger.info(f"Successfully recreated TTL index with new name '{name}' on '{collection.name}'.")
         else:
             # For any other database error, re-raise the exception to halt startup
             raise
@@ -154,9 +168,7 @@ def get_core_financials(ticker):
     """
     Provides core financial data for a given ticker, with caching.
     """
-    # DEBUG
-    print(f"DEBUG: Entering get_core_financials in data service for {ticker}")
-    # DEBUG ENDS
+    logger.info(f"Request received for core financials: {ticker}")
 
     # Input validation
     if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
@@ -164,12 +176,12 @@ def get_core_financials(ticker):
 
     cached_data = financials_cache.find_one({'ticker': ticker})
     if cached_data:
-        print(f"DATA-SERVICE: Cache HIT for financials: {ticker}")
+        logger.info(f"Cache HIT for financials: {ticker}")
         # Refresh TTL
         financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
 
-    print(f"DATA-SERVICE: Cache MISS for financials: {ticker}")
+    logger.info(f"Cache MISS for financials: {ticker}")
     # If not in cache, fetch from provider
     data = yfinance_provider.get_core_financials(ticker)
 
@@ -180,7 +192,7 @@ def get_core_financials(ticker):
             "data": data,
             "createdAt": datetime.now(timezone.utc)
         })
-        print(f"DATA-SERVICE: CACHE INSERT for financials: {ticker}")
+        logger.info(f"CACHE INSERT for financials: {ticker}")
         return jsonify(data)
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
@@ -222,7 +234,7 @@ def get_batch_data():
     cached_tickers = set(cached_results.keys())
     missed_tickers = [t for t in tickers if t not in cached_tickers]
     
-    print(f"DATA-SERVICE: Batch request. Cache hits: {len(cached_tickers)}, Cache misses: {len(missed_tickers)}")
+    logger.info(f"Batch request. Cache hits: {len(cached_tickers)}, Cache misses: {len(missed_tickers)}")
 
     # --- Fetch Data for Cache Misses ---
     newly_fetched_data = {}
@@ -267,7 +279,7 @@ def get_batch_data():
             })
         if new_cache_entries:
             price_cache.insert_many(new_cache_entries)
-            print(f"DATA-SERVICE: Cached {len(new_cache_entries)} new entries.")
+            logger.info(f"Cached {len(new_cache_entries)} new price entries.")
 
     # --- Combine Results and Return ---
     successful_data = {**cached_results, **newly_fetched_data}
@@ -283,7 +295,7 @@ def get_batch_data():
 @app.route('/price/<string:ticker>', methods=['GET'])
 def get_data(ticker: str):
     source = request.args.get('source', 'yfinance').lower()
-    print(f"Received request for ticker: {ticker}, source: {source}")
+    logger.info(f"Request received for price data. Ticker: {ticker}, Source: {source}")
 
     # --- Incremental Cache Logic ---
     # This logic determines whether to perform a full data fetch or an incremental one.
@@ -304,7 +316,7 @@ def get_data(ticker: str):
 
                 # If the last data point is from yesterday or today, it's current enough.
                 if last_date >= (date.today() - timedelta(days=1)):
-                    print(f"DATA-SERVICE: Cache HIT and data is current for price: {ticker}")
+                    logger.info(f"Cache HIT and data is current for price: {ticker}")
                     # Refresh the TTL to keep the entry alive.
                     price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
                     return jsonify(cached_data['data'])
@@ -313,14 +325,14 @@ def get_data(ticker: str):
                 new_start_date = last_date + timedelta(days=1)
         else:
             # If the cache TTL has expired, treat it as a miss. A full fetch will occur.
-            print(f"Cache EXPIRED for price: {ticker} from {source}")
+            logger.warning(f"Cache EXPIRED for price: {ticker} from {source}")
 
     # --- Data Fetching ---
     # Based on the cache check, decide whether to fetch full or incremental data.
     if new_start_date:
-        print(f"DATA-SERVICE: Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
+        logger.info(f"Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
     else:
-        print(f"DATA-SERVICE: Full Cache MISS for price: {ticker} from {source}")
+        logger.info(f"Full Cache MISS for price: {ticker} from {source}")
 
     data = None
     if source == 'yfinance':
@@ -349,7 +361,7 @@ def get_data(ticker: str):
                 {"_id": cached_data["_id"]},
                 {"$set": {"data": full_data, "createdAt": datetime.now(timezone.utc)}}
             )
-            print(f"DATA-SERVICE: CACHE INCREMENTAL UPDATE for price: {ticker}")
+            logger.info(f"CACHE INCREMENTAL UPDATE for price: {ticker}")
             return jsonify(full_data)
         else:
             # If it was a full fetch, replace the old cache entry or insert a new one.
@@ -364,11 +376,11 @@ def get_data(ticker: str):
                 {"$set": update_data},
                 upsert=True # Creates the document if it doesn't exist.
             )
-            print(f"DATA-SERVICE: CACHE FULL REPLACE/INSERT for price: {ticker}")
+            logger.info(f"CACHE FULL REPLACE/INSERT for price: {ticker}")
             return jsonify(data)
     elif cached_data:
         # If the provider returned no new data but we have old data, return the old data.
-        print(f"DATA-SERVICE: No new price data for {ticker}. Returning existing cached data.")
+        logger.info(f"No new price data for {ticker}. Returning existing cached data.")
         # Refresh the TTL to prevent the old data from being purged immediately.
         price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
@@ -384,13 +396,13 @@ def get_news(ticker: str):
         # Check if cached news is still valid (not expired)
         time_elapsed = (datetime.now(timezone.utc) - cached_news['createdAt']).total_seconds()
         if time_elapsed < NEWS_CACHE_TTL:
-            print(f"DATA-SERVICE: Cache HIT for news: {ticker}")
+            logger.info(f"Cache HIT for news: {ticker}")
             return jsonify(cached_news['data'])
         else:
-            print(f"Cache EXPIRED for news: {ticker}")
+            logger.warning(f"Cache EXPIRED for news: {ticker}")
             news_cache.delete_one({"_id": cached_news["_id"]}) # Optionally delete expired entry immediately
         
-    print(f"DATA-SERVICE: Cache MISS for news: {ticker}")
+    logger.info(f"DATA-SERVICE: Cache MISS for news: {ticker}")
     
     # Fetch from provider
     try:
@@ -403,7 +415,7 @@ def get_news(ticker: str):
                 "data": news_data,
                 "createdAt": datetime.now(timezone.utc)
             })
-            print(f"DATA-SERVICE: CACHE INSERT for news: {ticker}")
+            logger.info(f"CACHE INSERT for news: {ticker}")
             return jsonify(news_data)
         else:
             return jsonify({"error": f"Could not retrieve news for {ticker}."}), 404
@@ -421,19 +433,19 @@ def clear_cache():
     try:
         if price_cache is not None:
             price_cache.drop()
-            print("DATA-SERVICE: Dropped price_cache collection.")
+            logger.info("Dropped price_cache collection.")
         if news_cache is not None:
             news_cache.drop()
-            print("DATA-SERVICE: Dropped news_cache collection.")
+            logger.info("Dropped news_cache collection.")
         if financials_cache is not None:
             financials_cache.drop()
-            print("DATA-SERVICE: Dropped financials_cache collection.")
+            logger.info("Dropped financials_cache collection.")
         if industry_cache is not None:
             industry_cache.drop()
-            print("DATA-SERVICE: Dropped industry_cache collection.")
+            logger.info("Dropped industry_cache collection.")
         if market_trends is not None:
             market_trends.drop()
-            print("DATA-SERVICE: Dropped market_trends collection.")
+            logger.info("Dropped market_trends collection.")
             
         
         # Re-initialize the collections and their TTL indexes
@@ -442,7 +454,7 @@ def clear_cache():
         return jsonify({"message": "All data service caches have been cleared."}), 200
 
     except Exception as e:
-        print(f"Error clearing cache: {e}")
+        logger.error(f"Error clearing cache: {e}", exc_info=True)
         return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
     
 @app.route('/industry/peers/<path:ticker>', methods=['GET'])
@@ -455,11 +467,11 @@ def get_industry_peers(ticker: str):
 
     cached_data = industry_cache.find_one({'ticker': ticker})
     if cached_data:
-        print(f"DATA-SERVICE: Cache HIT for industry/peers: {ticker}")
+        logger.info(f"Cache HIT for industry/peers: {ticker}")
         industry_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
 
-    print(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
+    logger.info(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
     data = finnhub_provider.get_company_peers_and_industry(ticker)
 
     if data:
@@ -468,7 +480,7 @@ def get_industry_peers(ticker: str):
             "data": data,
             "createdAt": datetime.now(timezone.utc)
         })
-        print(f"DATA-SERVICE: CACHE INSERT for industry/peers: {ticker}")
+        logger.info(f"CACHE INSERT for industry/peers: {ticker}")
         return jsonify(data)
     else:
         return jsonify({"error": "Data not found for ticker"}), 404
@@ -505,7 +517,7 @@ def calculate_market_trend():
     # Set a guard clause to handle cases where no valid trading dates are found
     # in the request after filtering. This prevents the IndexError.
     if not dates_to_process:
-        app.logger.warning(f"No valid trading dates to process from the request payload after filtering. Raw dates: {raw_dates}")
+        logger.warning(f"No valid trading dates to process from the request payload after filtering. Raw dates: {raw_dates}")
         return jsonify({"trends": calculated_trends, "failed_dates": raw_dates}), 200
 
     indices = ['^GSPC', '^DJI', '^IXIC']
@@ -577,10 +589,10 @@ def calculate_market_trend():
 
         except (KeyError, IndexError) as e:
             # This happens if the date is a trading day but data is still missing from provider
-            app.logger.warning(f"Could not calculate market trend for date {date_str}: No data available. Details: {e}")
+            logger.warning(f"Could not calculate market trend for date {date_str}: No data available. Details: {e}")
             failed_dates.append(date_str)
         except Exception as e:
-            app.logger.error(f"An unexpected error occurred processing date {date_str}: {e}")
+            logger.error(f"An unexpected error occurred processing date {date_str}: {e}")
             failed_dates.append(date_str)
 
     return jsonify({"trends": calculated_trends, "failed_dates": failed_dates}), 200
@@ -612,7 +624,7 @@ def get_market_trends():
 
         return jsonify(trends_list), 200
     except Exception as e:
-        app.logger.error(f"Error in get_market_trends: {e}", exc_info=True)
+        logger.error(f"Error in get_market_trends: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':

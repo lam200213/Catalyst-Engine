@@ -78,10 +78,6 @@ dev-debug.log
 
 .mailmap
 
-# Task files
-# tasks.json
-# tasks/ 
-
 # debug
 response-collection/
 json-yfinance_provider.py
@@ -89,3 +85,7 @@ json-yfinance_provider.py
 
 
 yfin-temp.py
+
+# Task files
+# tasks.json
+# tasks/ 

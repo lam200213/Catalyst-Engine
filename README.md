@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-15
-Modify leadership-service to generate its list of required dates using the same pandas_market_calendars library as the data-service; Add a guard clause to the data-service to gracefully handle cases where the list of processable dates is empty after filtering. 
+Adding a robust logging mechanism to the data-service; Updated Dockerfile in data-service to explicitly create a home directory for appuser and set the HOME environment variable for yfinance library to create its cache. 
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
