@@ -8,12 +8,13 @@ import json
 from flask.json.provider import JSONProvider
 from concurrent.futures import ThreadPoolExecutor
 from screening_logic import apply_screening_criteria
+import traceback 
 
 app = Flask(__name__)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 3002))
-CHUNK_SIZE = 200 # Number of tickers to process at once for batch processing
+CHUNK_SIZE = 75 # Number of tickers to process at once for batch processing
 
 # This class teaches Flask's JSON encoder how to handle NumPy's specific data types.
 class NumpyJSONEncoder(json.JSONEncoder):
@@ -79,6 +80,8 @@ def screen_ticker_endpoint(ticker):
                 "dependency_response": hist_resp.text
             }), 502
 
+        # debug
+        print(f"[SINGLE] Received {len(historical_data)} data points for {ticker}", flush=True)
         result = apply_screening_criteria(ticker, historical_data)
         return jsonify({"ticker": ticker, **result})
 
@@ -115,14 +118,21 @@ def _process_chunk(chunk):
         # 2. Apply screening logic to the successfully fetched data
         # The data is already fetched, so this part is just CPU-bound.
         for ticker, historical_data in successful_data.items():
+            # debug
+            if ticker == 'KGC':
+                print(f"[BATCH] Received {len(historical_data)} data points for {ticker}", flush=True)
             result = apply_screening_criteria(ticker, historical_data)
             if result.get("passes", False):
                 passing_in_chunk.append(ticker)
                 
     except requests.exceptions.RequestException as e:
         print(f"Warning: Request for chunk failed: {e}")
+        error_details = traceback.format_exc()
+        print(f"--- ERROR PROCESSING CHUNK ---\nTickers: {chunk}\nError: {e}\nTraceback:\n{error_details}\n--", flush=True)
     except Exception as e:
         print(f"Warning: Unexpected error processing chunk: {e}")
+        error_details = traceback.format_exc()
+        print(f"--- ERROR PROCESSING CHUNK ---\nTickers: {chunk}\nError: {e}\nTraceback:\n{error_details}\n--", flush=True)
         
     return passing_in_chunk
 
