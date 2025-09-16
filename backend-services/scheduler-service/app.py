@@ -22,10 +22,7 @@ ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-servic
 LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 SCHEDULER_TIME = os.getenv("SCHEDULER_TIME", "05:00")
-# --- Database Setup ---
-client = None
-results_collection = None
-jobs_collection = None
+
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
@@ -34,26 +31,83 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def get_db_collections():
-    """Initializes database connection and returns all relevant collections."""
-    global client, results_collection, jobs_collection
-    if results_collection is not None and jobs_collection is not None:
-        return results_collection, jobs_collection
+# --- Database Setup ---
+class DatabaseManager:
+    """Singleton-like manager for MongoDB connection and collections."""
+    _instance = None
 
-    try:
-        client = MongoClient(MONGO_URI)
-        db = client.stock_analysis
-        results_collection = db.screening_results
-        jobs_collection = db.screening_jobs
-        client.admin.command('ping')
-        logger.info("MongoDB connection successful.")
-        return results_collection, jobs_collection
-    except errors.ConnectionFailure as e:
-        logger.error(f"MongoDB connection failed: {e}")
-        client = None
-        results_collection = None
-        jobs_collection = None
-        return None, None
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(DatabaseManager, cls).__new__(cls)
+            cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
+        self.client = None
+        self.db = None
+        self.collections = {
+            'results': None,
+            'jobs': None,
+            'trend_survivors': None,
+            'vcp_survivors': None,
+            'leadership_survivors': None
+        }
+
+    def connect(self):
+        """Establishes the connection if not already connected."""
+        if self.client is not None and all(coll is not None for coll in self.collections.values()):
+            return True  # Already connected
+
+        # Implement retry logic for database connection
+        max_retries = 3
+        retry_delay = 5  # seconds
+        for attempt in range(max_retries):
+            try:
+                self.client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000) 
+                self.client.admin.command('ping') # Verify connection
+
+                self.db = self.client['stock_analysis']  # Use the DB name here
+                self.collections['results'] = self.db['screening_results']
+                self.collections['jobs'] = self.db['screening_jobs']
+                self.collections['trend_survivors'] = self.db['trend_survivors']
+                self.collections['vcp_survivors'] = self.db['vcp_survivors']
+                self.collections['leadership_survivors'] = self.db['leadership_survivors']
+
+                logger.info("MongoDB connection successful.")
+                return True
+            except errors.ConnectionFailure as e:
+                logger.error(f"MongoDB connection attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error("All MongoDB connection attempts failed.")
+                    self._reset()  # Reset on final failure
+                    return False
+        return False # Should not be reached, but for safety
+
+    def _reset(self):
+        """Resets the connection and collections on failure."""
+        self.client = None
+        self.db = None
+        for key in self.collections:
+            self.collections[key] = None
+
+    def get_collections(self):
+        """Returns the collections if connected, else attempts to connect and returns them."""
+        if not self.connect():
+            return (None,) * len(self.collections)  # Return None for each collection to match original signature
+        return (
+            self.collections['results'],
+            self.collections['jobs'],
+            self.collections['trend_survivors'],
+            self.collections['vcp_survivors'],
+            self.collections['leadership_survivors']
+        )
+
+def get_db_collections():
+    db_manager = DatabaseManager()
+    return db_manager.get_collections()
 
 # --- Helper Functions ---
 def _get_all_tickers(job_id):
@@ -218,24 +272,57 @@ def _run_leadership_screening(job_id, vcp_survivors):
         logger.error(f"Job {job_id}: Failed to connect to leadership-service for batch screening.", exc_info=True)
         return [] # Return empty list on failure to prevent entire job from crashing
 
-def _store_results(job_id, summary_doc, candidates_doc):
-    """Stores the job summary and candidate results in their respective collections."""
-    results_coll, jobs_coll = get_db_collections()
+# Function to store a list of documents for a specific stage
+def store_stage_survivors(job_id, collection, survivors, stage_name):
     
-    if jobs_coll is None:
-        logger.error(f"Job {job_id}: Database collection 'screening_jobs' is not available.")
-        return False, ({"error": "Database 'screening_jobs' client not available"}, 500)
+    if collection is None:
+        logger.error(f"Job {job_id}: Cannot store {stage_name} survivors, database collection is not available.")
+        return False
+    
+    if not survivors:
+        logger.info(f"Job {job_id}: No {stage_name} survivors to store.")
+        return True
+    try:
+        # Structure documents with job_id for linking
+        docs_to_insert = [{"job_id": job_id, "ticker": ticker} for ticker in survivors]
+        if docs_to_insert:
+            collection.insert_many(docs_to_insert)
+            logger.info(f"Job {job_id}: Inserted {len(docs_to_insert)} {stage_name} survivors.")
+        return True
+    except errors.PyMongoError as e:
+        logger.exception(f"Job {job_id}: Failed to write {stage_name} survivors to database.")
+        return False
+
+def _store_results(job_id, summary_doc, trend_survivors, vcp_survivors, leadership_survivors, final_candidates):
+    """Stores the job summary and detailed survivor lists in their respective collections."""
+    results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll = get_db_collections()
+    
+    # Centralized check if any collection object is None.
+    collections_list = [results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll]
+    if any(coll is None for coll in collections_list):
+        logger.error(f"Job {job_id}: Database connection failed or collections are missing. Aborting result storage.")
+        return False, ({"error": "Database client not available or collections missing"}, 500)
     
     # 1. Store the job summary document.
     try:
         jobs_coll.update_one({"job_id": job_id}, {"$set": summary_doc}, upsert=True)
         logger.info(f"Job {job_id}: Successfully logged job summary.")
-    except errors.PyMongoError:
+    except errors.PyMongoError as e: 
         logger.exception(f"Job {job_id}: Failed to write job summary to database.")
-        return False, ({"error": "Failed to write job summary to database"}, 500)
+        return False, ({"error": "Failed to write job summary to database", "details": str(e)}, 500)
         
-    # 2. Store the candidate results if any exist.
-    if not candidates_doc:
+    # 2. Store each survivor list in its dedicated collection.
+    if not store_stage_survivors(job_id, trend_coll, trend_survivors, "trend"): return False, ({"error": "DB error"}, 500)
+
+    # VCP survivors are dicts, so we extract tickers
+    vcp_tickers = [item.get('ticker') for item in vcp_survivors if item.get('ticker')]
+    if not store_stage_survivors(job_id, vcp_coll, vcp_tickers, "VCP"): return False, ({"error": "DB error"}, 500)
+
+    leadership_tickers = [item.get('ticker') for item in leadership_survivors if item.get('ticker')]
+    if not store_stage_survivors(job_id, leadership_coll, leadership_tickers, "leadership"): return False, ({"error": "DB error"}, 500)
+
+    # 3. Store the final candidate results
+    if not final_candidates:
         logger.info(f"Job {job_id}: No final candidates to store.")
         return True, None
 
@@ -248,7 +335,7 @@ def _store_results(job_id, summary_doc, candidates_doc):
         # The crucial step: explicitly add the job_id to each candidate document.
         candidates_to_insert = [
             {**candidate, 'job_id': job_id, 'processed_at': processed_time}
-            for candidate in candidates_doc
+            for candidate in final_candidates
         ]
         
         if candidates_to_insert:
@@ -313,26 +400,30 @@ def run_screening_pipeline():
         "total_tickers_fetched": len(all_tickers),
         "trend_screen_survivors_count": len(trend_survivors),
         "vcp_survivors_count": len(vcp_survivors),
-        "unique_industries_count": unique_industries_count,
+        "industry_diversity": {
+            "unique_industries_count": unique_industries_count
+        },
         "final_candidates_count": len(final_candidates),
-        "trend_survivors": trend_survivors,
-        "vcp_survivors": vcp_survivors,
-        "leadership_survivors": leadership_survivors,
         # Store only ticker lists in the summary to keep it lightweight.
-        # "vcp_survivors": [item.get('ticker') for item in vcp_survivors],
-        # "leadership_survivors": [item.get('ticker') for item in final_candidates],
+        "vcp_survivors": [item.get('ticker') for item in vcp_survivors],
+        "leadership_survivors": [item.get('ticker') for item in final_candidates],
         "final_candidates": final_candidates,
     }
     
-    success, error_info = _store_results(job_id, job_summary, final_candidates)
+    success, error_info = _store_results(
+        job_id,
+        job_summary,
+        trend_survivors,
+        vcp_survivors,
+        leadership_survivors,
+        final_candidates
+    )
     if not success:
         return error_info
     
     # 7. Return a success response with job details.
 
     excluded_keys = {"trend_survivors"}
-    job_summary['vcp_survivors'] = [item['ticker'] for item in job_summary['vcp_survivors']]
-    job_summary['leadership_survivors'] = [item['ticker'] for item in job_summary['leadership_survivors']]
 
     # Create a filtered copy of job_summary
     filtered_result = {k: v for k, v in job_summary.items() if k not in excluded_keys}
@@ -361,5 +452,4 @@ def start_screening_job_endpoint():
     return jsonify(result), status_code
 
 if __name__ == '__main__':
-    get_db_collections() # Initialize DB connection on startup
     app.run(host='0.0.0.0', port=PORT)
