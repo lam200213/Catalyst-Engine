@@ -4,6 +4,7 @@
 import logging
 import pandas as pd
 from datetime import datetime
+import numpy as np
 from .utils import failed_check
 
 # Get a logger that's a child of the app.logger, so it inherits the file handler
@@ -21,6 +22,53 @@ MEDIUM_FLOAT_SHARES = 100_000_000  # Between 10 million and 100 million shares
 RECENT_IPO_YEARS = 10              # Last 10 years
 
 DATA_SERVICE_URL = "http://data-service:3001"
+
+# Helper function
+def calculate_growth_rate(current, previous, max_cap=10.0):
+    """
+    Safely computes a growth rate, handling edge cases.
+    
+    Computes (current – previous) / abs(previous), and handles:
+      • None or non-numeric inputs → returns {'rate': 0.0, 'capped': False}
+      • previous = 0 → returns capped rate if current is positive
+      • infinite or excessively large rates → caps the rate to max_cap
+      
+    Returns:
+        dict: A dictionary containing {'rate': float, 'capped': bool}.
+    """
+    result = {'rate': 0.0, 'capped': False}
+    try:
+        # Ensure inputs are numeric and not None
+        if not all(isinstance(v, (int, float)) for v in [current, previous]):
+            logger.debug(f"Non-numeric or None input: current={current}, previous={previous}")
+            return result
+
+        # Handle the zero-denominator case
+        if previous == 0:
+            if current > 0:
+                logger.warning(f"Previous value is 0, current is {current}. Capping growth.")
+                result.update(rate=max_cap, capped=True)
+            # If current is also 0 or negative, growth is 0.0
+            return result
+            
+        # Standard calculation using absolute for the denominator
+        # This correctly handles growth from a negative base
+        raw_rate = (current - previous) / abs(previous)
+
+        # Cap infinite or overly large rates
+        if not np.isfinite(raw_rate) or raw_rate > max_cap:
+            logger.info(f"Raw rate {raw_rate:.2f} exceeds cap of {max_cap}. Capping.")
+            result.update(rate=max_cap, capped=True)
+        else:
+            result['rate'] = raw_rate
+
+    except Exception as e:
+        logger.error(f"Error in calculate_growth_rate(current={current}, previous={previous}): {e}", exc_info=True)
+        # Return default value on any unexpected error
+        result = {'rate': 0.0, 'capped': False}
+        
+    return result
+
 
 # Functions for financial statements (like check_yoy_eps_growth) expect newest-to-oldest data, 
 # while functions for price history expect oldest-to-newest, due to the data properties.
@@ -190,17 +238,12 @@ def check_yoy_eps_growth(financial_data, details):
             return
         
         # Most recent quarter (index 0) and same quarter from previous year (index 4)
-        current_eps = earnings[0]['Earnings']
+        current_quarter_eps = earnings[0]['Earnings']
         previous_year_eps = earnings[4]['Earnings']
         
-        # Handle division by zero or negative numbers
-        if previous_year_eps <= 0:
-            details.update(failed_check(metric_key, "Previous year's EPS is zero or negative, cannot calculate growth.",
-                                        previous_year_eps=previous_year_eps))
-            return
-        
         # Calculate YoY growth percentage
-        yoy_growth = (current_eps - previous_year_eps) / previous_year_eps
+        growth_info = calculate_growth_rate(current_quarter_eps, previous_year_eps)
+        yoy_growth = growth_info['rate']
 
         # Check if the YoY growth is greater than 25%
         is_pass = yoy_growth > 0.25
@@ -224,14 +267,16 @@ def check_yoy_eps_growth(financial_data, details):
 
         details[metric_key] = {
             "pass": is_pass,
-            "current_quarter_eps": current_eps,
+            "current_quarter_eps": current_quarter_eps,
             "previous_year_eps": previous_year_eps,
             "yoy_growth": f"{yoy_growth:+.1%}",
             "yoy_eps_growth_level": yoy_eps_growth_level,
+            "is_capped": growth_info['capped'],
             "message": message
         }
         
-    except (ZeroDivisionError, IndexError, KeyError, TypeError):
+    except (IndexError, KeyError, TypeError) as e: 
+        logger.error(f"Error in {metric_key}: {e}", exc_info=True)
         details.update(failed_check(metric_key, "An error occurred during calculation.",
                                     earnings = earnings))
 
@@ -266,11 +311,12 @@ def check_positive_recent_earnings(financial_data, details):
         # Get the most recent quarterly EPS (first item in the list)
         quarterly_eps = quarterly_earnings[0].get('Earnings')
         
-        # Check if both EPS values are positive
-        is_pass = (
-            annual_eps is not None and annual_eps > 0 and
-            quarterly_eps is not None and quarterly_eps > 0
-        )
+        # Check that values are numeric before comparison
+        annual_eps_is_positive = isinstance(annual_eps, (int, float)) and annual_eps > 0
+        quarterly_eps_is_positive = isinstance(quarterly_eps, (int, float)) and quarterly_eps > 0
+
+        is_pass = annual_eps_is_positive and quarterly_eps_is_positive
+
         message = (
             f"Annual EPS ({annual_eps}) and Quarterly EPS ({quarterly_eps}) are both positive."
             if is_pass
@@ -307,54 +353,67 @@ def check_accelerating_growth(financial_data, details):
 
         def calculate_qoq_growth_rates(data, metric_name, key1, key2=None):
             """Calculates and checks for 3 accelerating QoQ growth rates."""
-            rates = []
+            # Store the full rate objects, not just the rate value
+            rate_objects = [] 
             for i in range(3):
                 # Indices are in reverse chronological order: 0=Q4, 1=Q3, 2=Q2, 3=Q1
-                # We calculate (Newer - Older) / abs(Older)
-                # Newest growth: (data[0] - data[1]) -> Q4 vs Q3
-                # Middle growth: (data[1] - data[2]) -> Q3 vs Q2
-                # Oldest growth: (data[2] - data[3]) -> Q2 vs Q1
+                # We calculate 3 rates: Q4vQ3, Q3vQ2, Q2vQ1 (newest to oldest)
                 
                 # Use index i for the newer period, i+1 for the older period
-                new_period = data[i]
-                old_period = data[i+1]
+                new_period, old_period = data[i], data[i+1]
 
                 # --- Graceful handling of zero division ---
                 try:
                     if key2: # For margin = key1 / key2 (e.g., Net Income / Revenue)
-                        new_denominator = new_period.get(key2)
-                        old_denominator = old_period.get(key2)
-                        if new_denominator in [0, None] or old_denominator in [0, None]:
-                            return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because revenue was zero."}
-                        new_val = new_period.get(key1) / new_denominator
-                        old_val = old_period.get(key1) / old_denominator
-                    else: # For direct values like Earnings or Revenue
-                        new_val = new_period.get(key1)
-                        old_val = old_period.get(key1)
+                        num_new, den_new = new_period.get(key1), new_period.get(key2) # den for denominator
+                        num_old, den_old = old_period.get(key1), old_period.get(key2)
+                        if None in (num_new, den_new, num_old, den_old) or 0 in (den_new, den_old):
+                            rate_objects.append({'rate': 0.0, 'capped': False}) # Incalculable, treat as zero growth
+                            continue
+                        new_val, old_val = num_new / den_new, num_old / den_old
+                    else: # Direct value (e.g., Earnings, Revenue)
+                        new_val, old_val = new_period.get(key1), old_period.get(key1)
+                        if new_val is None or old_val is None:
+                           rate_objects.append({'rate': 0.0, 'capped': False}) # Missing data, treat as zero growth
+                           continue
+                        
+                except (TypeError, KeyError) as e:
+                    logger.error(f"Error extracting {metric_name} values: {e}", exc_info=True)
+                    rate_objects.append({'rate': 0.0, 'capped': False})
+                    continue
+                
+                # Delegate the core calculation
+                growth_info = calculate_growth_rate(new_val, old_val)
+                rate_objects.append(growth_info)
 
-                    if old_val is None or new_val is None:
-                        return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth due to missing data."}
-                    
-                    if old_val == 0:
-                        # This is the specific business reason for the failure.
-                        return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because the base value was zero."}
-                    
-                    rates.append((new_val - old_val) / abs(old_val))
-
-                except (TypeError, KeyError):
-                     return {"pass": False, "rates": [], "message": f"Missing data points for {metric_name} calculation."}
-                except ZeroDivisionError as e:
-                    # This is the technical log for the developer.
-                    logging.error(f"DEV LOG: ZeroDivisionError for {metric_name}: {e}")
-                    return {"pass": False, "rates": [], "message": f"Cannot calculate {metric_name} growth because a denominator was zero."}
-            
             # --- End of graceful handling ---
-            
-            # Check for strictly increasing growth: Newest > Middle > Oldest
-            is_accelerating = rates[0] > rates[1] > rates[2]
-            message = f"Growth rates [{', '.join([f'{r:.1%}' for r in rates])}] are {'accelerating' if is_accelerating else 'not accelerating'}."
-            return {"pass": is_accelerating, "rates": [f'{r:.1%}' for r in rates], "message": message}
 
+            # Filter out capped rates before the acceleration check
+            # The comparison should only happen on organic, non-extraordinary growth figures.
+            uncapped_rates = [info['rate'] for info in rate_objects if not info['capped']]
+
+            # Check for strictly increasing growth on the *uncapped* values.
+            # Need at least two uncapped points to check for acceleration.
+            is_accelerating = False
+            if len(uncapped_rates) >= 2:
+                # Comparison is [Newest > Middle > Oldest]
+                is_accelerating = all(uncapped_rates[i] > uncapped_rates[i+1] for i in range(len(uncapped_rates)-1))
+
+            # Format human-readable strings, flagging capped values
+            pct_strs = [f"{info['rate']:.1%}{' (CAPPED)' if info['capped'] else ''}" for info in rate_objects]
+            
+            msg = f"{metric_name} rates [{', '.join(pct_strs)}] are {'accelerating' if is_accelerating else 'not accelerating'}."
+            if len(uncapped_rates) < len(rate_objects):
+                msg += " Capped values were excluded from the acceleration check."
+
+            return {
+                "pass": is_accelerating, 
+                "rates_formatted": pct_strs, 
+                "rates_data": rate_objects, # Latest Add: Return the raw objects
+                "message": msg
+            }
+
+        # --- Main Logic ---
         # Check for acceleration across all three key metrics
         earnings_accelerating = calculate_qoq_growth_rates(earnings, 'Earnings', 'Earnings')
         revenue_accelerating = calculate_qoq_growth_rates(earnings, 'Revenue', 'Revenue')
@@ -398,18 +457,15 @@ def check_consecutive_quarterly_growth(financial_data, details):
         qoq_growth_rates = []
         # We need the last 5 earnings reports to get the last 4 growth rates.
         recent_earnings = earnings[:5]
+        qoq_growth_infos = []
 
         for i in range(len(recent_earnings) - 1):
             current_eps = recent_earnings[i].get('Earnings')
-            next_eps = recent_earnings[i+1].get('Earnings')
+            previous_eps = recent_earnings[i+1].get('Earnings')
 
-            # Handle missing data, or negative/zero base EPS
-            if current_eps is None or next_eps is None or next_eps <= 0:
-                qoq_growth_rates.append(0)  # Assign 0 growth to avoid errors and ensure failure
-                continue
-            
-            growth = (current_eps - next_eps) / abs(next_eps)
-            qoq_growth_rates.append(growth)
+            qoq_growth_infos.append(calculate_growth_rate(current_eps, previous_eps))
+
+        qoq_growth_rates = [info['rate'] for info in qoq_growth_infos]
 
         # Check that ALL of the last 4 quarters have >20% QoQ EPS growth
         is_pass = all(rate > 0.20 for rate in qoq_growth_rates)
@@ -436,9 +492,11 @@ def check_consecutive_quarterly_growth(financial_data, details):
             "pass": is_pass,
             "growth_level": f"{level}",
             "average_qoq_growth": f"{avg_growth:.1%}",
-            "quarterly_growth_rates": [f"{r:.1%}" for r in qoq_growth_rates],
+            "quarterly_growth_rates": [f"{info['rate']:.1%}{' (CAPPED)' if info['capped'] else ''}" for info in qoq_growth_infos],
+            "rates_data": qoq_growth_infos,
             "message": message
         }
 
-    except (KeyError, TypeError, IndexError, ZeroDivisionError):
+    except Exception as e: 
+        logger.error(f"Error in {metric_key}: {e}", exc_info=True)
         details.update(failed_check(metric_key, "An unexpected error occurred during calculation."))

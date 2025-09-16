@@ -32,7 +32,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "AAPL", "passes": True})
-        mock_get.assert_called_once_with('http://screening-service:3002/screen/AAPL', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://screening-service:3002/screen/AAPL', params={}, timeout=40)
 
     # Test to verify query parameters are forwarded
     @patch('requests.get')
@@ -45,7 +45,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "MSFT", "analysis": "VCP detected"})
-        mock_get.assert_called_once_with('http://analysis-service:3003/analyze/MSFT', params={'mode': 'fast'}, timeout=20)
+        mock_get.assert_called_once_with('http://analysis-service:3003/analyze/MSFT', params={'mode': 'fast'}, timeout=40)
 
     # Corrected test to verify the right endpoint is called
     @patch('requests.get')
@@ -58,7 +58,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, ["AAPL", "GOOG", "TSLA"])
-        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=20)
+        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=40)
 
     @patch('requests.post')
     def test_routes_post_to_cache_clear_endpoint(self, mock_post):
@@ -68,7 +68,7 @@ class TestGateway(unittest.TestCase):
         response = self.app.post('/cache/clear', data=json.dumps({}), content_type='application/json')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"message": "All data service caches have been cleared."})
-        mock_post.assert_called_once_with('http://data-service:3001/cache/clear', json={}, timeout=20)
+        mock_post.assert_called_once_with('http://data-service:3001/cache/clear', json={}, timeout=45)
         
     # Test for the scheduler service route and its long timeout
     @patch('requests.post')

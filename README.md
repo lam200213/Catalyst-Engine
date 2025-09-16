@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-16
-Fixing the DocumentTooLarge error, create a much more scalable and robust data storage strategy for the pipeline results by: Create New Collections for Intermediate Results; Modify _store_results to Save Data to New Collections; Update run_screening_pipeline to Pass Data Correctly. Refactored the init of db in scheduler-service, promotes better organization, avoids global pollution, and makes testing easier.
+Introduce calculate_growth_rate() in financial_health_checks.py to handle all edge cases, including transitions from negative/zero to positive values, and Integrates it into all the relevant financial checks.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
