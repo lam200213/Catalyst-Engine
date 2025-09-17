@@ -229,15 +229,6 @@ def _fetch_financials_with_yfinance(ticker):
         stock = yf.Ticker(ticker)
         info = stock.info
 
-        # --- DEBUGGING BLOCK ---
-        # Print the exact data received to the container's logs
-        # print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
-        # print(f"Data received from data-service for {ticker}:", flush=True)
-        # Use json.dumps for pretty-printing the dictionary
-        # print(json.dumps(info, indent=2), flush=True)
-        # print("--- END DEBUG ---", flush=True)
-        # --- END DEBUGGING BLOCK ---
-        
         # The 'info' dictionary must exist and contain essential data to be useful.
         if not info or 'marketCap' not in info:
             logger.debug(f"yfinance info missing key fields for {ticker}.")
@@ -264,10 +255,11 @@ def _fetch_financials_with_yfinance(ticker):
             else:
                 logger.debug(f"Expected epoch for 'firstTradeDateEpoch' to be a number, but got {type(ipo_date_timestamp)} for {ticker}.")
         
-        # --- Financial Statement Formatting ---
+        # --- Financial Statement Fetching ---
         q_income_stmt = stock.quarterly_income_stmt
         a_income_stmt = stock.income_stmt
 
+        # --- Financial Statement Formatting ---
         def format_income_statement(df):
             if df is None or df.empty:
                 return []
@@ -280,15 +272,64 @@ def _fetch_financials_with_yfinance(ticker):
             
             # Manually calculate EPS if not present, using sharesOutstanding from the info dict.
             shares_outstanding = info.get('sharesOutstanding')
-            if 'Basic EPS' not in df_t.columns and 'Net Income' in df_t.columns and shares_outstanding:
-                df_t['Earnings'] = df_t['Net Income'] / shares_outstanding
+            # Initialize 'Earnings' column with data from 'Basic EPS' if it exists
+            if 'Basic EPS' in df_t.columns:
+                df_t['Earnings'] = df_t['Basic EPS']
             else:
-                df_t['Earnings'] = df_t.get('Basic EPS')
-
-            return df_t.reset_index().to_dict('records')
+                df_t['Earnings'] = None
+            
+            # Identify rows (quarters) where 'Earnings' is null or NaN
+            mask_missing_eps = pd.isnull(df_t['Earnings'])
+            
+            # For those specific rows, try to calculate EPS as a fallback
+            if shares_outstanding and 'Net Income' in df_t.columns:
+                # Calculate EPS only for the rows identified by the mask
+                df_t.loc[mask_missing_eps, 'Earnings'] = df_t.loc[mask_missing_eps, 'Net Income'] / shares_outstanding
 
         quarterly_financials = format_income_statement(q_income_stmt)
         annual_financials = format_income_statement(a_income_stmt)
+
+        # --- CONSTRUCT THE FINAL OBJECT ---
+        # Consolidate all data into the final dictionary before logging and returning.
+        final_data_object = {
+            'ticker': ticker,
+            'marketCap': info.get('marketCap'),
+            'sharesOutstanding': info.get('sharesOutstanding'),
+            'floatShares': info.get('floatShares'),
+            'ipoDate': ipo_date,
+            'annual_earnings': annual_financials,
+            'quarterly_earnings': quarterly_financials,
+            'quarterly_financials': quarterly_financials, # Retained for compatibility
+            # Also include the raw info object for complete debugging if needed
+            'raw_info': info 
+        }
+
+        # --- LOGGING/SAVING BLOCK ---
+        # Save the *final constructed data object* to a structured log file.
+        try:
+            log_dir = os.path.join('/app/logs', 'yfinance_fetches')
+            date_str = dt.datetime.now().strftime('%Y-%m-%d')
+            ticker_log_dir = os.path.join(log_dir, date_str)
+            os.makedirs(ticker_log_dir, exist_ok=True)
+            file_path = os.path.join(ticker_log_dir, f"{ticker}.json")
+            
+            # Write the 'final_data_object' to the JSON file.
+            with open(file_path, 'w') as f:
+                # Use a custom encoder to handle potential non-serializable data like NaN
+                class CustomEncoder(json.JSONEncoder):
+                    def default(self, obj):
+                        if isinstance(obj, float) and (obj != obj):  # NaN
+                            return None
+                        if isinstance(obj, (pd.Timestamp, dt.datetime, dt.date)):
+                            return obj.isoformat()  # Or str(obj) for a simple string representation
+                        return json.JSONEncoder.default(self, obj)
+                json.dump(final_data_object, f, indent=4, cls=CustomEncoder)
+                
+            logger.debug(f"Successfully saved complete financial data for {ticker} to {file_path}")
+
+        except Exception as log_e:
+            logger.error(f"Failed to save yfinance fetch log for {ticker}: {log_e}")
+        # --- END LOGGING/SAVING BLOCK ---
 
         # Consolidate all data into the final dictionary.
         return {

@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-09-16
-Introduce calculate_growth_rate() in financial_health_checks.py to handle all edge cases, including transitions from negative/zero to positive values, and Integrates it into all the relevant financial checks.
+2025-09-17
+Modify _fetch_financials_with_yfinance() to write the data to a JSON file, saving the raw info dictionary from yfinance into a neatly organized, timestamped folder on host machine, for debugging. Introduce a more Resilient EPS Calculation; 
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
