@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-17
-Optimize leadership-service: refactor the batch processing endpoint to use a ThreadPoolExecutor, allowing it to analyze multiple tickers in parallel; While increase scheduler-service Timeout. Introduced ThreadPoolExecutor for _get_single_ticker_data in data-service.
+Add sophisticated throttling and retry logic (bug fix) needed for get_batch_core_financials() to handle Yahoo's strict rate limits in data-service. Refactored cache check to improve efficiency.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

@@ -134,13 +134,26 @@ def get_batch_core_financials_route():
     if not tickers:
         return jsonify({"success": {}, "failed": []}), 200
 
-    # Fetch data from provider
-    raw_data = yfinance_provider.get_batch_core_financials(tickers, executor)
-
     processed_data = {}
+    tickers_to_fetch = []
+    
+    for ticker in tickers:
+        cached_data = financials_cache.find_one({'ticker': ticker})
+        if cached_data:
+            logger.info(f"Cache HIT for financials: {ticker}")
+            processed_data[ticker] = cached_data
+            # Refresh TTL
+            financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        else:
+            logger.info(f"Cache MISS for financials: {ticker}")
+            tickers_to_fetch.append(ticker)
+
+    # Fetch data from provider
+    tickers_to_fetch = yfinance_provider.get_batch_core_financials(tickers, executor)
+
     failed_tickers = []
 
-    for ticker, data in raw_data.items():
+    for ticker, data in tickers_to_fetch.items():
         if data:
             # Enforce data contract
             total_revenue = data.get('totalRevenue')

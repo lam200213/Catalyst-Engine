@@ -364,10 +364,10 @@ def run_screening_pipeline():
     final_candidates = []
     
     # 1. Get all available tickers from the ticker service.
-    # all_tickers, error = _get_all_tickers(job_id)
-    all_tickers = ['AAPL', 'MSFT', 'NVDA', 'JPM', 'DE', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ', 'XOM', 'V', 'PG', 'MA', 'HD', 'CVX', 'ABBV', 'LLY', 'AVGO', 'PEP', 'KO', 'COST', 'MRK', 'BAC', 'WMT', 'PFE', 'TMO', 'DIS', 'ABT', 'VZ', 'ADBE', 'CMCSA', 'CSCO', 'DHR', 'ACN', 'NFLX', 'NKE', 'MCD', 'WFC', 'LIN', 'PM', 'RTX', 'TXN', 'BMY', 'HON', 'UPS', 'IBM', 'AMGN', 'QCOM', 'COP', 'CAT', 'AMD', 'INTU', 'SPGI', 'BA', 'GS', 'PLD', 'SBUX', 'MS', 'BLK', 'MDT', 'AMT', 'GE', 'ISRG', 'LOW', 'SCHW', 'AXP', 'ELV', 'NOW', 'BKNG', 'LMT', 'ADI', 'TJX', 'DE', 'C', 'GILD', 'MMM', 'ZTS', 'SYK', 'CB', 'CI', 'MO', 'T', 'SO', 'DUK', 'MMC', 'PNC', 'USB', 'CL', 'BDX', 'NEE', 'APD', 'EOG', 'ICE', 'FISV', 'SLB', 'EQIX', 'NOC', 'ATVI', 'EMR', 'HUM', 'ITW', 'SHW', 'PGR', 'MCK', 'ETN', 'GD', 'PSA', 'AON', 'F', 'ORCL']
-    # if error:
-    #     return error
+    all_tickers, error = _get_all_tickers(job_id)
+    # all_tickers = ['AAPL', 'MSFT', 'NVDA', 'JPM', 'DE', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ', 'XOM', 'V', 'PG', 'MA', 'HD', 'CVX', 'ABBV', 'LLY', 'AVGO', 'PEP', 'KO', 'COST', 'MRK', 'BAC', 'WMT', 'PFE', 'TMO', 'DIS', 'ABT', 'VZ', 'ADBE', 'CMCSA', 'CSCO', 'DHR', 'ACN', 'NFLX', 'NKE', 'MCD', 'WFC', 'LIN', 'PM', 'RTX', 'TXN', 'BMY', 'HON', 'UPS', 'IBM', 'AMGN', 'QCOM', 'COP', 'CAT', 'AMD', 'INTU', 'SPGI', 'BA', 'GS', 'PLD', 'SBUX', 'MS', 'BLK', 'MDT', 'AMT', 'GE', 'ISRG', 'LOW', 'SCHW', 'AXP', 'ELV', 'NOW', 'BKNG', 'LMT', 'ADI', 'TJX', 'DE', 'C', 'GILD', 'MMM', 'ZTS', 'SYK', 'CB', 'CI', 'MO', 'T', 'SO', 'DUK', 'MMC', 'PNC', 'USB', 'CL', 'BDX', 'NEE', 'APD', 'EOG', 'ICE', 'FISV', 'SLB', 'EQIX', 'NOC', 'ATVI', 'EMR', 'HUM', 'ITW', 'SHW', 'PGR', 'MCK', 'ETN', 'GD', 'PSA', 'AON', 'F', 'ORCL']
+    if error:
+        return error
     print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
     
     # 2. Run Stage 1 Trend Screening on the fetched tickers.

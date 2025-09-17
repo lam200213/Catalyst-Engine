@@ -212,7 +212,7 @@ def leadership_batch_analysis():
     ]
 
     # Use a ThreadPoolExecutor to run the I/O-bound analysis tasks in parallel.
-    # The number of workers is set to 20 to balance performance without overwhelming downstream services.
+    # The number of workers is set to 10 to balance performance without overwhelming downstream services.
     with ThreadPoolExecutor(max_workers=10) as executor:
         # map() efficiently applies the function to each ticker and returns results as they complete.
         results_iterator = executor.map(_analyze_ticker_leadership, sanitized_tickers)
