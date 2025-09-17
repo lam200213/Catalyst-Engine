@@ -143,7 +143,7 @@ def retry_on_failure(attempts=3, delay=2, backoff=2):
         return wrapper
     return decorator
 
-def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None) -> dict | list | None:
+def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None, max_workers: int = 4) -> dict | list | None:
     """
     Fetches historical stock data from Yahoo Finance using curl_cffi
     and formats it into the application's standard list-of-dictionaries format.
@@ -155,13 +155,23 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period:
 
     if isinstance(tickers, list):
         results = {}
-        for ticker in tickers:
-            # Note: The `start_date` from the main call is passed down for each ticker in the batch.
+        # Use ThreadPoolExecutor for concurrent requests
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Create a future for each ticker
+            # Note: start_date is ignored for batch requests for simplicity.
             # Each ticker is fetched individually.
-            results[ticker] = _get_single_ticker_data(ticker, start_date=start_date, period=period)
+            future_to_ticker = {executor.submit(_get_single_ticker_data, ticker, start_date=start_date, period=period): ticker for ticker in tickers}
+            for future in as_completed(future_to_ticker):
+                ticker = future_to_ticker[future]
+                try:
+                    results[ticker] = future.result()
+                except Exception as exc:
+                    print(f"ERROR: {ticker} generated an exception: {exc}")
+                    results[ticker] = None
         return results
 
     # Invalid input type
+    logger.error(f"Invalid input type: {type(tickers)}")
     return None
 
 def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str = None) -> list | None:
@@ -504,7 +514,7 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
     Fetches core financial data for a list of tickers in parallel.
     """
     results = {}
-    
+
     # Limit concurrency directly to prevent rate-limiting.
     # We will use a new ThreadPoolExecutor with a controlled number of workers.
     # A max_worker value of 4 is a safe starting point.

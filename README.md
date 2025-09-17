@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-17
-Make format_income_statement function resilient to the inconsistent data types returned by the yfinance library, by preventing the TypeError and add more specific logging. Implement a professional-grade retry mechanism with exponential backoff and limit the concurrency of batch requests, handling temporary network issues and respect the API's rate limits.
+Optimize leadership-service: refactor the batch processing endpoint to use a ThreadPoolExecutor, allowing it to analyze multiple tickers in parallel; While increase scheduler-service Timeout. Introduced ThreadPoolExecutor for _get_single_ticker_data in data-service.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

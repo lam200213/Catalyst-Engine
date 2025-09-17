@@ -5,6 +5,7 @@ import os
 import re # regex import for input validation
 import logging 
 from logging.handlers import RotatingFileHandler
+from concurrent.futures import ThreadPoolExecutor
 from checks import financial_health_checks
 from checks import market_relative_checks
 from checks import industry_peer_checks
@@ -205,18 +206,21 @@ def leadership_batch_analysis():
     app.logger.info(f"Starting batch leadership analysis for {len(tickers)} tickers.")
     
     passing_candidates = []
-    
-    for ticker in tickers:
-        # Sanitize each ticker
-        if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
-            app.logger.warning(f"Skipping invalid ticker format in batch: {ticker}")
-            continue
+    # Sanitize tickers before processing
+    sanitized_tickers = [
+        t for t in tickers if re.match(r'^[A-Z0-9\.\-\^]+$', t.upper()) and '../' not in t
+    ]
 
-        result = _analyze_ticker_leadership(ticker)
+    # Use a ThreadPoolExecutor to run the I/O-bound analysis tasks in parallel.
+    # The number of workers is set to 20 to balance performance without overwhelming downstream services.
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # map() efficiently applies the function to each ticker and returns results as they complete.
+        results_iterator = executor.map(_analyze_ticker_leadership, sanitized_tickers)
         
-        # We only care about tickers that pass the screening in a batch job
-        if 'error' not in result and result.get('passes', False):
-            passing_candidates.append(result)
+        for result in results_iterator:
+            # We only care about tickers that pass the screening and have no errors.
+            if 'error' not in result and result.get('passes', False):
+                passing_candidates.append(result)
 
     execution_time = time.time() - start_time
     app.logger.info(f"Batch leadership analysis completed in {execution_time:.2f}s. Found {len(passing_candidates)} passing candidates.")
