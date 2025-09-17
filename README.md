@@ -5,11 +5,11 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-17
-Modify _fetch_financials_with_yfinance() to write the data to a JSON file, saving the raw info dictionary from yfinance into a neatly organized, timestamped folder on host machine, for debugging. Introduce a more Resilient EPS Calculation; 
+Make format_income_statement function resilient to the inconsistent data types returned by the yfinance library, by preventing the TypeError and add more specific logging. Implement a professional-grade retry mechanism with exponential backoff and limit the concurrency of batch requests, handling temporary network issues and respect the API's rate limits.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
-- **Modular Data Acquisition and Cachin g**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
+- **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Leadership Screening**: Evaluates stocks against 10 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.

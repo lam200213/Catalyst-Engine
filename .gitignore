@@ -63,6 +63,7 @@ GEMINI.md
 # Repomix Output
 repomix-output.xml
 repomix-output.txt
+.repomixignore
 
 # Logs
 logs

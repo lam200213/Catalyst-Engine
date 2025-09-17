@@ -1,14 +1,15 @@
 # backend-services/data-service/providers/yfinance_provider.py
 from curl_cffi import requests as cffi_requests
 import datetime as dt
-import time # Add time for throttling
-import random # Add random for throttling
+import time # for throttling
+import random # for throttling
 import pandas as pd
 import time
 import threading
 import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
 #DEBUG
 import logging
 import json
@@ -110,6 +111,37 @@ def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
     except (KeyError, IndexError, TypeError) as e:
         logger.error(f"Error transforming Yahoo Finance data for {ticker}: {e}")
         return None
+
+# A robust retry decorator with exponential backoff and jitter
+def retry_on_failure(attempts=3, delay=2, backoff=2):
+    """
+    A decorator to retry a function call upon encountering specific transient exceptions.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            mtries, mdelay = attempts, delay
+            while mtries > 1:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # Only retry on specific, retry-able errors
+                    error_str = str(e).lower()
+                    if "rate limited" in error_str or "could not resolve host" in error_str:
+                        ticker = args[0] if args and isinstance(args[0], str) else 'N/A'
+                        msg = f"Retrying {func.__name__} for {ticker} after error: {e}. Retries left: {mtries-1}"
+                        logger.warning(msg)
+                        # Add jitter (a small random delay) to prevent thundering herd problem
+                        time.sleep(mdelay + random.uniform(0, 1))
+                        mtries -= 1
+                        mdelay *= backoff
+                    else:
+                        # Re-raise exceptions that are not transient (e.g., programming errors)
+                        raise
+            # Perform the final attempt outside the loop
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None) -> dict | list | None:
     """
@@ -218,6 +250,7 @@ def _transform_income_statements(statements, shares_outstanding):
 
 # Functions to fetch core financial data for Leadership screening
 # A new helper using the yfinance library
+@retry_on_failure(attempts=3, delay=3, backoff=2)
 def _fetch_financials_with_yfinance(ticker):
     """
     Fetches financials for a ticker using the yfinance library.
@@ -262,7 +295,12 @@ def _fetch_financials_with_yfinance(ticker):
         # --- Financial Statement Formatting ---
         def format_income_statement(df):
             if df is None or df.empty:
+                logger.debug(f"Income statement DataFrame for {ticker} is empty or None. Skipping formatting.")
                 return []
+            
+            # debug log to inspect the raw DataFrame from yfinance
+            logger.debug(f"Raw income statement dtypes for {ticker}:\n{df.dtypes}")
+
             df_t = df.transpose()
            # This ensures consistency with the fallback method and prevents errors in leadership_logic.
             if 'Total Revenue' in df_t.columns:
@@ -276,15 +314,31 @@ def _fetch_financials_with_yfinance(ticker):
             if 'Basic EPS' in df_t.columns:
                 df_t['Earnings'] = df_t['Basic EPS']
             else:
-                df_t['Earnings'] = None
+                # Use a Pandas Series of Nones to correctly initialize the column
+                df_t['Earnings'] = pd.Series([None] * len(df_t), index=df_t.index)
             
             # Identify rows (quarters) where 'Earnings' is null or NaN
             mask_missing_eps = pd.isnull(df_t['Earnings'])
             
-            # For those specific rows, try to calculate EPS as a fallback
+            # Add a robust try-except block and type coercion around the EPS calculation
             if shares_outstanding and 'Net Income' in df_t.columns:
-                # Calculate EPS only for the rows identified by the mask
-                df_t.loc[mask_missing_eps, 'Earnings'] = df_t.loc[mask_missing_eps, 'Net Income'] / shares_outstanding
+                try:
+                    # Coerce 'Net Income' to a numeric type. Any non-numeric values become NaN.
+                    net_income_numeric = pd.to_numeric(df_t.loc[mask_missing_eps, 'Net Income'], errors='coerce')
+                    # Perform division; operations with NaN will result in NaN, which is handled later.
+                    df_t.loc[mask_missing_eps, 'Earnings'] = net_income_numeric / shares_outstanding
+                except Exception as e:
+                    logger.error(f"Error during fallback EPS calculation for {ticker}: {e}. Some 'Earnings' values may be null.")
+
+            # Convert the DataFrame to a list of dictionaries
+            records = df_t.reset_index().to_dict('records')
+            
+            # Final loop to replace any pandas NaN/NaT with None for perfect JSON compatibility
+            for record in records:
+                for key, value in record.items():
+                    if pd.isna(value):
+                        record[key] = None
+            return records
 
         quarterly_financials = format_income_statement(q_income_stmt)
         annual_financials = format_income_statement(a_income_stmt)
@@ -344,7 +398,7 @@ def _fetch_financials_with_yfinance(ticker):
         }
     except Exception as e:
         # Catch any other unexpected errors from the yfinance library call.
-        logger.error(f"An unhandled exception occurred in the yfinance library for {ticker}: {e}")
+        logger.error(f"CRITICAL FAILURE in _fetch_financials_with_yfinance for {ticker}. The function will return None. Error: {e}", exc_info=True)
         return None
     
 def get_core_financials(ticker_symbol):
@@ -450,15 +504,18 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
     Fetches core financial data for a list of tickers in parallel.
     """
     results = {}
-    future_to_ticker = {executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
-
-    for future in as_completed(future_to_ticker):
-        ticker = future_to_ticker[future]
-        try:
-            data = future.result()
-            results[ticker] = data
-        except Exception as e:
-            logger.error(f"Failed to process {ticker} in batch. Error: {e}")
-            results[ticker] = None
-            
+    
+    # Limit concurrency directly to prevent rate-limiting.
+    # We will use a new ThreadPoolExecutor with a controlled number of workers.
+    # A max_worker value of 4 is a safe starting point.
+    with ThreadPoolExecutor(max_workers=4) as limited_executor:
+        future_to_ticker = {limited_executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                data = future.result()
+                results[ticker] = data
+            except Exception as e:
+                logger.error(f"Failed to process {ticker} in batch after all retries. Error: {e}")
+                results[ticker] = None
     return results

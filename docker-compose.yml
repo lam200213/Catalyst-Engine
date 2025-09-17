@@ -20,6 +20,10 @@ services:
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
       YAHOO_FINANCE_PROXIES: ${YAHOO_FINANCE_PROXIES}
+    # Add a DNS configuration for network stability
+    dns:
+      - 1.1.1.1  # Cloudflare DNS
+      - 8.8.8.8  # Google DNS
     depends_on:
       - mongodb
     networks:
