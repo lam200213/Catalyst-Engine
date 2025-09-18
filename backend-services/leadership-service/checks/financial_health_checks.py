@@ -8,7 +8,7 @@ import numpy as np
 from .utils import failed_check
 
 # Get a logger that's a child of the app.logger, so it inherits the file handler
-logger = logging.getLogger('app.logic')
+logger = logging.getLogger(__name__)
 
 # Constants for market cap ranges (in USD)
 MIN_MARKET_CAP = 300_000_000      # $300M

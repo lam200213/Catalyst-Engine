@@ -7,7 +7,7 @@ from datetime import datetime
 from .utils import failed_check
 
 # Get a logger that's a child of the app.logger, so it inherits the file handler
-logger = logging.getLogger('app.logic')
+logger = logging.getLogger(__name__)
 
 DATA_SERVICE_URL = "http://data-service:3001"
 

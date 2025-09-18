@@ -20,6 +20,7 @@ services:
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
       YAHOO_FINANCE_PROXIES: ${YAHOO_FINANCE_PROXIES}
+      LOG_LEVEL: INFO
     # Add a DNS configuration for network stability
     dns:
       - 1.1.1.1  # Cloudflare DNS
@@ -28,12 +29,10 @@ services:
       - mongodb
     networks:
       - app-network
-    # for development
     volumes:
       - ./backend-services/data-service:/app
-      # Mount local directory to container's /app
-      # - yahoo_tmp:/tmp  
-      # Persistent storage for /tmp
+      # for development: Mount local directory to container's /app (for Live Code Reloading)
+      - ./logs/data-service:/app/logs
     
 
   screening-service:
@@ -44,14 +43,17 @@ services:
     environment:
       PORT: 3002
       DATA_SERVICE_URL: http://data-service:3001
+      LOG_LEVEL: INFO
     depends_on:
       - data-service
     networks:
       - app-network
-    # for development  
     volumes:
       - ./backend-services/screening-service:/app 
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/screening-service:/app/logs
+    
+    
 
   analysis-service:
     build: ./backend-services/analysis-service
@@ -61,14 +63,15 @@ services:
     environment:
       PORT: 3003
       DATA_SERVICE_URL: http://data-service:3001
+      LOG_LEVEL: INFO
     depends_on:
       - data-service
     networks:
       - app-network
-    # for development  
     volumes:
       - ./backend-services/analysis-service:/app 
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/analysis-service:/app/logs
  
   scheduler-service:
     build: ./backend-services/scheduler-service
@@ -82,6 +85,7 @@ services:
       SCREENING_SERVICE_URL: http://screening-service:3002
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
+      LOG_LEVEL: INFO
     depends_on:
       - mongodb
       - ticker-service
@@ -90,10 +94,10 @@ services:
       - leadership-service
     networks:
       - app-network
-    # for development  
     volumes:
       - ./backend-services/scheduler-service:/app
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/scheduler-service:/app/logs
 
   leadership-service:
     build: ./backend-services/leadership-service
@@ -103,13 +107,15 @@ services:
     environment:
       PORT: 3005
       DATA_SERVICE_URL: http://data-service:3001
+      LOG_LEVEL: INFO
     depends_on:
       - data-service
     networks:
       - app-network
     volumes:
       - ./backend-services/leadership-service:/app
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/leadership-service:/app/logs
 
   ticker-service:
     build: ./backend-services/ticker-service
@@ -118,12 +124,13 @@ services:
       - "5001:5001"
     environment:
       PORT: 5001
+      LOG_LEVEL: INFO
     networks:
       - app-network
-    # for development  
     volumes:
       - ./backend-services/ticker-service:/app 
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/ticker-service:/app/logs
 
   api-gateway:
     build: ./backend-services/api-gateway
@@ -138,6 +145,7 @@ services:
       SCHEDULER_SERVICE_URL: http://scheduler-service:3004
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
       TICKER_SERVICE_URL: http://ticker-service:5001
+      LOG_LEVEL: INFO
     depends_on:
       - data-service
       - screening-service
@@ -147,10 +155,10 @@ services:
       - ticker-service
     networks:
       - app-network
-    # for development  
     volumes:
       - ./backend-services/api-gateway:/app 
-    # Mount local directory to container's /app
+      # for development: Mount local directory to container's /app
+      - ./logs/api-gateway:/app/logs
 
   # for production build with static Nginx server
   # frontend-app:
@@ -186,8 +194,6 @@ services:
 
 volumes:
   mongodb_data:
-  #yahoo_tmp:
-  # for debug, saving the temporary files of yfinance response 
 
 networks:
   app-network:

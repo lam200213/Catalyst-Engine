@@ -25,18 +25,28 @@ PORT = int(os.getenv("PORT", 5000))
 # --- Structured Logging Setup ---
 def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
+    log_directory = "/app/logs"
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
+
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+    
+    # The filename is now specific to the service and in a dedicated folder.
+    log_file = os.path.join(log_directory, "leadership_service.log")
+
     # Create a rotating file handler to prevent log files from growing too large
     # It will create up to 5 backup files of 5MB each.
     file_handler = RotatingFileHandler(
-        'leadership_analysis.log', 
+        log_file, 
         maxBytes=5 * 1024 * 1024,  # 5 MB
         backupCount=5
     )
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(log_level)
 
     # Create a console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(log_level)
 
     # Define the log format
     log_formatter = logging.Formatter(
@@ -49,7 +59,7 @@ def setup_logging(app):
     # Add handlers to the app's logger
     app.logger.addHandler(file_handler)
     app.logger.addHandler(console_handler)
-    app.logger.setLevel(logging.INFO)
+    app.logger.setLevel(log_level)
     
     # Prevent the root logger from handling messages again
     app.logger.propagate = False
