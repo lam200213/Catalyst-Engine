@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-18
-Refactored test files in leadership-service; Debugged test cases in data-service
+Moving the industry grouping logic into the leadership-service
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

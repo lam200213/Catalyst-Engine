@@ -369,6 +369,7 @@ def _fetch_financials_with_yfinance(ticker):
         'marketCap': info.get('marketCap'),
         'sharesOutstanding': info.get('sharesOutstanding'),
         'floatShares': info.get('floatShares'),
+        'industry': info.get('industry'),
         'ipoDate': ipo_date,
         'annual_earnings': annual_financials,
         'quarterly_earnings': quarterly_financials,

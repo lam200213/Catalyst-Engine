@@ -171,6 +171,7 @@ def _analyze_ticker_leadership(ticker):
         'ticker': ticker,
         'passes': passes_check,
         'details': results,
+        'industry': financial_data.get('industry'),
     }
 
 # helper function to safely check the 'pass' status from either a dictionary or a direct boolean.
@@ -216,6 +217,7 @@ def leadership_batch_analysis():
     app.logger.info(f"Starting batch leadership analysis for {len(tickers)} tickers.")
     
     passing_candidates = []
+    unique_industries = set()
     # Sanitize tickers before processing
     sanitized_tickers = [
         t for t in tickers if re.match(r'^[A-Z0-9\.\-\^]+$', t.upper()) and '../' not in t
@@ -231,12 +233,15 @@ def leadership_batch_analysis():
             # We only care about tickers that pass the screening and have no errors.
             if 'error' not in result and result.get('passes', False):
                 passing_candidates.append(result)
+                if result.get('industry'):
+                    unique_industries.add(result['industry'])
 
     execution_time = time.time() - start_time
     app.logger.info(f"Batch leadership analysis completed in {execution_time:.2f}s. Found {len(passing_candidates)} passing candidates.")
     
     response = {
         'passing_candidates': passing_candidates,
+        'unique_industries_count': len(unique_industries),
         'metadata': {
             'total_processed': len(tickers),
             'total_passed': len(passing_candidates),

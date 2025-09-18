@@ -33,7 +33,7 @@ def setup_logging(app):
 
     # Create a rotating file handler to prevent log files from growing too large.
     file_handler = RotatingFileHandler(
-        'data_service.log',
+        log_file,
         maxBytes=5 * 1024 * 1024,  # 5 MB
         backupCount=5
     )

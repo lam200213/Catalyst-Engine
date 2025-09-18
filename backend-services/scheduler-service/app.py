@@ -184,49 +184,17 @@ def _run_vcp_analysis(job_id, tickers):
     logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
     return final_candidates
 
-def _count_unique_industries(job_id, vcp_survivors):
-    """Count unique industries from VCP survivors."""
-    if not vcp_survivors:
-        logger.info(f"Job {job_id}: No VCP survivors to process for industry counting.")
-        return 0
-    
-    unique_industries = set()
-    for candidate in vcp_survivors:
-        ticker = candidate.get('ticker')
-        if not ticker:
-            continue
-            
-        try:
-            # Call the data service to get industry information
-            resp = requests.get(f"{DATA_SERVICE_URL}/industry/peers/{ticker}", timeout=30)
-            if resp.status_code == 200:
-                try:
-                    industry_data = resp.json()
-                    industry = industry_data.get('industry')
-                    if industry:
-                        unique_industries.add(industry)
-                except requests.exceptions.JSONDecodeError:
-                    logger.warning(f"Job {job_id}: Could not decode JSON for industry data of {ticker}. Skipping.", exc_info=True)
-                    continue
-        except requests.exceptions.RequestException:
-            logger.warning(f"Job {job_id}: Could not fetch industry data for {ticker}. Skipping.", exc_info=True)
-            continue
-    
-    unique_count = len(unique_industries)
-    logger.info(f"Job {job_id}: Counted {unique_count} unique industries from {len(vcp_survivors)} VCP survivors.")
-    return unique_count
-
 def _run_leadership_screening(job_id, vcp_survivors):
     """Run leadership screening on VCP survivors, passing in the current market trend."""
     if not vcp_survivors:
         logger.info(f"Job {job_id}: Skipping leadership screening, no VCP survivors.")
-        return []
+        return [], 0
 
     # Extract just the ticker symbols to send in the request
     vcp_tickers = [candidate.get('ticker') for candidate in vcp_survivors if candidate.get('ticker')]
     if not vcp_tickers:
         logger.warning(f"Job {job_id}: No valid tickers found in VCP survivors list.")
-        return []
+        return [], 0
 
     logger.info(f"Job {job_id}: Sending {len(vcp_tickers)} tickers to leadership-service for batch screening.")
     try:
@@ -245,9 +213,10 @@ def _run_leadership_screening(job_id, vcp_survivors):
         try:
             result = resp.json()
             passing_candidates_details = result.get('passing_candidates', [])
+            unique_industries_count = result.get('unique_industries_count', 0)
         except requests.exceptions.JSONDecodeError:
             logger.error(f"Job {job_id}: Could not decode JSON from leadership-service batch endpoint.", exc_info=True)
-            return []
+            return [], 0
 
         # Create a dictionary for quick lookup of leadership results by ticker
         leadership_results_map = {item['ticker']: item['details'] for item in passing_candidates_details}
@@ -266,11 +235,11 @@ def _run_leadership_screening(job_id, vcp_survivors):
                 final_candidates.append(enriched_candidate)
         
         logger.info(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(final_candidates)} tickers.")
-        return final_candidates
+        return final_candidates, unique_industries_count
 
     except requests.exceptions.RequestException:
         logger.error(f"Job {job_id}: Failed to connect to leadership-service for batch screening.", exc_info=True)
-        return [] # Return empty list on failure to prevent entire job from crashing
+        return [], 0 # Return empty list on failure to prevent entire job from crashing, Return 0 for industry count on error
 
 # Function to store a list of documents for a specific stage
 def store_stage_survivors(job_id, collection, survivors, stage_name):
@@ -380,14 +349,11 @@ def run_screening_pipeline():
     vcp_survivors = _run_vcp_analysis(job_id, trend_survivors)
     logger.info(f"Job {job_id}: Funnel: After VCP analysis, {len(vcp_survivors)} VCP survivors found.")
     
-    # 4. Run "How to Count Unique Industries" task
-    unique_industries_count = _count_unique_industries(job_id, vcp_survivors)
-
-    # 5. Run Stage 3 Leadership Screening on VCP survivors
-    leadership_survivors = _run_leadership_screening(job_id, vcp_survivors)
+    # 4. Run Stage 3 Leadership Screening on VCP survivors
+    leadership_survivors, unique_industries_count = _run_leadership_screening(job_id, vcp_survivors)
     logger.info(f"Job {job_id}: Funnel: After leadership screening, {len(leadership_survivors)} final candidates found.")
     
-    # 6. Prepare and store results and summary
+    # 5. Prepare and store results and summary
     final_candidates = leadership_survivors
 
     end_time = time.time()
@@ -421,7 +387,7 @@ def run_screening_pipeline():
     if not success:
         return error_info
     
-    # 7. Return a success response with job details.
+    # 6. Return a success response with job details.
 
     excluded_keys = {"trend_survivors"}
 
