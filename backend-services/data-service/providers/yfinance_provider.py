@@ -277,6 +277,15 @@ def _fetch_financials_with_yfinance(ticker):
         logger.debug(f"yfinance info missing key fields for {ticker}.")
         return None
 
+    # --- DEBUGGING BLOCK ---
+    # Print the exact data received to the container's logs
+    print("--- LEADERSHIP-SERVICE DEBUG ---", flush=True)
+    print(f"Data received from data-service for {ticker}:", flush=True)
+    # # Use json.dumps for pretty-printing the dictionary
+    print(json.dumps(info, indent=2), flush=True)
+    print("--- END DEBUG ---", flush=True)
+    # --- END DEBUGGING BLOCK ---
+
     # --- IPO Date Handling ---
     # Yahoo Finance provides the 'firstTradeDateEpoch', which is the timestamp
     # of the first trade recorded. This serves as a reliable proxy for the IPO date.

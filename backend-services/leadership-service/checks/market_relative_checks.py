@@ -169,6 +169,9 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
         if not market_trends_data:
             details.update(failed_check(metric_key, "Market trends data not available."))
             return
+        if len(market_trends_data) < 8:
+            details.update(failed_check(metric_key, "Market trends data is insufficient (requires >= 8 days)."))
+            return
 
         # --- 1. Determine Market Context ---
         current_market_trend_info = market_trends_data[-1]
@@ -215,16 +218,17 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
         elif is_recovery_phase:
             # New High Check During Market Recovery
             new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
-            is_pass = new_high_in_20d_after_turn
+            is_pass = new_high_in_last_20d
             message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
                        f"a new 52-week high within 20 days of the turning point, {high_date}.")
 
-            sub_results['new_high_last_20d'] = {
+            sub_results['new_52_week_high_last_20d'] = {
                 "pass": is_pass,
                 "high_date": high_date,
                 "message": message
             }
 
+            recent_breakout = False
             # Breakout Check During Market Recovery
             if turning_point_date and stock_data and len(stock_data) >= 20:
                 # Look for a breakout in the last 20 trading days
@@ -269,7 +273,7 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
 
             message = (f"Stock {'showed' if is_pass else 'did not show'} "
                        f"recent strength by making a new 52-week high in the last 20 days, {high_date}.")
-            sub_results['new_high_last_20d'] = {
+            sub_results['new_52_week_high_last_20d'] = {
                 "pass": new_high_in_last_20d,
                 "high_date": high_date,
                 "message": message

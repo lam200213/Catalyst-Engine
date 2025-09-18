@@ -682,6 +682,8 @@ class TestBatchFinancialsEndpoint(unittest.TestCase):
     def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_core_financials, mock_init_db):
         """Test that missing data contract fields are handled with default values."""
         tickers = ["GOOG", "AMZN"]
+        self.mock_financials_cache.find_one.return_value = None
+        
         mock_get_batch_core_financials.return_value = {
             "GOOG": {
                 "totalRevenue": 100000000000,

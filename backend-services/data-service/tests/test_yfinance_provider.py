@@ -108,18 +108,73 @@ class TestYFinanceProviderFinancials(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch('providers.yfinance_provider.yf.Ticker')
-    def test_fetch_financials_with_yfinance_exception(self, mock_yfinance_ticker):
+    def test_fetch_financials_with_yfinance_raises_on_non_retryable_exception(self, mock_yfinance_ticker):
         """
-        - Test that the function returns None if the yfinance library raises an exception.
+        Tests that a non-retryable exception (e.g., generic API error) propagates immediately,
+        without triggering retries in the decorator.
         """
         # --- Arrange ---
-        mock_yfinance_ticker.side_effect = Exception("API limit reached")
+        mock_yfinance_ticker.side_effect = Exception("Generic API error")  # Does not match "rate limited" or "could not resolve host"
+
+        # --- Act & Assert ---
+        with self.assertRaises(Exception) as cm:
+            yfinance_provider._fetch_financials_with_yfinance('ERROR')
+        
+        # Verify the exception message and that no retries occurred (call_count == 1)
+        self.assertEqual(str(cm.exception), "Generic API error")
+        self.assertEqual(mock_yfinance_ticker.call_count, 1)  # Immediate raise, no retries
+
+    @patch('providers.yfinance_provider.yf.Ticker')
+    def test_fetch_financials_with_yfinance_retries_and_recovers(self, mock_yfinance_ticker):
+        """
+        Tests that a retryable exception triggers retries in the decorator, and the function
+        succeeds/returns data on the final attempt.
+        """
+        # --- Arrange ---
+        # Simulate 2 failures (retryable) + success on 3rd call (default: attempts=3)
+        fail_exception = Exception("rate limited")  # Matches decorator condition
+        success_mock = MagicMock()
+        success_mock.info = {
+            'marketCap': 2.5e12,
+            'sharesOutstanding': 15e9,
+            'floatShares': 14.9e9,
+            'firstTradeDateMilliseconds': 345479400000
+        }
+        # Mock income statements minimally to avoid downstream errors
+        import pandas as pd
+        date_col = pd.to_datetime(['2023-09-30'])
+        success_mock.quarterly_income_stmt = pd.DataFrame(
+            [[1000], [100]], index=['Total Revenue', 'Net Income'], columns=date_col
+        )
+        success_mock.income_stmt = pd.DataFrame(
+            [[4000], [400]], index=['Total Revenue', 'Net Income'], columns=date_col
+        )
+
+        mock_yfinance_ticker.side_effect = [fail_exception, fail_exception, success_mock]
 
         # --- Act ---
-        result = yfinance_provider._fetch_financials_with_yfinance('ERROR')
+        result = yfinance_provider._fetch_financials_with_yfinance('AAPL')
 
         # --- Assert ---
-        self.assertIsNone(result)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['marketCap'], 2.5e12)
+        self.assertEqual(mock_yfinance_ticker.call_count, 3)  # 2 retries + 1 success
+
+    @patch('providers.yfinance_provider.yf.Ticker')  # Optional: 3rd test for final failure after retries
+    def test_fetch_financials_with_yfinance_raises_after_exhausted_retries(self, mock_yfinance_ticker):
+        """
+        Tests that repeated retryable exceptions exhaust retries and raise on the final call.
+        """
+        # --- Arrange ---
+        fail_exception = Exception("rate limited")
+        mock_yfinance_ticker.side_effect = [fail_exception] * 4  # More than attempts=3
+
+        # --- Act & Assert ---
+        with self.assertRaises(Exception) as cm:
+            yfinance_provider._fetch_financials_with_yfinance('ERROR')
+        
+        self.assertEqual(str(cm.exception), "rate limited")
+        self.assertEqual(mock_yfinance_ticker.call_count, 3)  # 2 retries + 1 final raise
 
     # --- Tests for the orchestrator function: get_core_financials ---
 

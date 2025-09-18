@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-18
-Refactoring the logging mechanism in both data-service and leadership-service for Centralized Log Directory, Unified Configuration Pattern and Dynamic Log Level: The logging level (e.g., INFO, DEBUG) will be configurable via an environment variable (LOG_LEVEL).
+Refactored test files in leadership-service; Debugged test cases in data-service
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
