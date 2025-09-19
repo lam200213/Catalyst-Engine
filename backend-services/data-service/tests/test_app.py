@@ -3,7 +3,8 @@ from unittest.mock import patch, MagicMock, ANY
 import os
 import sys
 from datetime import date, datetime, timezone, timedelta
-from app import app, price_cache, news_cache, PRICE_CACHE_TTL, NEWS_CACHE_TTL, init_db
+from app import app
+from database import init_db
 from pymongo.errors import OperationFailure
 
 # Add the parent directory to the sys.path to allow imports from the main app
@@ -15,7 +16,7 @@ class TestDataServiceDbInit(unittest.TestCase):
     Tests the init_db function, specifically its ability to handle
     index conflicts gracefully.
     """
-    @patch('app.MongoClient')
+    @patch('database.MongoClient')
     def test_init_db_handles_index_conflict(self, mock_mongo_client):
         """
         Verifies that if an index conflict occurs, the app drops the old
@@ -37,11 +38,14 @@ class TestDataServiceDbInit(unittest.TestCase):
         mock_db.price_cache = mock_price_collection
         mock_db.news_cache = mock_news_collection
         mock_db.financials_cache = mock_financials_collection
+        mock_db.industry_cache = MagicMock()
+        mock_db.market_trends = MagicMock()
         mock_mongo_client.return_value.stock_analysis = mock_db
+        mock_logger = MagicMock()
 
         # --- Act ---
         # Call the function we are testing
-        init_db()
+        init_db(mock_logger)
 
         # --- Assert ---
         # 1. The code should have tried to create the index, failed, and then dropped it.
@@ -49,7 +53,7 @@ class TestDataServiceDbInit(unittest.TestCase):
         # 2. The code should have tried to create the index a second time.
         self.assertEqual(mock_price_collection.create_index.call_count, 2)
 
-    @patch('app.MongoClient')
+    @patch('database.MongoClient')
     def test_init_db_crashes_on_other_failures(self, mock_mongo_client):
         """
         Verifies that for any other database error, the app does not
@@ -66,24 +70,33 @@ class TestDataServiceDbInit(unittest.TestCase):
         mock_db.price_cache = mock_price_collection
         mock_db.financials_cache = mock_financials_collection
         mock_mongo_client.return_value.stock_analysis = mock_db
+        mock_logger = MagicMock()
 
         # --- Act & Assert ---
         # Verify that the original error is re-raised, which would halt the app
         with self.assertRaises(OperationFailure):
-            init_db()
+            init_db(mock_logger)
 
-# Test Class for Market Trend Endpoints
-@patch('app.init_db')
-class TestMarketTrendEndpoints(unittest.TestCase):
+# Base test class for setting up a testing app instance and patching collections
+class BaseTest(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.app = app.test_client()
-        self.market_trends_patcher = patch('app.market_trends', MagicMock())
-        self.mock_market_trends = self.market_trends_patcher.start()
+
+        self.collections_patcher = patch('app.collections', {
+            'price_cache': MagicMock(),
+            'news_cache': MagicMock(),
+            'financials_cache': MagicMock(),
+            'industry_cache': MagicMock(),
+            'market_trends': MagicMock(),
+        })
+        self.mock_collections = self.collections_patcher.start()
 
     def tearDown(self):
-        self.market_trends_patcher.stop()
+        self.collections_patcher.stop()
 
+# Test Class for Market Trend Endpoints
+class TestMarketTrendEndpoints(BaseTest):
     def _generate_mock_price_data(self, base_date_str, num_days, final_price=None):
         """
         Helper to generate time-series data for mocking.
@@ -104,8 +117,8 @@ class TestMarketTrendEndpoints(unittest.TestCase):
         return data
 
 
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_calculate_market_trend_success(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_calculate_market_trend_success(self, mock_get_stock_data):
         """
         Tests the on-demand calculation of market trends, ensuring it correctly
         processes historical data to determine the trend.
@@ -134,13 +147,13 @@ class TestMarketTrendEndpoints(unittest.TestCase):
         self.assertEqual(data['trends'][0]['trend'], 'Bullish') 
         
         # Verify it was stored in the database via upsert
-        self.mock_market_trends.update_one.assert_called_once()
-        call_args, _ = self.mock_market_trends.update_one.call_args
+        self.mock_collections['market_trends'].update_one.assert_called_once()
+        call_args, _ = self.mock_collections['market_trends'].update_one.call_args
         self.assertEqual(call_args[0], {'date': calc_date}) # The query filter
         self.assertIn('trend', call_args[1]['$set']) # The update document
         
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_calculate_market_trend_bearish_scenario(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_calculate_market_trend_bearish_scenario(self, mock_get_stock_data):
         """
         Tests that the endpoint correctly identifies a Bearish trend when the
         current price is below the 50-day SMA.
@@ -168,8 +181,8 @@ class TestMarketTrendEndpoints(unittest.TestCase):
         # With the final price well below the historical average, the trend should be Bearish.
         self.assertEqual(data['trends'][0]['trend'], 'Bearish')
 
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_calculate_market_trend_handles_non_trading_day(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_calculate_market_trend_handles_non_trading_day(self, mock_get_stock_data):
         """
         Tests that the endpoint gracefully handles a date for which no price data
         is available (e.g., a weekend or holiday).
@@ -206,9 +219,9 @@ class TestMarketTrendEndpoints(unittest.TestCase):
         self.assertIn(non_trading_day, data['failed_dates'])
         
         # Ensure the database was still updated for the successful date
-        self.mock_market_trends.update_one.assert_called_once()
+        self.mock_collections['market_trends'].update_one.assert_called_once()
 
-    def test_calculate_market_trend_invalid_payload(self, mock_init_db):
+    def test_calculate_market_trend_invalid_payload(self):
         """
         Tests that the endpoint returns a 400 Bad Request for various invalid payloads.
         """
@@ -224,7 +237,7 @@ class TestMarketTrendEndpoints(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertIn('error', response.json)
 
-    def test_get_market_trends_with_range(self, mock_init_db):
+    def test_get_market_trends_with_range(self):
         """
         Tests retrieval of market trends using a date range via GET /market-trends.
         """
@@ -240,7 +253,7 @@ class TestMarketTrendEndpoints(unittest.TestCase):
             {"date": "2025-08-25", "trend": "Bullish", "details": {}}, # Mock full document
             {"date": "2025-08-26", "trend": "Neutral", "details": {}}
         ]
-        self.mock_market_trends.find.return_value = mock_cursor
+        self.mock_collections['market_trends'].find.return_value = mock_cursor
 
         # Act
         response = self.app.get('/market-trends?start_date=2025-08-25&end_date=2025-08-26')
@@ -249,30 +262,15 @@ class TestMarketTrendEndpoints(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, mock_trend_data)
         # Verify the database was queried with the correct date range filter
-        self.mock_market_trends.find.assert_called_once_with(
+        self.mock_collections['market_trends'].find.assert_called_once_with(
             {"date": {"$gte": "2025-08-25", "$lte": "2025-08-26"}}, 
             {'_id': 0}
         )
 
 # Test class for caching logic
-@patch('app.init_db') # Patch init_db to prevent it from running in these tests
-class TestDataServiceCacheLogic(unittest.TestCase):
-    def setUp(self):
-        app.config['TESTING'] = True
-        self.app = app.test_client()
-        
-        # Patch the global collection variables for test isolation
-        self.price_cache_patcher = patch('app.price_cache', MagicMock())
-        self.news_cache_patcher = patch('app.news_cache', MagicMock())
-        self.mock_price_cache = self.price_cache_patcher.start()
-        self.mock_news_cache = self.news_cache_patcher.start()
-
-    def tearDown(self):
-        self.price_cache_patcher.stop()
-        self.news_cache_patcher.stop()
-
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_incremental_price_fetch(self, mock_get_stock_data, mock_init_db):
+class TestDataServiceCacheLogic(BaseTest):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_incremental_price_fetch(self, mock_get_stock_data):
         """
         Tests that the service fetches only new data if recent data is in cache.
         """
@@ -286,7 +284,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
             "data": [{"formatted_date": last_cached_date_str, "close": 155.0}],
             "createdAt": datetime.now(timezone.utc) - timedelta(days=1)
         }
-        self.mock_price_cache.find_one.return_value = cached_record
+        self.mock_collections['price_cache'].find_one.return_value = cached_record
         mock_get_stock_data.return_value = [{"formatted_date": "2025-07-20", "close": 156.0}]
 
         # Act
@@ -296,10 +294,10 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         expected_start_date = last_cached_date_obj + timedelta(days=1)
         mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date, period=None)
         # Assert that the existing cache record was updated, not a new one inserted
-        self.mock_price_cache.update_one.assert_called_once()
+        self.mock_collections['price_cache'].update_one.assert_called_once()
     
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_price_cache_is_used_when_fresh(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_price_cache_is_used_when_fresh(self, mock_get_stock_data):
         """
         Verifies that if cache is fresh, the external provider is not called.
         """
@@ -311,7 +309,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
             "data": [{"formatted_date": fresh_date, "close": 400.0}],
             "createdAt": datetime.now(timezone.utc)
         }
-        self.mock_price_cache.find_one.return_value = fresh_record
+        self.mock_collections['price_cache'].find_one.return_value = fresh_record
 
         # Act
         response = self.app.get(f'/price/{ticker}?source=yfinance')
@@ -321,8 +319,8 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response.json, fresh_record['data'])
         mock_get_stock_data.assert_not_called() # Crucially, the provider was not hit
 
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_data_not_found_from_provider_and_cache(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_data_not_found_from_provider_and_cache(self, mock_get_stock_data):
         """
         Tests the scenario where the data provider returns None and no data is in cache,
         expecting a 404 Not Found response.
@@ -330,7 +328,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         ticker = "GOOG"
         # Arrange: Simulate no data from provider and no data in cache
         mock_get_stock_data.return_value = None
-        self.mock_price_cache.find_one.return_value = None
+        self.mock_collections['price_cache'].find_one.return_value = None
 
         # Act
         response = self.app.get(f'/price/{ticker}?source=yfinance')
@@ -340,17 +338,31 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response.json, {"error": f"Could not retrieve price data for {ticker} from yfinance."})
         mock_get_stock_data.assert_called_once_with(ticker, start_date=None, period="1y")
 
-    def test_clear_cache_endpoint(self, mock_init_db):
+# A base test class that also patches the init_db function
+class BaseTestWithDbMock(BaseTest):
+    def setUp(self):
+        super().setUp()
+        self.init_db_patcher = patch('app.init_db')
+        self.mock_init_db = self.init_db_patcher.start()
+
+    def tearDown(self):
+        self.init_db_patcher.stop()
+        super().tearDown()
+
+class TestClearCacheEndpoint(BaseTestWithDbMock):
+    def test_clear_cache_endpoint(self):
         """Tests that the POST /cache/clear endpoint works."""
         response = self.app.post('/cache/clear')
         self.assertEqual(response.status_code, 200)
-        self.mock_price_cache.drop.assert_called_once()
-        self.mock_news_cache.drop.assert_called_once()
+        self.mock_collections['price_cache'].drop.assert_called_once()
+        self.mock_collections['news_cache'].drop.assert_called_once()
         # The real init_db should be called after dropping
-        mock_init_db.assert_called_once()
+        self.mock_init_db.assert_called_once_with(ANY)
 
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_batch_endpoint_success(self, mock_get_stock_data, mock_init_db):
+# Continue converting all other test classes to inherit from the correct base class
+class TestBatchEndpoints(BaseTest):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_endpoint_success(self, mock_get_stock_data):
         """
         Tests the /price/batch endpoint for successfully fetching data for a mix
         of cached and uncached tickers.
@@ -374,7 +386,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
             }
         ]
         # The 'find' method on a cursor returns an iterable
-        self.mock_price_cache.find.return_value = cached_db_records
+        self.mock_collections['price_cache'].find.return_value = cached_db_records
 
         # 3. Define the payload for the batch request
         request_payload = {
@@ -402,7 +414,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(len(response_data['success']), 2)
 
         # Verify cache was queried for all tickers
-        self.mock_price_cache.find.assert_called_once_with({
+        self.mock_collections['price_cache'].find.assert_called_once_with({
             'ticker': {'$in': ['CACHED', 'UNCACHED', 'FAILED']},
             'source': 'yfinance'
         })
@@ -412,9 +424,9 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'], start_date=None, period='1y')
         
         # Verify that the newly fetched data was inserted into the cache
-        self.mock_price_cache.insert_many.assert_called_once()
+        self.mock_collections['price_cache'].insert_many.assert_called_once()
 
-    def test_batch_endpoint_handles_empty_ticker_list(self, mock_init_db):
+    def test_batch_endpoint_handles_empty_ticker_list(self):
         """
         Ensures the system handles an empty ticker list gracefully and returns a
         valid, empty response.
@@ -432,9 +444,9 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         self.assertEqual(response_data['failed'], [])
         
         # Ensure no database or external calls were made
-        self.mock_price_cache.find.assert_not_called()
+        self.mock_collections['price_cache'].find.assert_not_called()
 
-    def test_batch_endpoint_handles_invalid_input(self, mock_init_db):
+    def test_batch_endpoint_handles_invalid_input(self):
         """
         Confirms that malformed requests are rejected with a 400 Bad Request.
         """
@@ -454,10 +466,10 @@ class TestDataServiceCacheLogic(unittest.TestCase):
                 self.assertIn('error', response.json)
         
         # Ensure no database or external calls were made
-        self.mock_price_cache.find.assert_not_called()
+        self.mock_collections['price_cache'].find.assert_not_called()
 
-    @patch('app.yfinance_provider.get_stock_data')
-    def test_batch_endpoint_all_tickers_cached(self, mock_get_stock_data, mock_init_db):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_endpoint_all_tickers_cached(self, mock_get_stock_data):
         """
         Verifies that the external data provider is not called if all
         requested data is already in the cache.
@@ -467,7 +479,7 @@ class TestDataServiceCacheLogic(unittest.TestCase):
             {"ticker": "AAPL", "source": "yfinance", "data": [{"close": 150}]},
             {"ticker": "MSFT", "source": "yfinance", "data": [{"close": 300}]}
         ]
-        self.mock_price_cache.find.return_value = cached_records
+        self.mock_collections['price_cache'].find.return_value = cached_records
         request_payload = {'tickers': ['AAPL', 'MSFT'], 'source': 'yfinance'}
 
         # --- Act ---
@@ -483,27 +495,17 @@ class TestDataServiceCacheLogic(unittest.TestCase):
         mock_get_stock_data.assert_not_called()
         
         # Verify the cache was queried
-        self.mock_price_cache.find.assert_called_once_with({
+        self.mock_collections['price_cache'].find.assert_called_once_with({
             'ticker': {'$in': ['AAPL', 'MSFT']},
             'source': 'yfinance'
         })
 
 # Tests for the /financials/core endpoint
-@patch('app.init_db')
-class TestFinancialsEndpoint(unittest.TestCase):
-    def setUp(self):
-        app.config['TESTING'] = True
-        self.app = app.test_client()
-        self.financials_cache_patcher = patch('app.financials_cache', MagicMock())
-        self.mock_financials_cache = self.financials_cache_patcher.start()
-
-    def tearDown(self):
-        self.financials_cache_patcher.stop()
-
-    @patch('app.yfinance_provider.get_core_financials')
-    def test_get_core_financials_endpoint(self, mock_get_core_financials, mock_init_db):
+class TestFinancialsEndpoint(BaseTest):
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_endpoint(self, mock_get_core_financials):
         """Test the happy path for the /financials/core/:ticker endpoint."""
-        self.mock_financials_cache.find_one.return_value = None
+        self.mock_collections['financials_cache'].find_one.return_value = None
         mock_get_core_financials.return_value = {
             'marketCap': 2500000000,
             'sharesOutstanding': 100000000,
@@ -516,8 +518,8 @@ class TestFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json['marketCap'], 2500000000)
 
-    @patch('app.yfinance_provider.get_core_financials')
-    def test_get_core_financials_uses_cache_when_fresh(self, mock_get_core_financials, mock_init_db):
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_uses_cache_when_fresh(self, mock_get_core_financials):
         """Tests that the provider is not called if fresh data exists in the financials cache."""
         ticker = "NVDA"
         # Arrange: Create a mock record as if it were stored in MongoDB
@@ -528,7 +530,7 @@ class TestFinancialsEndpoint(unittest.TestCase):
             "data": mock_financial_data,
             "createdAt": datetime.now(timezone.utc) # Fresh timestamp
         }
-        self.mock_financials_cache.find_one.return_value = fresh_record
+        self.mock_collections['financials_cache'].find_one.return_value = fresh_record
 
         # Act
         response = self.app.get(f'/financials/core/{ticker}')
@@ -539,27 +541,27 @@ class TestFinancialsEndpoint(unittest.TestCase):
         # Crucially, assert the external provider was NOT called
         mock_get_core_financials.assert_not_called()
         # Assert that the TTL was refreshed on cache hit
-        self.mock_financials_cache.update_one.assert_called_once()
+        self.mock_collections['financials_cache'].update_one.assert_called_once()
 
-    @patch('app.yfinance_provider.get_core_financials')
-    def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials, mock_init_db):
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_for_non_existent_ticker(self, mock_get_core_financials):
         """Test the endpoint returns 404 for a ticker with no data."""
-        self.mock_financials_cache.find_one.return_value = None
+        self.mock_collections['financials_cache'].find_one.return_value = None
         mock_get_core_financials.return_value = None
         response = self.app.get('/financials/core/NONEXISTENTTICKER')
         self.assertEqual(response.status_code, 404)
 
-    @patch('app.yfinance_provider.get_core_financials')
-    def test_get_core_financials_with_incomplete_provider_data(self, mock_get_core_financials, mock_init_db):
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_with_incomplete_provider_data(self, mock_get_core_financials):
         """Test graceful degradation when provider is missing a key."""
-        self.mock_financials_cache.find_one.return_value = None
+        self.mock_collections['financials_cache'].find_one.return_value = None
         mock_get_core_financials.return_value = {'marketCap': 2500000000} # Missing ipoDate
         response = self.app.get('/financials/core/AAPL')
         self.assertEqual(response.status_code, 200)
         self.assertIn('marketCap', response.json)
         self.assertIsNone(response.json.get('ipoDate'))
 
-    def test_get_core_financials_handles_path_traversal_attack(self, mock_init_db):
+    def test_get_core_financials_handles_path_traversal_attack(self):
         """Test endpoint rejects malicious input."""
         response = self.app.get('/financials/core/../../etc/passwd')
         self.assertEqual(response.status_code, 400)
@@ -567,19 +569,9 @@ class TestFinancialsEndpoint(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-@patch('app.init_db')
-class TestIndustryPeersEndpoint(unittest.TestCase):
-    def setUp(self):
-        app.config['TESTING'] = True
-        self.app = app.test_client()
-        self.industry_cache_patcher = patch('app.industry_cache', MagicMock())
-        self.mock_industry_cache = self.industry_cache_patcher.start()
-
-    def tearDown(self):
-        self.industry_cache_patcher.stop()
-
+class TestIndustryPeersEndpoint(BaseTest):
     @patch('app.finnhub_provider.get_company_peers_and_industry')
-    def test_get_industry_peers_cache_hit(self, mock_get_industry_peers, mock_init_db):
+    def test_get_industry_peers_cache_hit(self, mock_get_industry_peers):
         """Test the /industry/peers/:ticker endpoint with a cache hit."""
         ticker = "AAPL"
         cached_data = {
@@ -588,60 +580,49 @@ class TestIndustryPeersEndpoint(unittest.TestCase):
             "data": {"industry": "Technology", "peers": ["MSFT", "GOOGL"]},
             "createdAt": datetime.now(timezone.utc)
         }
-        self.mock_industry_cache.find_one.return_value = cached_data
+        self.mock_collections['industry_cache'].find_one.return_value = cached_data
 
         response = self.app.get(f'/industry/peers/{ticker}')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, cached_data['data'])
         mock_get_industry_peers.assert_not_called()
-        self.mock_industry_cache.update_one.assert_called_once()
+        self.mock_collections['industry_cache'].update_one.assert_called_once()
 
     @patch('app.finnhub_provider.get_company_peers_and_industry')
-    def test_get_industry_peers_cache_miss(self, mock_get_industry_peers, mock_init_db):
+    def test_get_industry_peers_cache_miss(self, mock_get_industry_peers):
         """Test the /industry/peers/:ticker endpoint with a cache miss."""
         ticker = "AAPL"
-        self.mock_industry_cache.find_one.return_value = None
+        self.mock_collections['industry_cache'].find_one.return_value = None
         mock_get_industry_peers.return_value = {"industry": "Technology", "peers": ["MSFT", "GOOGL"]}
 
         response = self.app.get(f'/industry/peers/{ticker}')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"industry": "Technology", "peers": ["MSFT", "GOOGL"]})
         mock_get_industry_peers.assert_called_once_with(ticker)
-        self.mock_industry_cache.insert_one.assert_called_once()
+        self.mock_collections['industry_cache'].insert_one.assert_called_once()
 
     @patch('app.finnhub_provider.get_company_peers_and_industry')
-    def test_get_industry_peers_data_not_found(self, mock_get_industry_peers, mock_init_db):
+    def test_get_industry_peers_data_not_found(self, mock_get_industry_peers):
         """Test the /industry/peers/:ticker endpoint when provider returns no data."""
         ticker = "NONEXISTENT"
-        self.mock_industry_cache.find_one.return_value = None
+        self.mock_collections['industry_cache'].find_one.return_value = None
         mock_get_industry_peers.return_value = None
 
         response = self.app.get(f'/industry/peers/{ticker}')
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json, {"error": "Data not found for ticker"})
         mock_get_industry_peers.assert_called_once_with(ticker)
-        self.mock_industry_cache.insert_one.assert_not_called()
+        self.mock_collections['industry_cache'].insert_one.assert_not_called()
 
-    def test_get_industry_peers_invalid_ticker_format(self, mock_init_db):
+    def test_get_industry_peers_invalid_ticker_format(self):
         """Test the /industry/peers/:ticker endpoint rejects invalid ticker format."""
         response = self.app.get('/industry/peers/../../etc/passwd')
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json, {"error": "Invalid ticker format"})
 
-@patch('app.init_db')
-class TestBatchFinancialsEndpoint(unittest.TestCase):
-    def setUp(self):
-        app.config['TESTING'] = True
-        self.app = app.test_client()
-        # Patch financials_cache even if not directly used by this endpoint, for consistency
-        self.financials_cache_patcher = patch('app.financials_cache', MagicMock())
-        self.mock_financials_cache = self.financials_cache_patcher.start()
-
-    def tearDown(self):
-        self.financials_cache_patcher.stop()
-
-    @patch('app.yfinance_provider.get_batch_core_financials')
-    def test_batch_financials_success(self, mock_get_batch_core_financials, mock_init_db):
+class TestBatchFinancialsEndpoint(BaseTest):
+    @patch('app.yf_financials_provider.get_batch_core_financials')
+    def test_batch_financials_success(self, mock_get_batch_core_financials):
         """Test the POST /financials/core/batch endpoint for successful data retrieval and contract enforcement."""
         tickers = ["AAPL", "MSFT"]
         mock_get_batch_core_financials.return_value = {
@@ -678,11 +659,11 @@ class TestBatchFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(response.json['failed'], [])
         mock_get_batch_core_financials.assert_called_once_with(tickers, ANY)
 
-    @patch('app.yfinance_provider.get_batch_core_financials')
-    def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_core_financials, mock_init_db):
+    @patch('app.yf_financials_provider.get_batch_core_financials')
+    def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_core_financials):
         """Test that missing data contract fields are handled with default values."""
         tickers = ["GOOG", "AMZN"]
-        self.mock_financials_cache.find_one.return_value = None
+        self.mock_collections['financials_cache'].find_one.return_value = None
         
         mock_get_batch_core_financials.return_value = {
             "GOOG": {
@@ -718,13 +699,13 @@ class TestBatchFinancialsEndpoint(unittest.TestCase):
         self.assertEqual(len(failed), 1)
         mock_get_batch_core_financials.assert_called_once_with(tickers + ["FAIL"], ANY)
 
-    def test_batch_financials_empty_ticker_list(self, mock_init_db):
+    def test_batch_financials_empty_ticker_list(self):
         """Test handling of an empty ticker list."""
         response = self.app.post('/financials/core/batch', json={'tickers': []})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"success": {}, "failed": []})
 
-    def test_batch_financials_invalid_payload(self, mock_init_db):
+    def test_batch_financials_invalid_payload(self):
         """Test handling of invalid request payloads."""
         # Missing 'tickers'
         response = self.app.post('/financials/core/batch', json={})

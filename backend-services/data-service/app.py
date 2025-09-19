@@ -4,17 +4,19 @@ import pandas as pd
 from flask import Flask, request, jsonify
 from datetime import date, datetime, timedelta, timezone
 import pandas_market_calendars as mcal
-from pymongo import MongoClient
-from pymongo.errors import OperationFailure, PyMongoError
 import re
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import RotatingFileHandler
 
 # Import provider modules
-from providers import yfinance_provider, finnhub_provider, marketaux_provider
+from providers import finnhub_provider, marketaux_provider
+from providers.yfin import price_provider as yf_price_provider
+from providers.yfin import financials_provider as yf_financials_provider
 # Import the logic
 from helper_functions import check_market_trend_context
+# Import db
+from database import init_db
 
 app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 3001))
@@ -63,14 +65,9 @@ def setup_logging(app):
 setup_logging(app)
 app.logger.info("Data service logging initialized.")
 
-# Global variables for MongoDB client and collections
-client = None
-db = None
-price_cache = None
-news_cache = None
-financials_cache = None
-industry_cache = None # New cache for industry data
-market_trends = None # New collection for market trends
+# Initialize database and get collection objects
+# We will access collections via the 'collections' dictionary, e.g., collections['price_cache']
+collections = init_db(app.logger)
 
 # Cache expiration times in seconds
 PRICE_CACHE_TTL = 342800 # 2 days = 172800
@@ -80,50 +77,6 @@ INDUSTRY_CACHE_TTL = 86400 # 1 day = 86400
 # Using a ThreadPoolExecutor for concurrent requests in batch endpoints
 executor = ThreadPoolExecutor(max_workers=10)
 
-# A helper function to make index creation robust
-def _create_ttl_index(collection, field, ttl_seconds, name):
-    """
-    Creates a TTL index, handling conflicts if the TTL value has changed.
-    """
-    try:
-        # Attempt to create the index with the new TTL and name
-        collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
-        app.logger.info(f"TTL index '{name}' on '{collection.name}' set to {ttl_seconds} seconds.")
-    except OperationFailure as e:
-        # Error code 85 is for "IndexOptionsConflict"
-        if e.code == 85:
-            app.logger.warning(f"Index conflict on '{collection.name}'. Dropping old index and recreating.")
-            
-            # Drop the index by its actual name, which caused the conflict.
-            collection.drop_index(name)
-            
-            # Re-create the index with the correct TTL and new name
-            collection.create_index([(field, 1)], expireAfterSeconds=ttl_seconds, name=name)
-            app.logger.info(f"Successfully recreated TTL index with new name '{name}' on '{collection.name}'.")
-        else:
-            # For any other database error, re-raise the exception to halt startup
-            raise
-
-def init_db():
-    global client, db, price_cache, news_cache, financials_cache, industry_cache, market_trends
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
-    client = MongoClient(MONGO_URI)
-    db = client.stock_analysis # Database name
-
-    price_cache = db.price_cache # Collection for price data
-    news_cache = db.news_cache   # Collection for news data
-    financials_cache = db.financials_cache # Collection for financial data
-    industry_cache = db.industry_cache # New collection for industry data
-    market_trends = db.market_trends # New collection for market trends
-
-    # Use the robust helper function to create/update TTL indexes
-    _create_ttl_index(price_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index")
-    _create_ttl_index(news_cache, "createdAt", NEWS_CACHE_TTL, "createdAt_ttl_index")
-    _create_ttl_index(financials_cache, "createdAt", PRICE_CACHE_TTL, "createdAt_ttl_index_financials")
-    _create_ttl_index(industry_cache, "createdAt", INDUSTRY_CACHE_TTL, "createdAt_ttl_index_industry")
-
-    market_trends.create_index([("date", 1)], unique=True, name="date_unique_idx")
- 
 @app.route('/financials/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
     """
@@ -144,18 +97,18 @@ def get_batch_core_financials_route():
     tickers_to_fetch = []
     
     for ticker in tickers:
-        cached_data = financials_cache.find_one({'ticker': ticker})
+        cached_data = collections['financials_cache'].find_one({'ticker': ticker})
         if cached_data:
             app.logger.info(f"Cache HIT for financials: {ticker}")
             processed_data[ticker] = cached_data
             # Refresh TTL
-            financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+            collections['financials_cache'].update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         else:
             app.logger.info(f"Cache MISS for financials: {ticker}")
             tickers_to_fetch.append(ticker)
 
     # Fetch data from provider
-    tickers_to_fetch = yfinance_provider.get_batch_core_financials(tickers, executor)
+    tickers_to_fetch = yf_financials_provider.get_batch_core_financials(tickers, executor)
 
     failed_tickers = []
 
@@ -193,20 +146,20 @@ def get_core_financials(ticker):
     if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
         return jsonify({"error": "Invalid ticker format"}), 400
 
-    cached_data = financials_cache.find_one({'ticker': ticker})
+    cached_data = collections['financials_cache'].find_one({'ticker': ticker})
     if cached_data:
         app.logger.info(f"Cache HIT for financials: {ticker}")
         # Refresh TTL
-        financials_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        collections['financials_cache'].update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
 
     app.logger.info(f"Cache MISS for financials: {ticker}")
     # If not in cache, fetch from provider
-    data = yfinance_provider.get_core_financials(ticker)
+    data = yf_financials_provider.get_core_financials(ticker)
 
     if data:
         # Cache the new data
-        financials_cache.insert_one({
+        collections['financials_cache'].insert_one({
             "ticker": ticker,
             "data": data,
             "createdAt": datetime.now(timezone.utc)
@@ -242,7 +195,7 @@ def get_batch_data():
     # --- Cache Lookup ---
     cached_results = {}
     # Find all documents where the ticker is in the requested list and source matches
-    cached_cursor = price_cache.find({
+    cached_cursor = collections['price_cache'].find({
         'ticker': {'$in': tickers},
         'source': source
     })
@@ -262,7 +215,7 @@ def get_batch_data():
     if missed_tickers:
         if source == 'yfinance':
             period_to_fetch = "1y"
-            fetched_data = yfinance_provider.get_stock_data(
+            fetched_data = yf_price_provider.get_stock_data(
                 missed_tickers, 
                 start_date=None, 
                 period=period_to_fetch
@@ -297,7 +250,7 @@ def get_batch_data():
                 "createdAt": datetime.now(timezone.utc)
             })
         if new_cache_entries:
-            price_cache.insert_many(new_cache_entries)
+            collections['price_cache'].insert_many(new_cache_entries)
             app.logger.info(f"Cached {len(new_cache_entries)} new price entries.")
 
     # --- Combine Results and Return ---
@@ -319,7 +272,7 @@ def get_data(ticker: str):
     # --- Incremental Cache Logic ---
     # This logic determines whether to perform a full data fetch or an incremental one.
     # It checks for existing cached data and its freshness.
-    cached_data = price_cache.find_one({"ticker": ticker, "source": source})
+    cached_data = collections['price_cache'].find_one({"ticker": ticker, "source": source})
     new_start_date = None # This will be set if an incremental fetch is needed.
 
     if cached_data:
@@ -337,7 +290,7 @@ def get_data(ticker: str):
                 if last_date >= (date.today() - timedelta(days=1)):
                     app.logger.info(f"Cache HIT and data is current for price: {ticker}")
                     # Refresh the TTL to keep the entry alive.
-                    price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+                    collections['price_cache'].update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
                     return jsonify(cached_data['data'])
 
                 # If data is old, set the start date for an incremental fetch.
@@ -360,7 +313,7 @@ def get_data(ticker: str):
         # Otherwise, an incremental fetch is performed using start_date.
         period_to_fetch = "1y" if not new_start_date else None
         # yfinance supports incremental fetching via the `start_date` parameter.
-        data = yfinance_provider.get_stock_data(
+        data = yf_price_provider.get_stock_data(
             ticker, 
             start_date=new_start_date, 
             period=period_to_fetch
@@ -376,7 +329,7 @@ def get_data(ticker: str):
         if new_start_date and cached_data:
             # If it was an incremental fetch, append the new data to the existing cache.
             full_data = cached_data['data'] + data
-            price_cache.update_one(
+            collections['price_cache'].update_one(
                 {"_id": cached_data["_id"]},
                 {"$set": {"data": full_data, "createdAt": datetime.now(timezone.utc)}}
             )
@@ -390,7 +343,7 @@ def get_data(ticker: str):
                 "data": data,
                 "createdAt": datetime.now(timezone.utc)
             }
-            price_cache.update_one(
+            collections['price_cache'].update_one(
                 {"ticker": ticker, "source": source},
                 {"$set": update_data},
                 upsert=True # Creates the document if it doesn't exist.
@@ -401,7 +354,7 @@ def get_data(ticker: str):
         # If the provider returned no new data but we have old data, return the old data.
         app.logger.info(f"No new price data for {ticker}. Returning existing cached data.")
         # Refresh the TTL to prevent the old data from being purged immediately.
-        price_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        collections['price_cache'].update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
     else:
         # If there's no data from the provider and no cache, return an error.
@@ -410,7 +363,7 @@ def get_data(ticker: str):
 @app.route('/news/<string:ticker>', methods=['GET'])
 def get_news(ticker: str):
     # Check cache
-    cached_news = news_cache.find_one({"ticker": ticker})
+    cached_news = collections['news_cache'].find_one({"ticker": ticker})
     if cached_news:
         # Check if cached news is still valid (not expired)
         time_elapsed = (datetime.now(timezone.utc) - cached_news['createdAt']).total_seconds()
@@ -419,7 +372,7 @@ def get_news(ticker: str):
             return jsonify(cached_news['data'])
         else:
             app.logger.warning(f"Cache EXPIRED for news: {ticker}")
-            news_cache.delete_one({"_id": cached_news["_id"]}) # Optionally delete expired entry immediately
+            collections['news_cache'].delete_one({"_id": cached_news["_id"]}) # Optionally delete expired entry immediately
         
     app.logger.info(f"DATA-SERVICE: Cache MISS for news: {ticker}")
     
@@ -429,7 +382,7 @@ def get_news(ticker: str):
         
         if news_data is not None:
             # Store in cache
-            news_cache.insert_one({
+            collections['news_cache'].insert_one({
                 "ticker": ticker,
                 "data": news_data,
                 "createdAt": datetime.now(timezone.utc)
@@ -450,25 +403,24 @@ def clear_cache():
     This is useful for forcing a data refresh after deploying application updates.
     """
     try:
-        if price_cache is not None:
-            price_cache.drop()
+        if collections['price_cache'] is not None:
+            collections['price_cache'].drop()
             app.logger.info("Dropped price_cache collection.")
-        if news_cache is not None:
-            news_cache.drop()
+        if collections['news_cache'] is not None:
+            collections['news_cache'].drop()
             app.logger.info("Dropped news_cache collection.")
-        if financials_cache is not None:
-            financials_cache.drop()
+        if collections['financials_cache'] is not None:
+            collections['financials_cache'].drop()
             app.logger.info("Dropped financials_cache collection.")
-        if industry_cache is not None:
-            industry_cache.drop()
+        if collections['industry_cache'] is not None:
+            collections['industry_cache'].drop()
             app.logger.info("Dropped industry_cache collection.")
-        if market_trends is not None:
-            market_trends.drop()
+        if collections['market_trends'] is not None:
+            collections['market_trends'].drop()
             app.logger.info("Dropped market_trends collection.")
-            
         
         # Re-initialize the collections and their TTL indexes
-        init_db()
+        init_db(app.logger)
         
         return jsonify({"message": "All data service caches have been cleared."}), 200
 
@@ -484,17 +436,17 @@ def get_industry_peers(ticker: str):
     if not re.match(r'^[A-Za-z0-9\.\-\^]+$', ticker):
         return jsonify({"error": "Invalid ticker format"}), 400
 
-    cached_data = industry_cache.find_one({'ticker': ticker})
+    cached_data = collections['industry_cache'].find_one({'ticker': ticker})
     if cached_data:
         app.logger.info(f"Cache HIT for industry/peers: {ticker}")
-        industry_cache.update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
+        collections['industry_cache'].update_one({"_id": cached_data["_id"]}, {"$set": {"createdAt": datetime.now(timezone.utc)}})
         return jsonify(cached_data['data'])
 
     app.logger.info(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
     data = finnhub_provider.get_company_peers_and_industry(ticker)
 
     if data:
-        industry_cache.insert_one({
+        collections['industry_cache'].insert_one({
             "ticker": ticker,
             "data": data,
             "createdAt": datetime.now(timezone.utc)
@@ -549,7 +501,7 @@ def calculate_market_trend():
     start_date_for_fetch = first_date_obj - timedelta(days=550)
     
     # Use the batch price fetcher for efficiency.
-    batch_price_data = yfinance_provider.get_stock_data(indices, start_date=start_date_for_fetch)
+    batch_price_data = yf_price_provider.get_stock_data(indices, start_date=start_date_for_fetch)
 
     if not all(idx in batch_price_data for idx in indices):
         return jsonify({"error": "Failed to fetch historical data for one or more major indices."}), 503
@@ -600,7 +552,7 @@ def calculate_market_trend():
                     "details": trend_result.get("index_trends"),
                     "createdAt": datetime.now(timezone.utc)
                 }
-                market_trends.update_one({'date': date_str}, {'$set': document}, upsert=True)
+                collections['market_trends'].update_one({'date': date_str}, {'$set': document}, upsert=True)
                 calculated_trends.append(document)
             else:
                 # If trend calculation returns None or fails, log it as a failure.
@@ -631,7 +583,7 @@ def get_market_trends():
             query["date"] = {"$gte": start_date_str, "$lte": end_date_str}
         
         # Query the database in ascending order
-        trends_cursor = market_trends.find(query, {'_id': 0}).sort("date", 1)
+        trends_cursor = collections['market_trends'].find(query, {'_id': 0}).sort("date", 1)
         
         trends_list = []
         for trend in trends_cursor:
@@ -647,5 +599,4 @@ def get_market_trends():
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':
-    init_db() # Initialize the database connection
     app.run(host='0.0.0.0', port=PORT)

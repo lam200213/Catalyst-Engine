@@ -20,9 +20,14 @@
 │   │   └── requirements.txt
 │   ├── data-service/        # Python/Flask - Facade for fetching and caching data
 │   │   ├── providers/
+│   │   │   ├── __init__.py
 │   │   │   ├── finnhub_provider.py
 │   │   │   ├── marketaux_provider.py
-│   │   │   └── yfinance_provider.py
+│   │   │   └── yfin/
+│   │   │       ├── __init__.py
+│   │   │       ├── yahoo_client.py
+│   │   │       ├── price_provider.py
+│   │   │       └── financials_provider.py
 │   │   ├── tests/
 │   │   │   ├── __init__.py
 │   │   │   ├── test_app.py
