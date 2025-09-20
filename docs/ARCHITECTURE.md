@@ -97,7 +97,8 @@
 | **Leadership Service** | Python, Flask, Pandas, NumPy, Requests |
 | **Scheduler Service** | Python, Flask, Requests, APScheduler |
 | **Ticker Service** | Python, Flask, Pandas, Requests |
-| **Data Caching** | MongoDB |
+| **Data Caching** | Redis |
+| **Data Persistence** | MongoDB |
 | **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
 | **Testing** | Pytest, Vitest, React Testing Library |
 | **Local Orchestration** | Docker, Docker Compose |

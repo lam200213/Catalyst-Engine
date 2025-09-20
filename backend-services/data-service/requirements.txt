@@ -1,5 +1,6 @@
 Flask
-Flask-PyMongo
+Flask-Caching==2.0.1
+redis
 numpy
 pandas
 pandas_market_calendars

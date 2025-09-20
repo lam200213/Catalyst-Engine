@@ -9,6 +9,17 @@ services:
     networks:
       - app-network
 
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis_cache
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-network
+
   data-service:
     build: ./backend-services/data-service
     container_name: data-service
@@ -16,6 +27,7 @@ services:
       - "3001:3001"
     environment:
       MONGO_URI: ${MONGO_URI}
+      CACHE_REDIS_URL: redis://redis:6379/0
       FINNHUB_API_KEY: ${FINNHUB_API_KEY}
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
@@ -27,6 +39,7 @@ services:
       - 8.8.8.8  # Google DNS
     depends_on:
       - mongodb
+      - redis
     networks:
       - app-network
     volumes:
@@ -144,6 +157,7 @@ services:
       - leadership-service
       - scheduler-service
       - ticker-service
+      - redis
     networks:
       - app-network
     volumes:
@@ -184,6 +198,7 @@ services:
 
 volumes:
   mongodb_data:
+  redis-data:
 
 networks:
   app-network:
