@@ -118,9 +118,6 @@ def _process_chunk(chunk):
         # 2. Apply screening logic to the successfully fetched data
         # The data is already fetched, so this part is just CPU-bound.
         for ticker, historical_data in successful_data.items():
-            # debug
-            if ticker == 'KGC':
-                print(f"[BATCH] Received {len(historical_data)} data points for {ticker}", flush=True)
             result = apply_screening_criteria(ticker, historical_data)
             if result.get("passes", False):
                 passing_in_chunk.append(ticker)

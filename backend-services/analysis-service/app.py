@@ -6,9 +6,9 @@ from flask import Flask, jsonify, request
 from flask.json.provider import JSONProvider
 import requests
 import numpy as np
-import vcp_logic
+from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor
 from vcp_logic import find_volatility_contraction_pattern, run_vcp_screening, _calculate_volume_trend
-
 
 app = Flask(__name__)
 
@@ -79,6 +79,37 @@ def calculate_sma_series(prices, dates, period):
         })
         
     return sma_values
+
+# Using a ThreadPoolExecutor for concurrent VCP analysis in the batch endpoint
+executor = ThreadPoolExecutor(max_workers=10)
+
+def _process_ticker_analysis(ticker, historical_data, mode):
+    """
+    Helper function to run VCP analysis for a single ticker with its data.
+    Designed for parallel execution in the batch endpoint.
+    Returns a result dict if VCP passes, otherwise None.
+    """
+    try:
+        prices, _, historical_data_sorted = prepare_historical_data(historical_data)
+        if not prices:
+            return None
+
+        volumes = [item.get('volume', 0) for item in historical_data_sorted]
+
+        # Run VCP analysis using the 'fast' mode logic for efficiency
+        vcp_results = find_volatility_contraction_pattern(prices)
+        vcp_pass_status, vcp_footprint_string, _ = run_vcp_screening(vcp_results, prices, volumes, mode)
+
+        if vcp_pass_status:
+            return {
+                "ticker": ticker,
+                "vcp_pass": vcp_pass_status,
+                "vcpFootprint": vcp_footprint_string,
+            }
+        return None
+    except Exception:
+        # Log the exception if needed, but return None to not crash the batch
+        return None
 
 # --- API Endpoints ---
 
@@ -205,6 +236,65 @@ def analyze_ticker_endpoint(ticker):
     except Exception as e:
         print(f"Unhandled exception in analyze_ticker_endpoint: {e}")
         return jsonify({"error": "An internal error occurred in the analysis service."}), 500
+
+@app.route('/analyze/batch', methods=['POST'])
+def analyze_batch_endpoint():
+    """
+    Analyzes a batch of tickers for VCP.
+    Fetches all price data in a single batch call and then processes in parallel.
+    'mode' can be passed in the JSON payload. Defaults to 'fast'.
+    """
+    try:
+        payload = request.get_json()
+        if not payload or 'tickers' not in payload or not isinstance(payload['tickers'], list):
+            return jsonify({"error": "Invalid request. 'tickers' array is required."}), 400
+
+        mode = payload.get('mode', 'fast')
+        tickers = payload['tickers']
+        if not tickers:
+            return jsonify([]), 200
+
+        # 1. Fetch all historical data in a single batch request
+        try:
+            data_resp = requests.post(
+                f"{DATA_SERVICE_URL}/price/batch",
+                json={"tickers": tickers, "source": "yfinance"},
+                timeout=120
+            )
+            if data_resp.status_code != 200:
+                return jsonify({
+                    "error": "Failed to retrieve batch data from data-service.",
+                    "details": data_resp.text
+                }), 502
+            
+            batch_data = data_resp.json().get('success', {})
+        except requests.exceptions.RequestException as e:
+            return jsonify({"error": "Error connecting to data-service.", "details": str(e)}), 503
+
+        # 2. Process each ticker's data in parallel
+        passing_candidates = []
+        
+        # Use the executor to submit analysis tasks
+        future_to_ticker = {
+            executor.submit(_process_ticker_analysis, ticker, data, mode): ticker
+            for ticker, data in batch_data.items()
+        }
+        
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                result = future.result()
+                if result:
+                    passing_candidates.append(result)
+            except Exception as exc:
+                # Log the specific ticker that failed and continue with the batch
+                print(f"Ticker '{ticker}' generated an exception during batch analysis: {exc}")
+
+        return jsonify(passing_candidates), 200
+
+    except Exception as e:
+        print(f"An internal error occurred in the batch screening endpoint: {e}")
+        return jsonify({"error": "An internal error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':
     print("Analysis Service started.")

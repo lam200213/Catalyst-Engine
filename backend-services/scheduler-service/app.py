@@ -156,36 +156,41 @@ def _run_trend_screening(job_id, tickers):
         return None, ({"error": "Failed to connect to screening-service", "details": str(e)}, 503)
 
 def _run_vcp_analysis(job_id, tickers):
-    """Runs VCP analysis on trend survivors."""
+    """Runs VCP analysis on trend survivors using the batch endpoint."""
     if not tickers:
         logger.info(f"Job {job_id}: Skipping VCP analysis, no trend survivors.")
         return []
     
+    logger.info(f"Job {job_id}: Sending {len(tickers)} trend survivors to analysis-service for batch VCP screening.")
+    
     final_candidates = []
-    for ticker in tickers:
-        try:
-            # Use 'fast' mode for VCP analysis to quickly filter out non-viable candidates
-            # without consuming excessive resources on detailed, long-running analysis.
-            resp = requests.get(
-                f"{ANALYSIS_SERVICE_URL}/analyze/{ticker}",
-                params={'mode': 'fast'},
-                timeout=60
-            )
-            if resp.status_code == 200:
-                # Gracefully handle malformed JSON from a downstream service to prevent job failure.
-                try:
-                    result = resp.json()
-                except requests.exceptions.JSONDecodeError:
-                    logger.warning(f"Job {job_id}: Could not decode JSON for ticker {ticker}. Skipping.", exc_info=True)
-                    continue
-
-                if isinstance(result, dict) and result.get("vcp_pass"):
-                    final_candidates.append(result)
-        except requests.exceptions.RequestException:
-            logger.warning(f"Job {job_id}: Could not analyze ticker {ticker}. Skipping.", exc_info=True)
-            continue
-    logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
-    return final_candidates
+    try:
+        # Use 'fast' mode for VCP analysis to quickly filter out non-viable candidates
+        # without consuming excessive resources on detailed, long-running analysis.
+        resp = requests.post(
+            f"{ANALYSIS_SERVICE_URL}/analyze/batch",
+            json={"tickers": tickers, "mode": "fast"},
+            timeout=1200,
+        )
+        if resp.status_code == 200:
+            # Gracefully handle malformed JSON from a downstream service to prevent job failure.
+            try:
+                final_candidates = resp.json()
+                if not isinstance(final_candidates, list):
+                    logger.warning(f"Job {job_id}: VCP analysis returned non-list format. Assuming no survivors.")
+                    return []
+                
+                logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
+                return final_candidates
+            except requests.exceptions.JSONDecodeError:
+                logger.warning(f"Job {job_id}: Could not decode JSON from analysis-service. Skipping VCP analysis.", exc_info=True)
+                return []
+        else:
+            logger.error(f"Job {job_id}: VCP analysis batch request failed with status {resp.status_code}. Details: {resp.text}")
+            return []
+    except requests.exceptions.RequestException:
+        logger.error(f"Job {job_id}: Could not connect to analysis-service for batch VCP.", exc_info=True)
+        return []
 
 def _run_leadership_screening(job_id, vcp_survivors):
     """Run leadership screening on VCP survivors, passing in the current market trend."""

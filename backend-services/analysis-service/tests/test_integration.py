@@ -4,6 +4,7 @@ import numpy as np
 import requests
 import os
 import sys
+import json
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -281,6 +282,104 @@ class TestVCPEvaluationModes(unittest.TestCase):
         mock_is_correction_deep.assert_not_called()
         mock_is_demand_dry.assert_not_called()
 
+class TestBatchAnalysisEndpoint(unittest.TestCase):
+    """Tests for the new /analyze/batch endpoint."""
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    @patch('app.requests.post')
+    def test_batch_analysis_success(self, mock_post):
+        """Business Logic: Verifies a successful batch run with mixed pass/fail tickers."""
+        # Arrange: Mock data for two tickers, one that will pass, one that will fail
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "VCP_PASS": generate_pivot_test_data(vcp_present=True),
+                    "VCP_FAIL": generate_pivot_test_data(vcp_present=False)
+                }
+            }
+        )
+        payload = {"tickers": ["VCP_PASS", "VCP_FAIL"]}
+        
+        # Act
+        response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
+        json_data = response.get_json()
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(json_data, list)
+        self.assertEqual(len(json_data), 1) # Only the passing ticker should be returned
+        self.assertEqual(json_data[0]['ticker'], 'VCP_PASS')
+        self.assertTrue(json_data[0]['vcp_pass'])
+        self.assertIn('vcpFootprint', json_data[0])
+
+    def test_batch_analysis_empty_ticker_list(self):
+        """Edge Case: Verifies an empty ticker list returns a 200 OK with an empty list."""
+        payload = {"tickers": []}
+        response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), [])
+
+    def test_batch_analysis_invalid_payload(self):
+        """Edge Case: Verifies malformed payloads return a 400 Bad Request."""
+        # Missing 'tickers' key
+        response1 = self.app.post('/analyze/batch', data=json.dumps({"data": []}), content_type='application/json')
+        self.assertEqual(response1.status_code, 400)
+        
+        # 'tickers' is not a list
+        response2 = self.app.post('/analyze/batch', data=json.dumps({"tickers": "AAPL"}), content_type='application/json')
+        self.assertEqual(response2.status_code, 400)
+
+    @patch('app.requests.post')
+    def test_batch_analysis_data_service_502_error(self, mock_post):
+        """Error Handling: Verifies a data-service error is handled gracefully."""
+        mock_post.return_value = MagicMock(status_code=500, text="Internal Server Error")
+        payload = {"tickers": ["AAPL"]}
+        response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("Failed to retrieve batch data", response.get_json()['error'])
+
+    @patch('app.requests.post')
+    def test_batch_analysis_data_service_connection_error(self, mock_post):
+        """Error Handling: Verifies a connection error to data-service returns 503."""
+        mock_post.side_effect = requests.exceptions.RequestException("Connection refused")
+        payload = {"tickers": ["AAPL"]}
+        response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Error connecting to data-service", response.get_json()['error'])
+    
+    @patch('app._process_ticker_analysis')
+    @patch('app.requests.post')
+    def test_batch_individual_ticker_failure_does_not_crash(self, mock_post, mock_process):
+        """Resilience: Ensures an error in one ticker's analysis doesn't halt the whole batch."""
+        # Arrange
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "GOOD": generate_pivot_test_data(vcp_present=True),
+                    "BAD": generate_pivot_test_data(vcp_present=True) 
+                }
+            }
+        )
+        # Mock the processing function to fail for one ticker but succeed for another
+        mock_process.side_effect = [
+            {"ticker": "GOOD", "vcp_pass": True, "vcpFootprint": "10W..."}, # Successful result for GOOD
+            Exception("Unexpected processing error") # Simulate a crash for BAD
+        ]
+        
+        payload = {"tickers": ["GOOD", "BAD"]}
+
+        # Act
+        response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
+        json_data = response.get_json()
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(json_data), 1) # Only the good result should be present
+        self.assertEqual(json_data[0]['ticker'], "GOOD")
 
 if __name__ == '__main__':
     unittest.main()

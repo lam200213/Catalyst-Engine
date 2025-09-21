@@ -87,7 +87,9 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
         # If a start_date is provided, construct a URL with a specific date range.
         # `period1` is the start timestamp, `period2` is the current time.
         start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
-        end_ts = int(time.time())
+        # Set end_ts to the end of yesterday to avoid fetching partial, real-time data.
+        yesterday = dt.date.today() - dt.timedelta(days=1)
+        end_ts = int(dt.datetime.combine(yesterday, dt.time.max).timestamp())
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}?period1={start_ts}&period2={end_ts}&interval=1d&crumb={crumb}"
     elif period:
         # If a period is provided, use the 'range' parameter.

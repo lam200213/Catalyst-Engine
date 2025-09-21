@@ -22,9 +22,10 @@ def get_stock_data(ticker: str) -> list | None:
             
         finnhub_client = finnhub.Client(api_key=api_key)
         
-        # Calculate timestamps for the last year
-        end_ts = int(time.time())
-        start_ts = int((dt.datetime.now() - dt.timedelta(days=365)).timestamp())
+        # Calculate timestamps for the last year ending yesterday to avoid partial daily data.
+        yesterday_dt = dt.datetime.now() - dt.timedelta(days=1)
+        end_ts = int(yesterday_dt.timestamp())
+        start_ts = int((yesterday_dt - dt.timedelta(days=365)).timestamp())
 
         # Fetch candle data from Finnhub
         res = finnhub_client.stock_candles(ticker, 'D', start_ts, end_ts)

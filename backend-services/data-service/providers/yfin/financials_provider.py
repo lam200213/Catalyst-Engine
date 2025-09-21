@@ -283,7 +283,10 @@ def get_core_financials(ticker_symbol: str) -> dict | None:
 
     # --- Special Handling for Market Indices ---
     if ticker_symbol in ['^GSPC', '^DJI', '^IXIC']:
-        hist = price_provider._get_single_ticker_data(ticker_symbol, start_date=dt.date.today() - dt.timedelta(days=365))
+        # Define date range ending yesterday to ensure consistency and avoid partial data.
+        yesterday = dt.date.today() - dt.timedelta(days=1)
+        start_of_period = yesterday - dt.timedelta(days=365)
+        hist = price_provider._get_single_ticker_data(ticker_symbol, start_date=start_of_period)
         if not hist:
             logger.debug(f"No historical data for index {ticker_symbol}")
             return None
@@ -322,8 +325,8 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
 
     # Limit concurrency directly to prevent rate-limiting.
     # We will use a new ThreadPoolExecutor with a controlled number of workers.
-    # A max_worker value of 4 is a safe starting point.
-    with ThreadPoolExecutor(max_workers=4) as limited_executor:
+    # A max_worker value of 2 is a safe starting point.
+    with ThreadPoolExecutor(max_workers=2) as limited_executor:
         future_to_ticker = {limited_executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
         for future in as_completed(future_to_ticker):
             ticker = future_to_ticker[future]
