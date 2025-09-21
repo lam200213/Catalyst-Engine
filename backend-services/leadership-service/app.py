@@ -167,11 +167,16 @@ def _analyze_ticker_leadership(ticker):
                 print(f"[PASS] {metric}: {message}")
     print("-------------------------------------------------")
 
+    industry_check_result = results.get('is_industry_leader', {})
+    # Ensure the result is a dict before trying to get a key from it.
+    industry_name = industry_check_result.get('industry') if isinstance(industry_check_result, dict) else None
+
+
     return {
         'ticker': ticker,
         'passes': passes_check,
         'details': results,
-        'industry': financial_data.get('industry'),
+        'industry': industry_name,
     }
 
 # helper function to safely check the 'pass' status from either a dictionary or a direct boolean.

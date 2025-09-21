@@ -50,7 +50,8 @@ class DatabaseManager:
             'jobs': None,
             'trend_survivors': None,
             'vcp_survivors': None,
-            'leadership_survivors': None
+            'leadership_survivors': None,
+            'ticker_status': None
         }
 
     def connect(self):
@@ -72,6 +73,7 @@ class DatabaseManager:
                 self.collections['trend_survivors'] = self.db['trend_survivors']
                 self.collections['vcp_survivors'] = self.db['vcp_survivors']
                 self.collections['leadership_survivors'] = self.db['leadership_survivors']
+                self.collections['ticker_status'] = self.db['ticker_status']
 
                 logger.info("MongoDB connection successful.")
                 return True
@@ -102,7 +104,8 @@ class DatabaseManager:
             self.collections['jobs'],
             self.collections['trend_survivors'],
             self.collections['vcp_survivors'],
-            self.collections['leadership_survivors']
+            self.collections['leadership_survivors'],
+            self.collections['ticker_status'],
         )
 
 def get_db_collections():
@@ -264,7 +267,7 @@ def store_stage_survivors(job_id, collection, survivors, stage_name):
 
 def _store_results(job_id, summary_doc, trend_survivors, vcp_survivors, leadership_survivors, final_candidates):
     """Stores the job summary and detailed survivor lists in their respective collections."""
-    results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll = get_db_collections()
+    results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll, _ = get_db_collections()
     
     # Centralized check if any collection object is None.
     collections_list = [results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll]
@@ -337,10 +340,34 @@ def run_screening_pipeline():
     # all_tickers = ['AAPL', 'MSFT', 'NVDA', 'JPM', 'DE', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK.B', 'UNH', 'JNJ', 'XOM', 'V', 'PG', 'MA', 'HD', 'CVX', 'ABBV', 'LLY', 'AVGO', 'PEP', 'KO', 'COST', 'MRK', 'BAC', 'WMT', 'PFE', 'TMO', 'DIS', 'ABT', 'VZ', 'ADBE', 'CMCSA', 'CSCO', 'DHR', 'ACN', 'NFLX', 'NKE', 'MCD', 'WFC', 'LIN', 'PM', 'RTX', 'TXN', 'BMY', 'HON', 'UPS', 'IBM', 'AMGN', 'QCOM', 'COP', 'CAT', 'AMD', 'INTU', 'SPGI', 'BA', 'GS', 'PLD', 'SBUX', 'MS', 'BLK', 'MDT', 'AMT', 'GE', 'ISRG', 'LOW', 'SCHW', 'AXP', 'ELV', 'NOW', 'BKNG', 'LMT', 'ADI', 'TJX', 'DE', 'C', 'GILD', 'MMM', 'ZTS', 'SYK', 'CB', 'CI', 'MO', 'T', 'SO', 'DUK', 'MMC', 'PNC', 'USB', 'CL', 'BDX', 'NEE', 'APD', 'EOG', 'ICE', 'FISV', 'SLB', 'EQIX', 'NOC', 'ATVI', 'EMR', 'HUM', 'ITW', 'SHW', 'PGR', 'MCK', 'ETN', 'GD', 'PSA', 'AON', 'F', 'ORCL']
     if error:
         return error
+    
+    # Pre-filter the master ticker list to remove known delisted stocks.
+    _, _, _, _, _, ticker_status_coll = get_db_collections()
+    active_tickers = all_tickers
+    if ticker_status_coll is not None:
+        try:
+            delisted_docs = ticker_status_coll.find({"status": "delisted"}, {"ticker": 1, "_id": 0})
+            delisted_set = {doc['ticker'] for doc in delisted_docs}
+            
+            if delisted_set:
+                original_count = len(all_tickers)
+                all_tickers_set = set(all_tickers)
+                active_tickers_set = all_tickers_set - delisted_set
+                active_tickers = list(active_tickers_set)
+                logger.info(
+                    f"Job {job_id}: Pre-screening filter removed {original_count - len(active_tickers)} delisted tickers. "
+                    f"Proceeding with {len(active_tickers)} active tickers."
+                )
+        except errors.PyMongoError as e:
+            logger.error(f"Job {job_id}: Failed to query for delisted tickers. Proceeding with unfiltered list. Error: {e}")
+    else:
+        logger.warning(f"Job {job_id}: Ticker status collection not available. Screening all fetched tickers.")
+
+
     print(f"Job {job_id}: Funnel: Fetched {len(all_tickers)} total tickers.")
     
     # 2. Run Stage 1 Trend Screening on the fetched tickers.
-    trend_survivors, error = _run_trend_screening(job_id, all_tickers)
+    trend_survivors, error = _run_trend_screening(job_id, active_tickers)
     if error:
         return error
     logger.info(f"Job {job_id}: Funnel: After trend screening, {len(trend_survivors)} tickers remain.")

@@ -1,4 +1,3 @@
-# Latest Add:
 # backend-services/leadership-service/tests/test_financial_health_checks.py
 import unittest
 from datetime import datetime, timedelta

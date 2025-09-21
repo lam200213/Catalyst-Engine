@@ -383,17 +383,20 @@ class TestNewsEndpoint(BaseDataServiceTest):
         self.assertEqual(response.json, provider_data)
         mock_get_news.assert_called_once_with(ticker)
 
-    @patch('app.marketaux_provider.get_news_for_ticker')
-    def test_get_news_success_cache_hit(self, mock_get_news):
+    @patch('app.get_news_cached')
+    def test_get_news_success_cache_hit(self, mock_get_news_cached):
         """GET /news/<ticker>: Tests cache hit for the news endpoint."""
+        # This test verifies the route correctly calls the cached function and returns its data.
+        # It tests the "outcome" of a cache hit by mocking the function that encapsulates the cache logic.
         ticker = "TSLA"
         cached_data = [{"title": "Old News"}]
-        self.mock_cache.get.return_value = cached_data
+        mock_get_news_cached.return_value = cached_data
 
         response = self.client.get(f'/news/{ticker}')
 
         self.assertEqual(response.status_code, 200)
-        mock_get_news.assert_not_called()
+        self.assertEqual(response.json, cached_data)
+        mock_get_news_cached.assert_called_once_with(ticker)
 
 # =====================================================================
 # ==                  INDUSTRY & PEERS ENDPOINTS                     ==

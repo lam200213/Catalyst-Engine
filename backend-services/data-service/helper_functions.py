@@ -1,5 +1,8 @@
 # data-service/helper_functions.py
 import logging
+from pymongo import MongoClient, errors
+from datetime import datetime, timezone
+import os
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -88,3 +91,29 @@ def check_market_trend_context(index_data, details):
     except Exception as e:
         # Handle any errors gracefully
         details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}", trend='Unknown'))
+
+def _mark_ticker_as_delisted(ticker: str, reason: str):
+    """Writes a ticker's status as 'delisted' to the ticker_status collection."""
+    try:
+        mongo_uri = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        db = client.stock_analysis
+        ticker_status_coll = db.ticker_status
+        # Create index if it doesn't exist
+        ticker_status_coll.create_index("ticker", unique=True)
+        
+        update_doc = {
+            "$set": {
+                "ticker": ticker,
+                "status": "delisted",
+                "reason": reason,
+                "last_updated": datetime.now(timezone.utc)
+            }
+        }
+        ticker_status_coll.update_one({"ticker": ticker}, update_doc, upsert=True)
+        logger.info(f"Marked ticker {ticker} as delisted in the database. Reason: {reason}")
+    except errors.PyMongoError as e:
+        logger.error(f"Failed to write delisted status for {ticker} to MongoDB: {e}")
+    finally:
+        if 'client' in locals() and client:
+            client.close()

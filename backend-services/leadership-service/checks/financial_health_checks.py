@@ -409,7 +409,7 @@ def check_accelerating_growth(financial_data, details):
             return {
                 "pass": is_accelerating, 
                 "rates_formatted": pct_strs, 
-                "rates_data": rate_objects, # Latest Add: Return the raw objects
+                "rates_data": rate_objects, # Return the raw objects
                 "message": msg
             }
 

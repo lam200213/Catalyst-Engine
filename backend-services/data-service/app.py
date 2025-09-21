@@ -9,7 +9,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import RotatingFileHandler
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 from pymongo.errors import OperationFailure
 
 # Import provider modules
@@ -45,9 +45,12 @@ try:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
     db_client = MongoClient(MONGO_URI)
     db = db_client.stock_analysis # Database name
-    # Create the unique index for market_trends that was previously in database.py
+    # Create the unique index for market_trends
     db.market_trends.create_index([("date", 1)], unique=True, name="date_unique_idx")
     app.logger.info("Persistent database connection initialized for market_trends.")
+    # Create the unique index for delisted tickers
+    db.ticker_status.create_index([("ticker", 1)], unique=True, name="ticker_unique_idx")
+    app.logger.info("Persistent database connection initialized for delisted tickers")
 except OperationFailure as e:
     app.logger.error(f"Could not create index on market_trends: {e}")
 except Exception as e:
@@ -416,7 +419,32 @@ def get_industry_peers(ticker: str):
 
     data = get_industry_peers_cached(ticker)
 
-    if data:
+    # Filter out delisted tickers from the peer list.
+    if data and data.get('peers'):
+        if db is not None:
+            try:
+                # 1. Get the raw list of peers
+                raw_peers = data['peers']
+                
+                # 2. Query the database for delisted tickers that are in our peer list
+                delisted_docs = db.ticker_status.find(
+                    {"ticker": {"$in": raw_peers}, "status": "delisted"},
+                    {"ticker": 1, "_id": 0}
+                )
+                delisted_set = {doc['ticker'] for doc in delisted_docs}
+
+                if delisted_set:
+                    # 3. Clean the peer list
+                    active_peers = [p for p in raw_peers if p not in delisted_set]
+                    app.logger.info(f"Removed {len(delisted_set)} delisted peers for {ticker}. Original: {len(raw_peers)}, Clean: {len(active_peers)}")
+                    data['peers'] = active_peers
+                
+            except Exception as e:
+                app.logger.error(f"Failed to filter delisted peers for {ticker}: {e}")
+                # Return unfiltered data on error to avoid breaking the request
+        return jsonify(data)
+    elif data:
+        # Data exists but no peers list, return as is
         return jsonify(data)
     else:
         return jsonify({"error": "Data not found for ticker"}), 404

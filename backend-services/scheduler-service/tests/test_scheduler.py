@@ -18,7 +18,6 @@ class TestScheduler(unittest.TestCase):
     # Test suite for the scheduler pipeline.
     @patch('app._store_results')
     @patch('app._run_leadership_screening')
-    @patch('app._count_unique_industries')
     @patch('app._run_vcp_analysis')
     @patch('app._run_trend_screening')
     @patch('app._get_all_tickers')
@@ -27,7 +26,6 @@ class TestScheduler(unittest.TestCase):
         mock_get_tickers,
         mock_trend_screen,
         mock_vcp_analysis,
-        mock_count_industries,
         mock_leadership_screen,
         mock_store_results
     ):
@@ -39,8 +37,7 @@ class TestScheduler(unittest.TestCase):
         mock_get_tickers.return_value = (['TICKER_A', 'TICKER_B', 'TICKER_C'], None)
         mock_trend_screen.return_value = (['TICKER_A', 'TICKER_B'], None)
         mock_vcp_analysis.return_value = [{'ticker': 'TICKER_A', 'vcp_pass': True}]
-        mock_count_industries.return_value = 1
-        mock_leadership_screen.return_value = [{'ticker': 'TICKER_A', 'vcp_pass': True, 'leadership_results': {'passes': True}}]
+        mock_leadership_screen.return_value = ([{'ticker': 'TICKER_A', 'vcp_pass': True, 'leadership_results': {'passes': True}}], 1)
         mock_store_results.return_value = (True, None)
 
         # --- Act: Trigger the screening job via the API endpoint ---
@@ -54,6 +51,7 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(json_data['trend_screen_survivors_count'], 2)
         self.assertEqual(json_data['vcp_survivors_count'], 1)
         self.assertEqual(json_data['final_candidates_count'], 1)
+        self.assertEqual(json_data['unique_industries_count'], 1)
         self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
 
         # Verify that each stage was called with the output of the previous stage
@@ -84,7 +82,7 @@ class TestScheduler(unittest.TestCase):
 
 
     @patch('app._store_results')
-    @patch('app._run_leadership_screening', return_value=[])
+    @patch('app._run_leadership_screening', return_value=([], 0))
     @patch('app._run_vcp_analysis', return_value=[])
     @patch('app._run_trend_screening', return_value=([], None))
     @patch('app._get_all_tickers')
@@ -103,6 +101,84 @@ class TestScheduler(unittest.TestCase):
         self.assertIn("DB connection lost", response.get_json()['error'])
         mock_store_results.assert_called_once()
 
+    @patch('app._store_results', return_value=(True, None))
+    @patch('app._run_leadership_screening', return_value=([], 0))
+    @patch('app._run_vcp_analysis', return_value=[])
+    @patch('app._run_trend_screening')
+    @patch('app.get_db_collections')
+    @patch('app._get_all_tickers')
+    def test_pipeline_filters_delisted_tickers_before_screening(
+        self,
+        mock_get_tickers,
+        mock_get_db,
+        mock_trend_screen,
+        *other_mocks
+    ):
+        """
+        Goal: Verify the core pre-filtering logic in the orchestration pipeline.
+        """
+        # --- Arrange ---
+        # 1. Mock the full list of tickers
+        mock_get_tickers.return_value = (['AAPL', 'GOOG', 'ATVI'], None)
+
+        # 2. Mock the DB collection for delisted tickers
+        mock_ticker_status_coll = MagicMock()
+        mock_ticker_status_coll.find.return_value = [{'ticker': 'ATVI'}]
+        # get_db_collections returns a tuple, we only care about the last one (ticker_status)
+        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+
+        # 3. Mock the trend screening function to act as a spy
+        mock_trend_screen.return_value = (['AAPL', 'GOOG'], None)
+
+        # --- Act ---
+        response = self.app.post('/jobs/screening/start')
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        # Assert that the trend screening stage was called with the FILTERED list
+        mock_trend_screen.assert_called_once()
+        call_args, _ = mock_trend_screen.call_args
+        # The list might be in a different order, so compare content ignoring order
+        self.assertCountEqual(call_args[1], ['AAPL', 'GOOG'])
+
+    @patch('app._store_results', return_value=(True, None))
+    @patch('app._run_leadership_screening', return_value=([], 0))
+    @patch('app._run_vcp_analysis', return_value=[])
+    @patch('app._run_trend_screening')
+    @patch('app.get_db_collections')
+    @patch('app._get_all_tickers')
+    def test_pipeline_proceeds_with_unfiltered_list_on_db_error(
+        self,
+        mock_get_tickers,
+        mock_get_db,
+        mock_trend_screen,
+        *other_mocks
+    ):
+        """
+        Goal: Ensure the pipeline doesn't fail if the ticker_status collection can't be queried.
+        """
+        # --- Arrange ---
+        # 1. Mock the full list of tickers
+        full_ticker_list = ['AAPL', 'GOOG', 'ATVI']
+        mock_get_tickers.return_value = (full_ticker_list, None)
+
+        # 2. Mock the DB collection to raise an error
+        mock_ticker_status_coll = MagicMock()
+        mock_ticker_status_coll.find.side_effect = errors.PyMongoError("Connection failed")
+        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+
+        # 3. Mock the trend screening function
+        mock_trend_screen.return_value = ([], None) # Return value doesn't matter much here
+
+        # --- Act ---
+        response = self.app.post('/jobs/screening/start')
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        # Assert that the trend screening stage was called with the COMPLETE, UNFILTERED list
+        mock_trend_screen.assert_called_once()
+        call_args, _ = mock_trend_screen.call_args
+        self.assertCountEqual(call_args[1], full_ticker_list)
 
 if __name__ == '__main__':
     unittest.main()
