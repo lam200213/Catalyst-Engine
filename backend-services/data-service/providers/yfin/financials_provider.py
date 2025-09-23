@@ -60,7 +60,7 @@ def _fetch_financials_with_yfinance(ticker):
     """
     logger.debug(f"Attempting to fetch financials for {ticker} using yfinance library.")
 
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=yahoo_client.session)
     info = stock.info
 
     # The 'info' dictionary must exist and contain essential data to be useful.
@@ -221,7 +221,7 @@ def _fetch_financials_with_fallback(ticker_symbol, start_time):
         headers = {'User-Agent': yahoo_client._get_random_user_agent()}
         proxy = yahoo_client._get_random_proxy()
 
-        response = yahoo_client.session.get(url, headers=headers, proxies=proxy, impersonate="chrome110", timeout=15)
+        response = yahoo_client.session.get(url, headers=headers, proxies=proxy, timeout=15)
         response.raise_for_status()
         
         result = response.json().get('quoteSummary', {}).get('result')
@@ -317,7 +317,7 @@ def get_core_financials(ticker_symbol: str) -> dict | None:
     logger.debug(f"Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.")
     return _fetch_financials_with_fallback(ticker_symbol, start_time)
         
-def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) -> dict:
+def get_batch_core_financials(tickers: list[str]) -> dict:
     """
     Fetches core financial data for a list of tickers in parallel.
     """
@@ -326,7 +326,7 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
     # Limit concurrency directly to prevent rate-limiting.
     # We will use a new ThreadPoolExecutor with a controlled number of workers.
     # A max_worker value of 2 is a safe starting point.
-    with ThreadPoolExecutor(max_workers=2) as limited_executor:
+    with ThreadPoolExecutor(max_workers=1) as limited_executor:
         future_to_ticker = {limited_executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
         for future in as_completed(future_to_ticker):
             ticker = future_to_ticker[future]
@@ -337,6 +337,6 @@ def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) 
                 logger.error(f"Failed to process {ticker} in batch after all retries. Error: {e}")
                 results[ticker] = None
             # Add a random delay to avoid hammering the API
-            time.sleep(random.uniform(0.5, 1.5)) 
+            time.sleep(random.uniform(2, 5)) 
 
     return results

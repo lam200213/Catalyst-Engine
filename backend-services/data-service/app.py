@@ -138,7 +138,7 @@ def get_batch_core_financials_route():
 
     # Fetch data from provider ONLY for the cache misses
     if tickers_to_fetch:
-        fetched_data = yf_financials_provider.get_batch_core_financials(tickers_to_fetch, executor)
+        fetched_data = yf_financials_provider.get_batch_core_financials(tickers_to_fetch)
 
     failed_tickers = []
 

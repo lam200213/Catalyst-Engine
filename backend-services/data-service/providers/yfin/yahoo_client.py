@@ -8,10 +8,6 @@ import time
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import errors as cffi_errors
 
-session = cffi_requests.Session()
-_YAHOO_CRUMB = None
-_AUTH_LOCK = threading.Lock()
-
 # Get a child logger
 logger = logging.getLogger(__name__)
 
@@ -20,11 +16,32 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Safari/605.1.15",
+    "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/92.0.902.67 Safari/537.36",
+]
+
+SUPPORTED_IMPERSONATE_PROFILES = [
+    "chrome110", "chrome116", "chrome120",
+    "firefox133", "firefox135", "edge101", 
+    "safari153", "safari260", "chrome136"
 ]
 
 # Proxies are now loaded from an environment variable for better configuration management.
 import os # Add os import for environment variable access
 PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
+
+# A single session is created with a random profile when the service starts.
+# This session is reused for all requests to maintain authentication cookies (for the crumb).
+# User-agents and proxies are rotated on each request to avoid fingerprinting.
+session = cffi_requests.Session(impersonate=random.choice(SUPPORTED_IMPERSONATE_PROFILES))
+
+_YAHOO_CRUMB = None
+_AUTH_LOCK = threading.Lock()
 
 def _get_random_user_agent() -> str:
     """Returns a random user-agent from the list."""
@@ -73,7 +90,7 @@ def _get_yahoo_auth():
             logger.critical(f"Failed to get Yahoo auth crumb: {e}")
             return None
 
-def retry_on_failure(attempts=3, delay=2, backoff=2):
+def retry_on_failure(attempts=2, delay=5, backoff=2):
     """Decorator for robust HTTP requests with retries and backoff."""
     def decorator(func):
         @wraps(func)

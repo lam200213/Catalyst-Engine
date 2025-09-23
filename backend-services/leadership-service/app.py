@@ -6,6 +6,7 @@ import re # regex import for input validation
 import logging 
 from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from checks import financial_health_checks
 from checks import market_relative_checks
 from checks import industry_peer_checks
@@ -14,7 +15,9 @@ from data_fetcher import (
     fetch_financial_data,
     fetch_price_data,
     fetch_index_data,
-    fetch_market_trends
+    fetch_market_trends,
+    fetch_batch_financials,
+    fetch_batch_price_data,
 )
 app = Flask(__name__)
 
@@ -67,17 +70,36 @@ def setup_logging(app):
 setup_logging(app)
 # --- End of Logging Setup ---
 
+def _fetch_general_data_for_analysis():   
+    # Fetch historical price data
+    index_data = fetch_index_data()
+    if not index_data:
+        app.logger.error(f"Failed to fetch index data")
+        return {'error': 'Failed to fetch index data', 'status': 503}
+
+    # Fetch market trends data
+    n_days = 365
+    market_trends_data, error = fetch_market_trends(n_days)
+    if error:
+        app.logger.error(f"Failed to fetch market trends data: {error[0]}")
+        return {'error': error[0], 'status': error[1]}
+
+    return index_data, market_trends_data
+
 # helper function to perform leadership analysis
-def _analyze_ticker_leadership(ticker):
+def _analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data):
     """
     Analyzes a single ticker for leadership criteria.
     Returns a dictionary with the analysis result, or an error dictionary.
     """
-    # data fetching and error handling
-    financial_data, status = fetch_financial_data(ticker)
+    # data validation
+    if not stock_data:
+        app.logger.error(f"Missing price data for {ticker} in analysis function.")
+        return {'ticker': ticker, 'error': 'Missing price data for analysis', 'status': 400}
+
     if not financial_data:
-        app.logger.error(f"Failed to fetch financial data for {ticker}. Status: {status}")
-        return {'ticker': ticker, 'error': 'Failed to fetch financial data', 'status': status}
+        app.logger.error(f"Missing financial data for {ticker} in analysis function.")
+        return {'ticker': ticker, 'error': 'Missing financial data for analysis', 'status': 400}
 
     # --- DEBUGGING BLOCK ---
     # Print the exact data received to the container's logs
@@ -87,26 +109,6 @@ def _analyze_ticker_leadership(ticker):
     print(json.dumps(financial_data, indent=2), flush=True)
     print("--- END DEBUG ---", flush=True)
     # --- END DEBUGGING BLOCK ---
-
-    # Fetch price data
-    stock_data = fetch_price_data(ticker)
-    if stock_data is None:
-        app.logger.error(f"Failed to fetch price data for {ticker}")
-        return {'ticker': ticker, 'error': 'Failed to fetch price data', 'status': 503}
-
-    # Fetch historical price data for S&P 500 for the rally check
-    index_data = fetch_index_data()
-    sp500_price_data = fetch_price_data('^GSPC')
-    if sp500_price_data is None:
-        app.logger.error(f"Failed to fetch S&P 500 price data for rally analysis")
-        return {'ticker': ticker, 'error': 'Failed to fetch S&P 500 price data', 'status': 503}
-
-    # Fetch market trends data
-    n_days = 365
-    market_trends_data, error = fetch_market_trends(n_days)
-    if error:
-        app.logger.error(f"Failed to fetch market trends data: {error[0]}")
-        return {'ticker': ticker, 'error': error[0], 'status': error[1]}
 
     # Run all leadership checks
     results = {} # used to create a clean, top-level summary of the pass/fail status for "each" major criterion
@@ -196,7 +198,23 @@ def leadership_analysis(ticker):
     if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
         return jsonify({'error': 'Invalid ticker format'}), 400
     
-    analysis_result = _analyze_ticker_leadership(ticker)
+    # Robustly handle mixed return types (tuple on success, dict on error).
+    common_data = _fetch_general_data_for_analysis()
+    if isinstance(common_data, dict) and 'error' in common_data:
+        return jsonify({'error': common_data['error']}), common_data.get('status', 503)
+    index_data, market_trends_data = common_data
+
+    financial_data, status_code = fetch_financial_data(ticker)
+    if not financial_data:
+        return jsonify({'error': f"Failed to fetch financial data for {ticker}"}), status_code
+
+    stock_data, status_code  = fetch_price_data(ticker)
+    if not stock_data:
+        return jsonify({'error': f"Failed to fetch price data for {ticker}"}), status_code
+
+    # Call the leadership analysis function with all data
+    analysis_result = _analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data)
+    
     if 'error' in analysis_result:
             status_code = analysis_result.get('status', 500)
             return jsonify({'error': analysis_result['error']}), status_code
@@ -218,28 +236,71 @@ def leadership_batch_analysis():
     if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
         return jsonify({"error": "'tickers' must be a list of strings."}), 400
 
-    tickers = payload['tickers']
     app.logger.info(f"Starting batch leadership analysis for {len(tickers)} tickers.")
-    
-    passing_candidates = []
-    unique_industries = set()
-    # Sanitize tickers before processing
+
+     # --- 1. Sanitize Tickers ---
     sanitized_tickers = [
         t for t in tickers if re.match(r'^[A-Z0-9\.\-\^]+$', t.upper()) and '../' not in t
     ]
+    if not sanitized_tickers:
+        return jsonify({'passing_candidates': [], 'metadata': {'total_processed': len(tickers), 'total_passed': 0, 'execution_time': 0}}), 200
+
+    # --- 2. Fetch All Required Data in Batches ---
+    app.logger.info("Fetching general market and trend data...")
+    # Robustly handle mixed return types (tuple on success, dict on error).
+    common_data = _fetch_general_data_for_analysis()
+    if isinstance(common_data, dict) and 'error' in common_data:
+        return jsonify({'error': common_data['error']}), common_data.get('status', 503)
+    index_data, market_trends_data = common_data
+
+    app.logger.info(f"Fetching batch financial data for {len(sanitized_tickers)} tickers...")
+    all_financial_data, financial_error = fetch_batch_financials(sanitized_tickers)
+    if financial_error:
+        return jsonify({"error": financial_error[0]}), financial_error[1]
+
+    app.logger.info(f"Fetching batch price data for {len(sanitized_tickers)} tickers...")
+    all_price_data, price_error = fetch_batch_price_data(sanitized_tickers)
+    if price_error:
+        return jsonify({"error": price_error[0]}), price_error[1]
+
+    successful_financials = all_financial_data.get('success', {})
+    successful_prices = all_price_data.get('success', {})
+
+    # --- 3. Prepare Analysis Tasks (CPU-Bound) ---
+    analysis_tasks = []
+    for ticker in sanitized_tickers:
+        if ticker in successful_financials and ticker in successful_prices:
+            task = {
+                "ticker": ticker,
+                "financial_data": successful_financials[ticker],
+                "stock_data": successful_prices[ticker]
+            }
+            analysis_tasks.append(task)
+        else:
+            app.logger.warning(f"Skipping {ticker} from analysis due to missing price or financial data.")
+
+    # --- 4. Execute Analysis in Parallel ---
+    passing_candidates = []
+    unique_industries = set()
 
     # Use a ThreadPoolExecutor to run the I/O-bound analysis tasks in parallel.
     # The number of workers is set to 10 to balance performance without overwhelming downstream services.
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # map() efficiently applies the function to each ticker and returns results as they complete.
-        results_iterator = executor.map(_analyze_ticker_leadership, sanitized_tickers)
-        
-        for result in results_iterator:
-            # We only care about tickers that pass the screening and have no errors.
-            if 'error' not in result and result.get('passes', False):
-                passing_candidates.append(result)
-                if result.get('industry'):
-                    unique_industries.add(result['industry'])
+    if analysis_tasks:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Use functools.partial to pass the pre-fetched market data to the worker function.
+            analysis_func = partial(_analyze_ticker_leadership, index_data=index_data, market_trends_data=market_trends_data)
+
+            # Create a lambda to unpack the dictionary from analysis_tasks into the arguments of analysis_func
+            unpacker_func = lambda task: analysis_func(ticker=task['ticker'], financial_data=task['financial_data'], stock_data=task['stock_data'])    
+
+            # map() efficiently applies the function to each ticker that sucessfully retrieved data and returns results as they complete.
+            results_iterator = executor.map(unpacker_func, analysis_tasks)
+            for result in results_iterator:
+                # We only care about tickers that pass the screening and have no errors.
+                if 'error' not in result and result.get('passes', False):
+                    passing_candidates.append(result)
+                    if result.get('industry'):
+                        unique_industries.add(result['industry'])
 
     execution_time = time.time() - start_time
     app.logger.info(f"Batch leadership analysis completed in {execution_time:.2f}s. Found {len(passing_candidates)} passing candidates.")

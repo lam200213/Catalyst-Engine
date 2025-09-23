@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-09-21
-Change instances where data fetching logic involves "today" to "yesterday" to prevent data inconsistencies. 
+Enhance Impersonation and Request Rotation in provides/yfinance in data-service, bypassing Yahoo's TLS fingerprinting blocks; Caching Index Data in leadership-service; Centralize and Control Concurrency, delegating the entire batch of tickers from leadership-service to the data-service in a single call. 
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

@@ -47,6 +47,18 @@ def fetch_financial_data(ticker):
         app.logger.error(f"Could not fetch financial data for {ticker}: {e}")
         return None, getattr(e.response, 'status_code', 503)
 
+def fetch_batch_financials(tickers):
+    """Fetches core financial data for a list of tickers in a single batch."""
+    try:
+        batch_url = f"{DATA_SERVICE_URL}/financials/core/batch"
+        payload = {"tickers": tickers, "metrics": ["revenue", "marketCap", "netIncome"]}
+        response = session.post(batch_url, json=payload, timeout=4000)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.RequestException as e:
+        status_code = getattr(e.response, 'status_code', 503)
+        return None, (f"Could not fetch batch financial data", status_code)
+
 def fetch_price_data(ticker):
     """Fetch price data from data service"""
     try:
@@ -59,7 +71,20 @@ def fetch_price_data(ticker):
         return stock_data
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Error fetching price data for {ticker} after retries: {e}")
-        return None
+        return None, getattr(e.response, 'status_code', 503)
+
+def fetch_batch_price_data(tickers):
+    """Fetches price data for a list of tickers in a single batch."""
+    try:
+        batch_url = f"{DATA_SERVICE_URL}/price/batch"
+        # The source is hardcoded to yfinance as it's the default and required provider for this service
+        payload = {"tickers": tickers, "source": "yfinance"}
+        response = session.post(batch_url, json=payload, timeout=40) # Increased timeout for potentially large batches
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.RequestException as e:
+        status_code = getattr(e.response, 'status_code', 503)
+        return None, (f"Could not fetch batch price data", status_code)
 
 def fetch_index_data():
     """Fetch major index data from data service"""
@@ -88,18 +113,6 @@ def fetch_peer_data(ticker):
     except requests.exceptions.RequestException as e:
         status_code = getattr(e.response, 'status_code', 503)
         return None, (f"Could not fetch industry peers for {ticker}", status_code)
-
-def fetch_batch_financials(tickers):
-    """Fetches core financial data for a list of tickers in a single batch."""
-    try:
-        batch_url = f"{DATA_SERVICE_URL}/financials/core/batch"
-        payload = {"tickers": tickers, "metrics": ["revenue", "marketCap", "netIncome"]}
-        response = session.post(batch_url, json=payload, timeout=40)
-        response.raise_for_status()
-        return response.json(), None
-    except requests.exceptions.RequestException as e:
-        status_code = getattr(e.response, 'status_code', 503)
-        return None, (f"Could not fetch batch financial data", status_code)
     
 def get_last_n_workdays(n_days=8):
     """Calculates the last N US business days, starting with the oldest date and ending with the most recent one."""
