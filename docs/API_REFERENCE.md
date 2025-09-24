@@ -143,6 +143,41 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
       }
     }
     ```
+
+- **POST `/analyze/batch`**  
+  - Proxies to the Analysis Service.  
+  - Analyzes a batch of tickers (typically those that have passed the trend screen) against the Volatility Contraction Pattern (VCP) criteria. This is a critical internal endpoint called by the scheduler-service to efficiently process candidates in the screening funnel.
+  - **Request Body**:
+    ```json
+    {
+      "tickers": ["AAPL", "GOOGL", "TSLA"],
+      "mode": "fast"
+    }
+    ```
+  - **Query Parameters**:
+    - `mode` (optional): Set to `full` to return a detailed breakdown of all checks. If omitted, defaults to `fast` evaluation, which enables a fail-fast evaluation for batch processing.
+  - **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:3000/analyze/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["CRWD", "NET"], "mode": "fast"}'
+    ```
+  - **Example Success Response:**
+    ```json
+    [
+      {
+        "ticker": "CRWD",
+        "vcp_pass": true,
+        "vcp_footprint": "8D 6.5% | 4D 7.1% | 2D 10.1% | 4D 6.5% | 4D 6.8% | 2D 2.9% | 5D 16.6% | 8D 21.7% | 8D 16.4% | 3D 7.7% | 4D 7.4% | 1D 5.8% | 13D 10.2% | 9D 10.1% | 7D 5.0% | 4D 6.7%",
+      },
+      {
+        "ticker": "NET",
+        "vcp_pass": true,
+        "vcp_footprint": "9D 6.6% | 9D 5.0% | 2D 3.0% | 26D 18.9% | 2D 6.1% | 20D 33.4% | 10D 21.3% | 7D 8.7% | 5D 4.5% | 5D 11.5% | 13D 17.4% | 4D 6.5% | 6D 4.4%",
+      }
+    ]
+    ```
+
 - **GET `/financials/core/:ticker`**  
   - Purpose: Retrieves core fundamental data required for the Leadership Profile screening. Data is cached to improve performance.
   - **Example Usage:**
@@ -171,7 +206,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ]
   }
 
-- **GET `/leadership/:ticker`**  
+- **GET `/leadership/<path:ticker>`**  
   - Proxies to: `leadership-service`
   - Purpose: Applies the 10 "Leadership Profile" criteria to the specified ticker.
   - **Example Usage:**
