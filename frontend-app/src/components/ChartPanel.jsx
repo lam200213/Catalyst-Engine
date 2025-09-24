@@ -118,14 +118,17 @@ const AnalysisChart = ({ analysisData }) => {
             seriesRef.current.volumeSeries.priceLines().forEach(line => seriesRef.current.volumeSeries.removePriceLine(line));
         }
 
-        if (!analysisData?.historicalData || !analysisData?.analysis) {
-            if(seriesRef.current.candlestickSeries) {
+        // The analysis results and historical data are nested in the 'chart_data' property.
+        const analysis = analysisData?.chart_data;
+        const historicalData = analysis?.historicalData;
+
+        if (!historicalData || !analysis) {
+             if(seriesRef.current.candlestickSeries) {
                 seriesRef.current.candlestickSeries.setMarkers([]);
             }
             return;
         }
 
-        const { historicalData, analysis } = analysisData;
         const { candlestickSeries, volumeSeries, vcpLineSeries, ma20Series, ma50Series, ma150Series, ma200Series, volumeTrendLine } = seriesRef.current;
 
         // --- Set data for all series ---
