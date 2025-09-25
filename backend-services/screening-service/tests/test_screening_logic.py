@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app import app, DATA_SERVICE_URL
 from screening_logic import apply_screening_criteria, calculate_sma
 import requests
+import json
 
 # Add the parent directory to the sys.path to allow imports from the main app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -20,7 +21,15 @@ def create_ideal_passing_data():
     # Current Price: 150, 52-Week High: 150, 52-Week Low: 80
     # Rule 6 Pass: 150 >= (80 * 1.30) => 150 >= 104.0
     # Rule 7 Pass: 150 >= (150 * 0.75) => 150 >= 112.5
-    return {'c': prices}
+    return [{
+            "formatted_date": f"2025-01-01",
+            "open": p,
+            "high": p + 1,
+            "low": p - 1,
+            "close": p,
+            "volume": 1000000,
+            "adjclose": p
+        } for p in prices]
 
 def create_failing_low_price_data():
     """Generates data that fails ONLY the '30% above 52-week low' rule."""
@@ -28,7 +37,15 @@ def create_failing_low_price_data():
     prices = np.linspace(100, 180, 280).tolist() + [160, 150, 140, 130, 125]
     # Current Price: 125, 52-Week Low: 100
     # Rule 6 Fail: 125 < (100 * 1.30) => 125 < 130
-    return {'c': prices}
+    return [{
+            "formatted_date": f"2025-01-01",
+            "open": p,
+            "high": p + 1,
+            "low": p - 1,
+            "close": p,
+            "volume": 1000000,
+            "adjclose": p
+        } for p in prices]
 
 def create_failing_high_price_data():
     """Generates data that fails ONLY the 'within 25% of 52-week high' rule."""
@@ -37,13 +54,29 @@ def create_failing_high_price_data():
     prices = np.linspace(120, 200, 250).tolist() + np.linspace(199, 148, 50).tolist()
     # Current Price: 148, 52-Week High: 200
     # Rule 7 Fail: 148 < (200 * 0.75) => 148 < 150
-    return {'c': prices}
+    return [{
+            "formatted_date": f"2025-01-01",
+            "open": p,
+            "high": p + 1,
+            "low": p - 1,
+            "close": p,
+            "volume": 1000000,
+            "adjclose": p
+        } for p in prices]
 
 def create_data_with_250_days():
     """Generates passing data with 250 days. The old logic would fail this."""
     prices = np.linspace(90, 160, 250).tolist()
     # This dataset is designed to pass all criteria with the corrected logic.
-    return {'c': prices}
+    return [{
+            "formatted_date": f"2025-01-01",
+            "open": p,
+            "high": p + 1,
+            "low": p - 1,
+            "close": p,
+            "volume": 1000000,
+            "adjclose": p
+        } for p in prices]
 
 
 class TestScreeningLogic(unittest.TestCase):
@@ -136,9 +169,11 @@ class TestScreeningEndpoint(unittest.TestCase):
         
         # The data-service will return a successful response.
         # For this test, we assume all tickers are valid and have data.
+        dummy_item = {"formatted_date": "2023-01-01", "open": 140.0, "high": 152.0, "low": 149.0, "close": 150.0, "volume": 1000000, "adjclose": 150.0}
         mock_post.return_value = unittest.mock.MagicMock(
             status_code=200,
-            json=lambda: {"success": {"TICKER_0": [{"close": 150.0}]}, "failed": []}
+            content=json.dumps({"success": {"TICKER_0": [dummy_item]}, "failed": []}).encode('utf-8'),
+            json=lambda: {"success": {"TICKER_0": [dummy_item]}, "failed": []}
         )
 
         # --- Act ---
@@ -166,15 +201,17 @@ class TestScreeningEndpoint(unittest.TestCase):
         'success' payload are screened correctly and 'failed' tickers are ignored.
         """
         # Arrange: Configure the mock to return a response similar to the data-service's batch endpoint
+        batch_data = {
+            "success": {
+                "PASS_TICKER": create_ideal_passing_data(),
+                "FAIL_TICKER": create_failing_high_price_data()
+            },
+            "failed": ["DATA_UNAVAILABLE_TICKER"]
+        }
         mock_post.return_value = unittest.mock.MagicMock(
             status_code=200,
-            json=lambda: {
-                "success": {
-                    "PASS_TICKER": create_ideal_passing_data(),
-                    "FAIL_TICKER": create_failing_high_price_data()
-                },
-                "failed": ["DATA_UNAVAILABLE_TICKER"]
-            }
+            content=json.dumps(batch_data).encode('utf-8'),
+            json=lambda: batch_data
         )
 
         # Act: Make a POST request to the batch endpoint
@@ -195,9 +232,11 @@ class TestScreeningEndpoint(unittest.TestCase):
         and asserts that /screen/AAPL returns 200 OK with correct screening result.
         """
         # Arrange
+        historical_data = create_ideal_passing_data()
         mock_get.return_value = unittest.mock.MagicMock(
             status_code=200,
-            json=lambda: create_ideal_passing_data()
+            content=json.dumps(historical_data).encode('utf-8'),
+            json=lambda: historical_data
         )
 
         # Act
@@ -218,9 +257,11 @@ class TestScreeningEndpoint(unittest.TestCase):
         Asserts screening-service returns 502 Bad Gateway.
         """
         # Arrange
+        error_data = {"error": "Ticker not found"}
         mock_get.return_value = unittest.mock.MagicMock(
             status_code=404,
-            json=lambda: {"error": "Ticker not found"},
+            content=json.dumps(error_data).encode('utf-8'),
+            json=lambda: error_data,
             text="Ticker not found"
         )
 
@@ -265,14 +306,16 @@ class TestScreeningEndpoint(unittest.TestCase):
         tickers = ["PASS_TICKER", "FAIL_TICKER"]
 
         # Mock the data-service to return one success and one failure
+        batch_data = {
+            "success": {
+                "PASS_TICKER": create_ideal_passing_data()
+            },
+            "failed": ["FAIL_TICKER"]
+        }
         mock_post.return_value = unittest.mock.MagicMock(
             status_code=200,
-            json=lambda: {
-                "success": {
-                    "PASS_TICKER": create_ideal_passing_data() # This ticker will pass screening
-                },
-                "failed": ["FAIL_TICKER"]
-            }
+            content=json.dumps(batch_data).encode('utf-8'),
+            json=lambda: batch_data
         )
 
         # --- Act ---

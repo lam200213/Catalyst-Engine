@@ -45,6 +45,7 @@ services:
     volumes:
       - ./backend-services/data-service:/app
       # for development: Mount local directory to container's /app (Live Code Reloading)
+      - ./backend-services/shared:/app/shared
 
   screening-service:
     build: ./backend-services/screening-service
@@ -61,7 +62,8 @@ services:
       - app-network
     volumes:
       - ./backend-services/screening-service:/app 
-      # for development: Mount local directory to container's /app    
+      # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared    
 
   analysis-service:
     build: ./backend-services/analysis-service
@@ -79,6 +81,7 @@ services:
     volumes:
       - ./backend-services/analysis-service:/app 
       # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
  
   scheduler-service:
     build: ./backend-services/scheduler-service
@@ -104,6 +107,7 @@ services:
     volumes:
       - ./backend-services/scheduler-service:/app
       # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
 
   leadership-service:
     build: ./backend-services/leadership-service
@@ -121,6 +125,7 @@ services:
     volumes:
       - ./backend-services/leadership-service:/app
       # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
 
   ticker-service:
     build: ./backend-services/ticker-service
@@ -135,6 +140,7 @@ services:
     volumes:
       - ./backend-services/ticker-service:/app 
       # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
 
   api-gateway:
     build: ./backend-services/api-gateway
@@ -163,6 +169,7 @@ services:
     volumes:
       - ./backend-services/api-gateway:/app 
       # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
 
   # for production build with static Nginx server
   # frontend-app:

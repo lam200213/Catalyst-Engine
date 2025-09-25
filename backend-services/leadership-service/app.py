@@ -10,7 +10,9 @@ from functools import partial
 from checks import financial_health_checks
 from checks import market_relative_checks
 from checks import industry_peer_checks
-
+from pydantic import ValidationError, TypeAdapter
+from typing import List
+from shared.contracts import CoreFinancials, PriceDataItem, LeadershipProfileSingle, LeadershipProfileBatch
 from data_fetcher import (
     fetch_financial_data,
     fetch_price_data,
@@ -69,6 +71,23 @@ def setup_logging(app):
 
 setup_logging(app)
 # --- End of Logging Setup ---
+
+def _validate_data_contract(data, validator, ticker_for_log, contract_name):
+    """
+    Validates data against a Pydantic model/validator. Adheres to DRY principle.
+    Returns serialized data on success, None on failure.
+    """
+    try:
+        # Handle lists via TypeAdapter
+        if isinstance(validator, TypeAdapter):
+            validated_items = validator.validate_python(data)
+            return [item.model_dump(by_alias=True) for item in validated_items]
+        # Handle single objects via model_validate
+        else:
+            return validator.model_validate(data).model_dump(by_alias=True)
+    except ValidationError as e:
+        app.logger.error(f"Contract violation for {contract_name} for {ticker_for_log}: {e}")
+        return None
 
 def _fetch_general_data_for_analysis():   
     # Fetch historical price data
@@ -137,8 +156,7 @@ def _analyze_ticker_leadership(ticker, index_data, market_trends_data, financial
         results['has_positive_recent_earnings'] = details.get('has_positive_recent_earnings', False)
         
         market_relative_checks.evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details)
-        # The key 'market_trend_context' holds a dictionary, so we extract the string trend from it.
-        results['market_trend_context'] = details.get('market_trend_context', {})
+
         # Assign the nested result to its own key, ie: shallow_decline, new_52_week_high, recent_breakout
         results['market_trend_impact'] = details.get('market_trend_impact', {})
         
@@ -173,7 +191,6 @@ def _analyze_ticker_leadership(ticker, index_data, market_trends_data, financial
     # Ensure the result is a dict before trying to get a key from it.
     industry_name = industry_check_result.get('industry') if isinstance(industry_check_result, dict) else None
 
-
     return {
         'ticker': ticker,
         'passes': passes_check,
@@ -204,13 +221,23 @@ def leadership_analysis(ticker):
         return jsonify({'error': common_data['error']}), common_data.get('status', 503)
     index_data, market_trends_data = common_data
 
-    financial_data, status_code = fetch_financial_data(ticker)
-    if not financial_data:
+    financial_data_raw, status_code = fetch_financial_data(ticker)
+    if not financial_data_raw:
         return jsonify({'error': f"Failed to fetch financial data for {ticker}"}), status_code
 
-    stock_data, status_code  = fetch_price_data(ticker)
-    if not stock_data:
+    stock_data_raw, status_code  = fetch_price_data(ticker)
+    if not stock_data_raw:
         return jsonify({'error': f"Failed to fetch price data for {ticker}"}), status_code
+
+    # Validate incoming data against contracts using the centralized helper
+    PriceDataValidator = TypeAdapter(List[PriceDataItem])
+    financial_data = _validate_data_contract(financial_data_raw, CoreFinancials, ticker, "CoreFinancials")
+    stock_data = _validate_data_contract(stock_data_raw, PriceDataValidator, ticker, "PriceData")
+
+    if not financial_data or not stock_data:
+        return jsonify({
+            "error": "Invalid data structure received from upstream data-service.",
+        }), 502
 
     # Call the leadership analysis function with all data
     analysis_result = _analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data)
@@ -222,7 +249,13 @@ def leadership_analysis(ticker):
     execution_time = time.time() - start_time
     analysis_result['metadata'] = {'execution_time': round(execution_time, 3)}
 
-    return jsonify(analysis_result)
+    # Validate the final output against its own contract before sending
+    try:
+        validated_response = LeadershipProfileSingle.model_validate(analysis_result)
+        return jsonify(validated_response.model_dump())
+    except ValidationError as e:
+        app.logger.critical(f"Output contract violation for LeadershipProfileSingle for {ticker}: {e}")
+        return jsonify({"error": "An internal error occurred while generating the response."}), 500
 
 @app.route('/leadership/batch', methods=['POST'])
 def leadership_batch_analysis():
@@ -263,8 +296,19 @@ def leadership_batch_analysis():
     if price_error:
         return jsonify({"error": price_error[0]}), price_error[1]
 
-    successful_financials = all_financial_data.get('success', {})
-    successful_prices = all_price_data.get('success', {})
+    # Validate all successfully fetched data using the centralized helper
+    PriceDataValidator = TypeAdapter(List[PriceDataItem])
+    successful_financials = {}
+    for ticker, data in all_financial_data.get('success', {}).items():
+        validated_data = _validate_data_contract(data, CoreFinancials, ticker, "CoreFinancials")
+        if validated_data:
+            successful_financials[ticker] = validated_data
+
+    successful_prices = {}
+    for ticker, data in all_price_data.get('success', {}).items():
+        validated_data = _validate_data_contract(data, PriceDataValidator, ticker, "PriceData")
+        if validated_data:
+            successful_prices[ticker] = validated_data
 
     # --- 3. Prepare Analysis Tasks (CPU-Bound) ---
     analysis_tasks = []
@@ -315,7 +359,13 @@ def leadership_batch_analysis():
         }
     }
     
-    return jsonify(response)
+    # Validate the final output against its own contract before sending
+    try:
+        validated_response = LeadershipProfileBatch.model_validate(response)
+        return jsonify(validated_response.model_dump())
+    except ValidationError as e:
+        app.logger.critical(f"Output contract violation for LeadershipProfileBatch: {e}")
+        return jsonify({"error": "An internal error occurred while generating the batch response."}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():

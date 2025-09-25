@@ -56,12 +56,15 @@
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   └── ticker-service/      # Python/Flask - Fetches all US stock tickers
-│       ├── tests/
-│       │   └── test_app.py
-│       ├── app.py
-│       ├── Dockerfile
-│       └── requirements.txt
+│   ├── ticker-service/      # Python/Flask - Fetches all US stock tickers
+│   │   ├── tests/
+│   │   │   └── test_app.py
+│   │   ├──  app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   └── shared/              # Data contract
+│       ├── __init__.py 
+│       ├── contracts.py
 ├── frontend-app/            # React/Vite - User Interface
 │   ├── scripts/
 │   │   └── verify-structure.cjs

@@ -2,6 +2,8 @@ from flask import Flask, jsonify
 import pandas as pd
 import requests
 import os
+from pydantic import TypeAdapter, ValidationError
+from shared.contracts import TickerList
 
 app = Flask(__name__)
 PORT = int(os.getenv("PORT", 5001))
@@ -46,6 +48,14 @@ def get_tickers_endpoint():
         ticker_list = get_all_us_tickers()
         if not ticker_list:
             return jsonify({"error": "Failed to retrieve any tickers."}), 500
+        # Validate the output against the TickerList contract before returning.
+        try:
+            ta = TypeAdapter(TickerList)
+            ta.validate_python(ticker_list)
+        except ValidationError as e:
+            print(f"Internal data validation error in ticker-service: {e}")
+            return jsonify({"error": "Internal server error: malformed ticker data."}), 500
+
         return jsonify(ticker_list)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

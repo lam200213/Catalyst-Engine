@@ -15,7 +15,7 @@ def get_vcp_test_data():
     """Generates a predictable dataset known to contain VCPs."""
     prices = [100, 105, 102, 108, 104, 100, 103, 101, 98]
     dates = [f"2024-01-{i+1:02d}" for i in range(len(prices))]
-    historical_data = [{'formatted_date': d, 'close': p} for d, p in zip(dates, prices)]
+    historical_data = [{'formatted_date': d, 'open': p-1, 'high': p+1, 'low': p-1, 'close': p, 'volume': 1000, 'adjclose': p} for d, p in zip(dates, prices)]
     return historical_data
 
 def generate_pivot_test_data(vcp_present=True, low_vol_date_index=None, equal_volumes=False):
@@ -32,7 +32,7 @@ def generate_pivot_test_data(vcp_present=True, low_vol_date_index=None, equal_vo
 
     return [{
         "formatted_date": f"2025-01-{(i+1):02d}", "close": float(p), "volume": int(v),
-        "open": float(p - 1), "high": float(p + 1), "low": float(p - 1),
+        "open": float(p - 1), "high": float(p + 1), "low": float(p - 1), "adjclose": float(p)
     } for i, (p, v) in enumerate(zip(prices, volumes))]
 
 # --- Test Cases ---
@@ -46,7 +46,11 @@ class TestAnalysisEndpoint(unittest.TestCase):
     @patch('app.requests.get')
     def test_analyze_success_path(self, mock_get):
         raw_data = get_vcp_test_data()
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: raw_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: raw_data,
+            content=json.dumps(raw_data).encode('utf-8')
+        )
         response = self.app.get('/analyze/AAPL')
         json_data = response.get_json()
         self.assertEqual(response.status_code, 200)
@@ -54,6 +58,33 @@ class TestAnalysisEndpoint(unittest.TestCase):
         self.assertIn('vcp_pass', json_data)
         self.assertIn('vcpFootprint', json_data)
         self.assertIn('chart_data', json_data)
+
+    @patch('app.requests.get')
+    def test_analyze_data_contract_violation(self, mock_get):
+        """
+        Consumer Test: Verifies the service returns a 502 error if the
+        upstream data-service provides a payload that violates the data contract.
+        """
+        # Arrange: Create an invalid payload missing the required 'close' field in the second item.
+        invalid_payload = [
+            {'formatted_date': '2024-01-01', 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 1000, 'adjclose': 100.5},
+            {'formatted_date': '2024-01-02', 'open': 101, 'high': 102, 'low': 100, 'volume': 1200, 'adjclose': 101.5} # Missing 'close'
+        ]
+        
+        # Mock the response from data-service. The status is 200, but the content is invalid.
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            content=json.dumps(invalid_payload).encode('utf-8')
+        )
+
+        # Act: Call the endpoint
+        response = self.app.get('/analyze/INVALIDDATA')
+
+        # Assert: The service should detect the contract violation and return a 502 Bad Gateway.
+        self.assertEqual(response.status_code, 502)
+        json_data = response.get_json()
+        self.assertIn("Invalid data structure", json_data['error'])
+        self.assertIn("Field required", json_data['details'])
 
     @patch('app.requests.get')
     def test_analyze_data_service_404_error(self, mock_get):
@@ -72,7 +103,11 @@ class TestAnalysisEndpoint(unittest.TestCase):
 
     @patch('app.requests.get')
     def test_analyze_with_no_price_data(self, mock_get):
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: [])
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: [],
+            content=b'[]'
+        )
         response = self.app.get('/analyze/NEWTICKER')
         self.assertEqual(response.status_code, 404)
         self.assertIn('No price data available', response.get_json()['error'])
@@ -80,13 +115,17 @@ class TestAnalysisEndpoint(unittest.TestCase):
     @patch('app.requests.get')
     def test_endpoint_handles_numpy_types(self, mock_get):
         """Ensures the endpoint can correctly serialize NumPy data types."""
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = [
-            {'formatted_date': '2024-01-01', 'close': 100.0},
-            {'formatted_date': '2024-01-02', 'close': 101.0},
-            {'formatted_date': '2024-01-03', 'close': 102.0},
-            {'formatted_date': '2024-01-04', 'close': 103.0}
+        mock_data = [
+            {'formatted_date': '2024-01-01', 'close': 100.0, 'open': 99, 'high': 101, 'low': 99, 'volume': 1000, 'adjclose': 100.0},
+            {'formatted_date': '2024-01-02', 'close': 101.0, 'open': 100, 'high': 102, 'low': 100, 'volume': 1000, 'adjclose': 101.0},
+            {'formatted_date': '2024-01-03', 'close': 102.0, 'open': 101, 'high': 103, 'low': 101, 'volume': 1000, 'adjclose': 102.0},
+            {'formatted_date': '2024-01-04', 'close': 103.0, 'open': 102, 'high': 104, 'low': 102, 'volume': 1000, 'adjclose': 103.0}
         ]
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: mock_data,
+            content=json.dumps(mock_data).encode('utf-8')
+        )
         with patch('app.find_volatility_contraction_pattern') as mock_vcp:
             mock_vcp.return_value = [(3, np.float64(103.0), 0, np.float64(100.0))]
             response = self.app.get('/analyze/TESTTICKER')
@@ -107,7 +146,11 @@ class TestLowVolumePivotFeature(unittest.TestCase):
     def test_pivot_found_successfully(self, mock_get):
         test_data = generate_pivot_test_data(vcp_present=True, low_vol_date_index=6)
         expected_date = "2025-01-07"
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: test_data,
+            content=json.dumps(test_data).encode('utf-8')
+        )
         response = self.app.get('/analyze/PIVOT')
         json_data = response.get_json()
         self.assertEqual(response.status_code, 200)
@@ -116,7 +159,11 @@ class TestLowVolumePivotFeature(unittest.TestCase):
     @patch('app.requests.get')
     def test_pivot_is_none_when_no_vcp_detected(self, mock_get):
         test_data = generate_pivot_test_data(vcp_present=False)
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: test_data,
+            content=json.dumps(test_data).encode('utf-8')
+        )
         response = self.app.get('/analyze/NOVCP')
         json_data = response.get_json()
         self.assertEqual(response.status_code, 200)
@@ -127,7 +174,11 @@ class TestLowVolumePivotFeature(unittest.TestCase):
     def test_pivot_is_deterministic_with_equal_volumes(self, mock_get):
         test_data = generate_pivot_test_data(vcp_present=True, equal_volumes=True)
         expected_date = "2025-01-04"
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: test_data,
+            content=json.dumps(test_data).encode('utf-8')
+        )
         response = self.app.get('/analyze/EQUALVOL')
         json_data = response.get_json()
         self.assertEqual(response.status_code, 200)
@@ -147,7 +198,11 @@ class TestVolumeTrendLineFeature(unittest.TestCase):
     def test_volume_trend_line_is_calculated(self, mock_get):
         """1. Business Logic: Verifies the trend line is returned for a valid VCP."""
         test_data = generate_pivot_test_data(vcp_present=True)
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: test_data,
+            content=json.dumps(test_data).encode('utf-8')
+        )
 
         response = self.app.get('/analyze/TREND')
         json_data = response.get_json()
@@ -164,8 +219,11 @@ class TestVolumeTrendLineFeature(unittest.TestCase):
     def test_volume_trend_line_is_empty_when_no_vcp(self, mock_get):
         """2. Edge Case: Verifies the trend line is an empty list when no VCP is found."""
         test_data = generate_pivot_test_data(vcp_present=False)
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: test_data)
-
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: test_data,
+            content=json.dumps(test_data).encode('utf-8')
+        )
         response = self.app.get('/analyze/NOTREND')
         json_data = response.get_json()
         
@@ -188,9 +246,11 @@ class TestResponseStructure(unittest.TestCase):
         """
         # Arrange: Mock a successful response from the data-service
         # Using a helper from existing tests to generate predictable data
+        mock_data = generate_pivot_test_data(vcp_present=True)
         mock_get.return_value = MagicMock(
             status_code=200, 
-            json=lambda: generate_pivot_test_data(vcp_present=True)
+            json=lambda: mock_data,
+            content=json.dumps(mock_data).encode('utf-8')
         )
 
         # Act: Call the endpoint
@@ -213,6 +273,7 @@ class TestVCPEvaluationModes(unittest.TestCase):
         self.app.testing = True
         # Use a helper to generate predictable test data
         self.mock_price_data = generate_pivot_test_data(vcp_present=True)
+        self.mock_price_data_content = json.dumps(self.mock_price_data).encode('utf-8')
 
     @patch('app.requests.get')
     @patch('app.run_vcp_screening')
@@ -222,7 +283,11 @@ class TestVCPEvaluationModes(unittest.TestCase):
         """
         # --- Arrange ---
         # Mock the data-service to return valid price data
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: self.mock_price_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: self.mock_price_data,
+            content=self.mock_price_data_content
+        )
 
         # Mock the orchestrator to return a "fail" status with detailed results
         # This simulates a ticker that passes some checks but fails others.
@@ -259,7 +324,11 @@ class TestVCPEvaluationModes(unittest.TestCase):
         Tests that 'fast' mode halts execution on the first check failure.
         """
         # --- Arrange ---
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: self.mock_price_data)
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: self.mock_price_data,
+            content=self.mock_price_data_content
+        )
 
         # Mock the VCP checks so the first one fails
         mock_is_pivot_good.return_value = False # This is the first check, it will fail.

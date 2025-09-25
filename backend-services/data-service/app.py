@@ -11,13 +11,16 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient, errors
 from pymongo.errors import OperationFailure
+from pydantic import ValidationError, TypeAdapter
+from typing import List
+from shared.contracts import PriceDataItem, CoreFinancials
 
 # Import provider modules
 from providers import finnhub_provider, marketaux_provider
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
 # Import the logic
-from helper_functions import check_market_trend_context
+from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data
 
 app = Flask(__name__)
 PORT = int(os.environ.get('PORT', 3001))
@@ -131,7 +134,13 @@ def get_batch_core_financials_route():
         cached_data = cache.get(cache_key)
         if cached_data:
             app.logger.info(f"Cache HIT for financials: {ticker}")
-            processed_data[ticker] = cached_data
+            # Validate cached data against the contract
+            validated_cached_data = validate_and_prepare_financials(cached_data, ticker)
+            if validated_cached_data:
+                processed_data[ticker] = validated_cached_data
+            else:
+                 app.logger.warning(f"Cached financials data for {ticker} failed validation. Refetching.")
+                 tickers_to_fetch.append(ticker)
         else:
             app.logger.info(f"Cache MISS for financials: {ticker}")
             tickers_to_fetch.append(ticker)
@@ -143,28 +152,17 @@ def get_batch_core_financials_route():
     failed_tickers = []
 
     for ticker in tickers_to_fetch:
-        data = fetched_data.get(ticker)
-        if data:
-            # Enforce data contract
-            total_revenue = data.get('totalRevenue')
-            net_income = data.get('netIncome')
-            market_cap = data.get('marketCap')
-
-            # Validate and substitute if not numerical
-            processed_total_revenue = total_revenue if isinstance(total_revenue, (int, float)) else 0
-            processed_net_income = net_income if isinstance(net_income, (int, float)) else 0
-            processed_market_cap = market_cap if isinstance(market_cap, (int, float)) else 0
-
-            processed_data[ticker] = {
-                "totalRevenue": processed_total_revenue,
-                "netIncome": processed_net_income,
-                "marketCap": processed_market_cap,
-                **{k: v for k, v in data.items() if k not in ['totalRevenue', 'netIncome', 'marketCap']} # Keep other fields
-            }
+        raw_data = fetched_data.get(ticker)
+        # Use helper to validate and clean provider data
+        final_data = validate_and_prepare_financials(raw_data, ticker)
+        
+        if final_data:
+            processed_data[ticker] = final_data
             # Set cache for the newly fetched item
-            cache.set(cache_key, processed_data[ticker], timeout=FINANCIALS_CACHE_TTL)
+            cache.set(f"financials_{ticker}", final_data, timeout=FINANCIALS_CACHE_TTL)
             app.logger.info(f"CACHE INSERT for financials: {ticker}")
         else:
+            # The helper function already logged the validation error
             failed_tickers.append(ticker)
 
     return jsonify({"success": processed_data, "failed": failed_tickers}), 200
@@ -185,19 +183,27 @@ def get_core_financials(ticker):
 
     if cached_data:
         app.logger.info(f"Cache HIT for financials: {ticker}")
-        return jsonify(cached_data)
+        # Validate cached data against the contract
+        validated_cached_data = validate_and_prepare_financials(cached_data, ticker)
+        if validated_cached_data:
+            return jsonify(validated_cached_data)
+        else:
+            app.logger.warning(f"Cached financials data for {ticker} failed validation. Refetching.")
+            # Continue to fetch new data as if it were a cache miss
 
     app.logger.info(f"Cache MISS for financials: {ticker}")
     # If not in cache, fetch from the provider
-    data = yf_financials_provider.get_core_financials(ticker)
+    raw_data = yf_financials_provider.get_core_financials(ticker)
+    # Use helper to validate provider data
+    final_data = validate_and_prepare_financials(raw_data, ticker)
 
-    if data:
-        # Store the fetched dictionary in the cache
-        cache.set(cache_key, data, timeout=FINANCIALS_CACHE_TTL)
+    if final_data:
+        cache.set(cache_key, final_data, timeout=FINANCIALS_CACHE_TTL)
         app.logger.info(f"CACHE INSERT for financials: {ticker}")
-        return jsonify(data)
+        return jsonify(final_data)
     else:
-        return jsonify({"error": "Data not found for ticker"}), 404
+        # Helper function already logged the error
+        return jsonify({"error": "Data not found or failed validation for ticker"}), 404
 
 @app.route('/price/batch', methods=['POST'])
 def get_batch_data():
@@ -231,10 +237,15 @@ def get_batch_data():
         cache_key = f"price_{source}_{ticker}"
         data = cache.get(cache_key)
         if data:
-            cached_results[ticker] = data
+            validated_data = validate_and_prepare_price_data(data, ticker)
+            if validated_data:
+                cached_results[ticker] = validated_data
+            else:
+                app.logger.warning(f"Cached price data for {ticker} is invalid, refetching.")
+                missed_tickers.append(ticker)
         else:
             missed_tickers.append(ticker)
-    
+
     app.logger.info(f"Batch request. Cache hits: {len(cached_results)}, Cache misses: {len(missed_tickers)}")
 
     # --- Fetch Data for Cache Misses ---
@@ -251,9 +262,11 @@ def get_batch_data():
             )
             if fetched_data:
                 for ticker, data in fetched_data.items():
-                    if data:
-                        newly_fetched_data[ticker] = data
-                        cache.set(f"price_{source}_{ticker}", data, timeout=PRICE_CACHE_TTL)
+                    # Validate newly fetched data and fix bug (was using CoreFinancials model)
+                    final_data = validate_and_prepare_price_data(data, ticker)
+                    if final_data:
+                        newly_fetched_data[ticker] = final_data
+                        cache.set(f"price_{source}_{ticker}", final_data, timeout=PRICE_CACHE_TTL)
                         app.logger.info(f"CACHE INSERT for price: {ticker}")
                     else:
                         failed_tickers.append(ticker)
@@ -298,17 +311,22 @@ def get_data(ticker: str):
     new_start_date = None # This will be set if an incremental fetch is needed.
 
     if cached_data:
-        # If the cache is valid, check how recent the data is.
-        last_date_str = cached_data[-1]['formatted_date']
-        last_date = date.fromisoformat(last_date_str)
-
-        # If the last data point is from yesterday or today, it's current enough.
-        if last_date >= (date.today() - timedelta(days=1)):
-            app.logger.info(f"Cache HIT and data is current for price: {ticker}")
-            return jsonify(cached_data)
-
-        # If data is old, set the start date for an incremental fetch.
-        new_start_date = last_date + timedelta(days=1)
+        # Validate the cached data first
+        validated_cached_data = validate_and_prepare_price_data(cached_data, ticker)
+        if validated_cached_data:
+            # If the cache is valid, check how recent the data is.
+            last_date_str = validated_cached_data[-1]['formatted_date']
+            last_date = date.fromisoformat(last_date_str)
+            # If the last data point is from yesterday or today, it's current enough.
+            if last_date >= (date.today() - timedelta(days=1)):
+                app.logger.info(f"Cache HIT and data is current for price: {ticker}")
+                return jsonify(validated_cached_data)
+            # If data is old, set the start date for an incremental fetch.
+            new_start_date = last_date + timedelta(days=1)
+            cached_data = validated_cached_data # Use the validated version for appending later
+        else:
+            app.logger.warning(f"Cached data for {ticker} failed validation. Performing full fetch.")
+            cached_data = None # Invalidate broken cache data
 
     # --- Data Fetching ---
     # Based on the cache check, decide whether to fetch full or incremental data.
@@ -337,6 +355,15 @@ def get_data(ticker: str):
 
     # --- Cache and Response Handling ---
     if data:
+        # Validate new data from provider
+        validated_data = validate_and_prepare_price_data(data, ticker)
+        if not validated_data:
+            # If validation fails, return error or stale cache
+            if cached_data:
+                app.logger.warning(f"Returning stale but valid cache for {ticker} due to provider failure.")
+                return jsonify(cached_data)
+            return jsonify({"error": f"Could not retrieve valid price data for {ticker}."}), 500
+
         if new_start_date and cached_data:
             # If it was an incremental fetch, append the new data to the existing cache.
             full_data = cached_data + data
@@ -496,7 +523,9 @@ def calculate_market_trend():
     # Use the batch price fetcher for efficiency.
     batch_price_data = yf_price_provider.get_stock_data(indices, start_date=start_date_for_fetch)
 
-    if not all(idx in batch_price_data for idx in indices):
+    # Robust check to ensure the provider returned valid data for all indices, not just None.
+    if not batch_price_data or not all(batch_price_data.get(idx) for idx in indices):
+        app.logger.error(f"Failed to fetch historical data for one or more major indices. Data received: {batch_price_data}")
         return jsonify({"error": "Failed to fetch historical data for one or more major indices."}), 503
 
     # --- 2. Process Data with Pandas for Efficient Lookups ---

@@ -47,7 +47,7 @@ class TestYFinancePriceProvider(unittest.TestCase):
         self.assertEqual(data[0]['close'], 102)
         self.assertEqual(data[1]['volume'], 12000)
 
-    @patch('providers.yfin.price_provider._mark_ticker_as_delisted')
+    @patch('providers.yfin.price_provider.mark_ticker_as_delisted')
     @patch('providers.yfin.price_provider.yahoo_client.session.get')
     @patch('providers.yfin.price_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
     def test_get_single_ticker_data_api_404(self, mock_get_auth, mock_session_get, mock_mark_delisted):
@@ -63,7 +63,7 @@ class TestYFinancePriceProvider(unittest.TestCase):
         self.assertIsNone(data)
         mock_mark_delisted.assert_called_once_with('DELISTED', "Yahoo Finance price API call failed with status 404.")
 
-    @patch('providers.yfin.price_provider._mark_ticker_as_delisted')
+    @patch('providers.yfin.price_provider.mark_ticker_as_delisted')
     @patch('providers.yfin.price_provider.yahoo_client.session.get')
     @patch('providers.yfin.price_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
     def test_provider_does_not_mark_delisted_on_other_http_errors(self, mock_get_auth, mock_session_get, mock_mark_delisted):

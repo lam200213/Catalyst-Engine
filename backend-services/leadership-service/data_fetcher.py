@@ -68,7 +68,7 @@ def fetch_price_data(ticker):
         stock_response.raise_for_status()
             
         stock_data = stock_response.json()
-        return stock_data
+        return stock_data, 200
     except requests.exceptions.RequestException as e:
         app.logger.error(f"Error fetching price data for {ticker} after retries: {e}")
         return None, getattr(e.response, 'status_code', 503)

@@ -1,14 +1,14 @@
-# backend-services/scheduler-service/tests/test_scheduler.py
+# backend-services/scheduler-service/tests/test_app.py
 import unittest
 from unittest.mock import patch, MagicMock
 import os
 import sys
-import requests
 from pymongo import errors
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from app import app
+from shared.contracts import ScreeningJobResult, FinalCandidate, IndustryDiversity, VCPAnalysisBatchItem, LeadershipProfileBatch, LeadershipProfileForBatch
 
 class TestScheduler(unittest.TestCase):
     def setUp(self):
@@ -36,8 +36,24 @@ class TestScheduler(unittest.TestCase):
         # --- Arrange: Mock the return values for each stage of the screening funnel ---
         mock_get_tickers.return_value = (['TICKER_A', 'TICKER_B', 'TICKER_C'], None)
         mock_trend_screen.return_value = (['TICKER_A', 'TICKER_B'], None)
-        mock_vcp_analysis.return_value = [{'ticker': 'TICKER_A', 'vcp_pass': True}]
-        mock_leadership_screen.return_value = ([{'ticker': 'TICKER_A', 'vcp_pass': True, 'leadership_results': {'passes': True}}], 1)
+        
+        mock_vcp_survivors = [
+            VCPAnalysisBatchItem(ticker='TICKER_A', vcp_pass=True, vcpFootprint="10W 20/2 3T"),
+            VCPAnalysisBatchItem(ticker='TICKER_B', vcp_pass=False, vcpFootprint=""),
+        ]
+        # The _run_vcp_analysis function will filter this list down to only passing candidates before returning.
+        mock_vcp_analysis.return_value = [v for v in mock_vcp_survivors if v.vcp_pass]
+        
+        mock_final_candidates = [
+            FinalCandidate(
+                ticker='TICKER_A', 
+                vcp_pass=True, 
+                vcpFootprint="10W 20/2 3T", 
+                leadership_results={'passes': True, 'details': {}}
+            )
+        ]
+        mock_leadership_screen.return_value = (mock_final_candidates, 1) # (candidates, industry_count)
+        
         mock_store_results.return_value = (True, None)
 
         # --- Act: Trigger the screening job via the API endpoint ---
@@ -51,22 +67,27 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(json_data['trend_screen_survivors_count'], 2)
         self.assertEqual(json_data['vcp_survivors_count'], 1)
         self.assertEqual(json_data['final_candidates_count'], 1)
-        self.assertEqual(json_data['unique_industries_count'], 1)
+        self.assertEqual(json_data['industry_diversity']['unique_industries_count'], 1) # Latest Add: Check nested structure
         self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
 
         # Verify that each stage was called with the output of the previous stage
         mock_get_tickers.assert_called_once()
         mock_trend_screen.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B', 'TICKER_C'])
         mock_vcp_analysis.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B'])
-        mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, [{'ticker': 'TICKER_A', 'vcp_pass': True}])
+        mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, mock_vcp_analysis.return_value)
         
         # Verify the final results were stored correctly
         mock_store_results.assert_called_once()
         call_args = mock_store_results.call_args[0]
-        self.assertEqual(call_args[1]['final_candidates_count'], 1) # summary_doc
-        self.assertEqual(len(call_args[5]), 1) # final_candidates list
-        self.assertEqual(call_args[5][0]['ticker'], 'TICKER_A')
 
+        summary_doc_arg = call_args[1]
+        self.assertIsInstance(summary_doc_arg, ScreeningJobResult)
+        self.assertEqual(summary_doc_arg.final_candidates_count, 1)
+        
+        final_candidates_arg = call_args[5]
+        self.assertEqual(len(final_candidates_arg), 1)
+        self.assertIsInstance(final_candidates_arg[0], FinalCandidate)
+        self.assertEqual(final_candidates_arg[0].ticker, 'TICKER_A')
 
     @patch('app._get_all_tickers')
     def test_service_failure_ticker_service(self, mock_get_tickers):

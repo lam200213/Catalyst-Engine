@@ -5,6 +5,8 @@ import logging
 import pandas as pd
 from .utils import failed_check
 from data_fetcher import fetch_peer_data, fetch_batch_financials
+from shared.contracts import IndustryPeers
+from pydantic import ValidationError
 
 # Get a logger that's a child of the app.logger, so it inherits the file handler
 logger = logging.getLogger(__name__)
@@ -22,11 +24,19 @@ def get_and_check_industry_leadership(ticker, details):
     metric_key = 'is_industry_leader'
     
     # --- 1. Fetch all necessary data ---
-    peers_data, error = fetch_peer_data(ticker)
+    peers_data_raw, error = fetch_peer_data(ticker)
     if error:
         logging.error(f"Failed to fetch peer data for {ticker}: {error[0]}")
         details.update(failed_check(metric_key, f"Upstream error: {error[0]}"))
         return # Stop execution for this check
+
+    # Validate the raw peer data against the IndustryPeers contract
+    try:
+        peers_data = IndustryPeers.model_validate(peers_data_raw).model_dump()
+    except ValidationError as e:
+        logging.error(f"Contract violation for IndustryPeers for {ticker}: {e}")
+        details.update(failed_check(metric_key, "Invalid peer data structure from upstream service."))
+        return
 
     raw_peer_tickers = peers_data.get("peers", [])
     if not raw_peer_tickers:
@@ -88,7 +98,7 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data, details)
                         'ticker': ticker_symbol,
                         'revenue': revenue,
                         'marketCap': market_cap,
-                        'netIncome': net_income
+                        'Net Income': net_income
                     })
 
         if not processed_data:
@@ -103,7 +113,7 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data, details)
         # method='min' assigns the lowest rank in case of ties
         df['revenue_rank'] = df['revenue'].rank(ascending=False, method='min')
         df['market_cap_rank'] = df['marketCap'].rank(ascending=False, method='min')
-        df['earnings_rank'] = df['netIncome'].rank(ascending=False, method='min')
+        df['earnings_rank'] = df['Net Income'].rank(ascending=False, method='min')
 
         # Combine score (lower combined rank is better)
         df['combined_score'] = df['revenue_rank'] + df['market_cap_rank'] + df['earnings_rank']

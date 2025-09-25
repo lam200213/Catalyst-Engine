@@ -9,6 +9,9 @@ import numpy as np
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from vcp_logic import find_volatility_contraction_pattern, run_vcp_screening, _calculate_volume_trend
+from pydantic import ValidationError, TypeAdapter
+from typing import List
+from shared.contracts import PriceDataItem
 
 app = Flask(__name__)
 
@@ -42,6 +45,33 @@ class CustomJSONProvider(JSONProvider):
 app.json = CustomJSONProvider(app)
 
 # --- Data Preparation and Utility Functions ---
+
+def _validate_and_parse_price_data(response, ticker_for_log):
+    """
+    Validates the price data response from the data-service against the contract.
+    Returns parsed data on success, or (None, error_response_tuple) on failure.
+    This function helps enforce the PriceDataItem contract and follows DRY principle.
+    """
+    try:
+        # Pydantic's TypeAdapter is efficient for validating lists of models
+        PriceDataValidator = TypeAdapter(List[PriceDataItem])
+        # .validate_json is faster as it works directly on bytes
+        validated_data = PriceDataValidator.validate_json(response.content)
+        # Pydantic models are returned, convert them back to dicts for the existing logic
+        return [item.model_dump() for item in validated_data], None
+    except ValidationError as e:
+        app.logger.error(f"Data contract violation from data-service for {ticker_for_log}: {e}")
+        error_payload = {
+            "error": "Invalid data structure received from upstream data-service.",
+            "details": str(e)
+        }
+        return None, (jsonify(error_payload), 502)
+    except json.JSONDecodeError:
+        error_payload = {
+            "error": "Invalid JSON response from data-service.",
+            "details": response.text
+        }
+        return None, (jsonify(error_payload), 502)
 
 def prepare_historical_data(historical_data):
     """
@@ -149,8 +179,12 @@ def analyze_ticker_endpoint(ticker):
                 "details": error_details
             }), 502 # 502 Bad Gateway for dependency errors
 
+        # 1.5. Validate data contract before processing using the DRY helper function
+        raw_historical_data, error_response = _validate_and_parse_price_data(hist_resp, ticker)
+        if error_response:
+            return error_response
+
         # 2. Prepare data for analysis
-        raw_historical_data = hist_resp.json()
         prices, dates, historical_data_sorted = prepare_historical_data(raw_historical_data)
 
         if not prices:
@@ -267,18 +301,33 @@ def analyze_batch_endpoint():
                     "details": data_resp.text
                 }), 502
             
-            batch_data = data_resp.json().get('success', {})
+            try:
+                raw_batch_data = data_resp.json()
+                successful_data = raw_batch_data.get('success', {})
+            except json.JSONDecodeError:
+                return jsonify({"error": "Invalid JSON response from data-service", "details": data_resp.text}), 502
+            
         except requests.exceptions.RequestException as e:
             return jsonify({"error": "Error connecting to data-service.", "details": str(e)}), 503
 
         # 2. Process each ticker's data in parallel
         passing_candidates = []
-        
+
+        # Pydantic validator for validating the price data list for each ticker
+        PriceDataValidator = TypeAdapter(List[PriceDataItem])
+
         # Use the executor to submit analysis tasks
-        future_to_ticker = {
-            executor.submit(_process_ticker_analysis, ticker, data, mode): ticker
-            for ticker, data in batch_data.items()
-        }
+        future_to_ticker = {}
+        for ticker, data in successful_data.items():
+            try:
+                # Validate the data for each ticker against the contract before processing
+                PriceDataValidator.validate_python(data)
+                future = executor.submit(_process_ticker_analysis, ticker, data, mode)
+                future_to_ticker[future] = ticker
+            except ValidationError as e:
+                # Log the contract violation and skip this ticker to maintain batch resilience
+                app.logger.warning(f"Contract violation for {ticker} in batch, skipping. Details: {e}")
+                continue
         
         for future in as_completed(future_to_ticker):
             ticker = future_to_ticker[future]

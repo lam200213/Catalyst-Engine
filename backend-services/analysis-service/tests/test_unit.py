@@ -22,9 +22,8 @@ def get_vcp_test_data():
     """Generates a predictable dataset known to contain VCPs."""
     prices = [100, 105, 102, 108, 104, 100, 103, 101, 98]
     dates = [f"2024-01-{i+1:02d}" for i in range(len(prices))]
-    historical_data = [{'formatted_date': d, 'close': p} for d, p in zip(dates, prices)]
+    historical_data = [{'formatted_date': d, 'open': p-1, 'high': p+1, 'low': p-1, 'close': p, 'volume': 1000, 'adjclose': p} for d, p in zip(dates, prices)]
     return historical_data, prices, dates
-
 def get_flat_test_data():
     """Generates data with no volatility."""
     prices = [100] * 20

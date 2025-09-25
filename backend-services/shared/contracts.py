@@ -1,0 +1,187 @@
+# backend-services/shared/contracts.py
+"""
+This module defines the Pydantic models that serve as the formal data contracts
+for all inter-service communication in the SEPA Stock Screener backend.
+
+These models ensure data consistency, provide automatic validation, and act as
+living documentation for the data structures exchanged between microservices.
+"""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional, TypeAlias
+from pydantic import BaseModel, ConfigDict, Field
+
+# --- Contract 1: TickerList ---
+TickerList: TypeAlias = List[str]
+"""A simple list of stock ticker symbols (e.g., ["AAPL", "MSFT"])."""
+
+# --- Contract 2: PriceData ---
+class PriceDataItem(BaseModel):
+    """Represents a single time-series data point for a stock."""
+    formatted_date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    adjclose: float
+
+
+# --- Contract 3: CoreFinancials ---
+class EarningItem(BaseModel):
+    """Represents a single earnings report (annual or quarterly)."""
+    Revenue: Optional[int] = None # Make optional to handle sparse data
+    Earnings: Optional[float] = None # Make optional and float
+    Net_Income: Optional[int] = Field(None, alias='Net Income')
+
+class QuarterlyFinancialItem(BaseModel):
+    """Represents a single quarterly financial report for net income calculations."""
+    Net_Income: Optional[int] = Field(None, alias='Net Income')
+    Total_Revenue: Optional[int] = Field(None, alias='Total Revenue')
+
+class CoreFinancials(BaseModel):
+    """Essential fundamental data for the Leadership screen."""
+    ticker: str
+    marketCap: Optional[float] = 0
+    sharesOutstanding: Optional[float] = 0
+    floatShares: Optional[float] = 0
+    ipoDate: Optional[str] = None
+    annual_earnings: List[EarningItem]
+    quarterly_earnings: List[EarningItem]
+    quarterly_financials: List[QuarterlyFinancialItem]
+
+# --- Contract 4: NewsData ---
+class NewsDataItem(BaseModel):
+    """Represents a single news article."""
+    uuid: str
+    title: str
+    description: str
+    url: str
+    source: str
+    published_at: str
+
+
+# --- Contract 5: IndustryPeers ---
+class IndustryPeers(BaseModel):
+    """Industry classification and peer companies for a ticker."""
+    industry: Optional[str] = None
+    peers: List[str]
+
+
+# --- Contract 6: ScreeningResult ---
+class ScreeningResultSingle(BaseModel):
+    """Detailed breakdown of the SEPA trend screen for one ticker."""
+    ticker: str
+    passes: bool
+    details: Dict[str, bool]
+
+
+# --- Contract 7: VCPAnalysis ---
+class VCPAnalysisBatchItem(BaseModel):
+    """Lean result for a single ticker from a batch VCP analysis."""
+    ticker: str
+    vcp_pass: bool
+    vcpFootprint: str
+
+
+class VCPChartData(BaseModel):
+    """Data required for visualizing the VCP chart."""
+    detected: bool
+    vcpLines: List[Dict[str, Any]]
+    buyPoints: List[Dict[str, Any]]
+    sellPoints: List[Dict[str, Any]]
+    ma50: List[Dict[str, Any]]
+    historicalData: List[Dict[str, Any]]
+
+
+class VCPDetailCheck(BaseModel):
+    """Represents the pass/fail status of a specific VCP validation."""
+    model_config = ConfigDict(populate_by_name=True)
+    passes: bool = Field(..., alias='pass')
+    message: str
+
+class VCPDetails(BaseModel):
+    """Detailed breakdown of VCP validation checks."""
+    pivot_validation: VCPDetailCheck
+    volume_validation: VCPDetailCheck
+
+
+class VCPAnalysisSingle(BaseModel):
+    """Rich result object for a single-ticker VCP analysis."""
+    ticker: str
+    vcp_pass: bool
+    vcpFootprint: str
+    chart_data: VCPChartData
+    vcp_details: Optional[VCPDetails] = None
+
+
+# --- Contract 8: LeadershipProfile ---
+class LeadershipMetricDetail(BaseModel):
+    """Represents the pass/fail status of a single leadership metric."""
+    model_config = ConfigDict(populate_by_name=True, extra='allow')
+
+    passes: bool = Field(..., alias='pass')
+    message: str
+
+
+class LeadershipProfileMetadata(BaseModel):
+    """Execution metadata for a leadership screen."""
+    execution_time: float
+
+
+class LeadershipProfileSingle(BaseModel):
+    """Detailed breakdown of the leadership screen for one ticker."""
+    ticker: str
+    passes: bool
+    details: Dict[str, LeadershipMetricDetail]
+    industry: Optional[str] = None
+    metadata: LeadershipProfileMetadata
+
+
+class LeadershipProfileForBatch(BaseModel):
+    """Schema for candidates inside the leadership batch result."""
+    ticker: str
+    passes: bool
+    details: Dict[str, Any] # containing pass and message keys
+    industry: Optional[str] = None
+
+
+class LeadershipProfileBatchMetadata(BaseModel):
+    """Execution metadata for a batch leadership screen."""
+    total_processed: int
+    total_passed: int
+    execution_time: float
+
+
+class LeadershipProfileBatch(BaseModel):
+    """Result object for a batch leadership screen."""
+    passing_candidates: List[LeadershipProfileForBatch]
+    unique_industries_count: int
+    metadata: LeadershipProfileBatchMetadata
+
+
+# --- Contract 9: ScreeningJobResult ---
+class FinalCandidate(BaseModel):
+    """Represents a final, fully screened candidate stock."""
+    ticker: str
+    vcp_pass: bool
+    vcpFootprint: str
+    leadership_results: Dict[str, Any]
+
+
+class IndustryDiversity(BaseModel):
+    """Summary of industry representation in final results."""
+    unique_industries_count: int
+
+
+class ScreeningJobResult(BaseModel):
+    """Summary document for a completed screening pipeline run."""
+    job_id: str
+    processed_at: datetime
+    total_process_time: float
+    total_tickers_fetched: int
+    trend_screen_survivors_count: int
+    vcp_survivors_count: int
+    final_candidates_count: int
+    industry_diversity: IndustryDiversity
+    final_candidates: List[FinalCandidate]

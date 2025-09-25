@@ -9,12 +9,19 @@ from flask.json.provider import JSONProvider
 from concurrent.futures import ThreadPoolExecutor
 from screening_logic import apply_screening_criteria
 import traceback 
+from pydantic import BaseModel, ValidationError, TypeAdapter
+from typing import List, Dict
+from shared.contracts import PriceDataItem
 
 app = Flask(__name__)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 3002))
 CHUNK_SIZE = 75 # Number of tickers to process at once for batch processing
+
+class BatchResponse(BaseModel):
+    success: Dict[str, List[PriceDataItem]]
+    failed: List[str]
 
 # This class teaches Flask's JSON encoder how to handle NumPy's specific data types.
 class NumpyJSONEncoder(json.JSONEncoder):
@@ -72,12 +79,20 @@ def screen_ticker_endpoint(ticker):
             }), 502 # Return 502 Bad Gateway for other data-service errors
 
         try:
+            PriceDataValidator = TypeAdapter(List[PriceDataItem])
+            PriceDataValidator.validate_json(hist_resp.content)
             historical_data = hist_resp.json()
+        except ValidationError as e:
+            app.logger.error(f"Data contract violation from data-service for {ticker}: {e}")
+            return jsonify({
+                "error": "Invalid data structure received from upstream data-service.",
+                "details": str(e)
+            }), 502
         except requests.exceptions.JSONDecodeError:
+            # Centralized error handling
             return jsonify({
                 "error": "Invalid JSON response from data-service.",
-                "dependency_status_code": hist_resp.status_code,
-                "dependency_response": hist_resp.text
+                "details": hist_resp.text
             }), 502
 
         # debug
@@ -108,7 +123,15 @@ def _process_chunk(chunk):
             print(f"Warning: Chunk failed with status {resp.status_code}. Details: {resp.text}")
             return []
 
-        batch_data = resp.json()
+        try:
+            # This is the idiomatic way for a BaseModel, avoiding the TypeAdapter error.
+            validated_response = BatchResponse.model_validate_json(resp.content)
+            batch_data = validated_response.model_dump() # Convert to dict for existing logic
+        except (ValidationError, json.JSONDecodeError) as e:
+            # If the data structure from the data-service is invalid, log the error and fail the chunk.
+            print(f"Warning: Batch data contract violation from data-service. Error: {e}. Response: {resp.text[:500]}")
+            return []
+        
         successful_data = batch_data.get('success', {})
         failed_tickers = batch_data.get('failed', [])
 

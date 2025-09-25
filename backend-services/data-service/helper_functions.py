@@ -3,6 +3,9 @@ import logging
 from pymongo import MongoClient, errors
 from datetime import datetime, timezone
 import os
+from typing import List
+from pydantic import ValidationError, TypeAdapter
+from shared.contracts import PriceDataItem, CoreFinancials
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -12,6 +15,72 @@ def failed_check(metric, message, **kwargs):
     # Log the technical failure for developers
     logger.warning(f"Check failed for metric '{metric}': {message} | Details: {kwargs}")
     return {metric: {"pass": False, "message": message, **kwargs}}
+
+def validate_and_prepare_price_data(data: list, ticker: str) -> list | None:
+    """
+    Validates raw price data against the PriceDataItem contract.
+
+    Args:
+        data (list): The raw price data list from the provider or cache.
+        ticker (str): The ticker symbol for logging purposes.
+
+    Returns:
+        list: A validated list of price data dictionaries, or None if validation fails.
+    """
+    if not data:
+        return None
+    try:
+        PriceDataValidator = TypeAdapter(List[PriceDataItem])
+        validated_items = PriceDataValidator.validate_python(data)
+        # Convert back to a list of dicts for JSON serialization
+        return [item.model_dump() for item in validated_items]
+    except ValidationError as e:
+        logger.error(f"Price data for {ticker} failed contract validation: {e}")
+        return None
+
+
+def validate_and_prepare_financials(data: dict, ticker: str):
+    """
+    Validates raw financial data against the CoreFinancials contract,
+    cleans key numerical fields, and returns a processed dictionary.
+
+    Args:
+        data (dict): The raw data dictionary from the provider.
+        ticker (str): The ticker symbol for logging purposes.
+
+    Returns:
+        dict: A validated and cleaned data dictionary, or None if validation fails.
+    """
+    if not data:
+        return None
+    
+    # Special handling for market index data. If the ticker is a known index
+    # and the data contains 'current_price', we treat it as valid market data
+    # and bypass the stricter CoreFinancials Pydantic validation.
+    if ticker in ['^GSPC', '^DJI', '^IXIC'] and 'current_price' in data:
+        logger.debug(f"Bypassing CoreFinancials validation for market index: {ticker}")
+        return data
+
+    try:
+        # Enforce data contract
+        validated_data = CoreFinancials.model_validate(data)
+        final_data = validated_data.model_dump(by_alias=True)  # Convert back to dict
+
+        # Centralize the data cleaning logic from the batch endpoint
+        total_revenue = final_data.get('totalRevenue')
+        net_income = final_data.get('Net Income')
+        market_cap = final_data.get('marketCap')
+
+        # Substitute non-numerical values with 0 to prevent downstream errors
+        final_data['totalRevenue'] = total_revenue if isinstance(total_revenue, (int, float)) else 0
+        final_data['Net Income'] = net_income if isinstance(net_income, (int, float)) else 0
+        final_data['marketCap'] = market_cap if isinstance(market_cap, (int, float)) else 0
+        
+        return final_data
+        
+    except ValidationError as e:
+        logger.error(f"Financial data for {ticker} failed contract validation: {e}")
+        return None
 
 def check_market_trend_context(index_data, details):
     """
@@ -92,7 +161,7 @@ def check_market_trend_context(index_data, details):
         # Handle any errors gracefully
         details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}", trend='Unknown'))
 
-def _mark_ticker_as_delisted(ticker: str, reason: str):
+def mark_ticker_as_delisted(ticker: str, reason: str):
     """Writes a ticker's status as 'delisted' to the ticker_status collection."""
     try:
         mongo_uri = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")

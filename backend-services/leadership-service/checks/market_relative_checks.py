@@ -176,7 +176,6 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
         # --- 1. Determine Market Context ---
         current_market_trend_info = market_trends_data[-1]
         market_trend_context = current_market_trend_info.get('trend', 'Unknown')
-        details['market_trend_context'] = current_market_trend_info # Store the full context
         turning_point_date = _find_market_turning_point(market_trends_data)
 
         is_recovery_phase = False

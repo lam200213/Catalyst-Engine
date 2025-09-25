@@ -2,3 +2,4 @@ Flask
 requests
 numpy
 pytest
+pydantic

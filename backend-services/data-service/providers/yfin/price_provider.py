@@ -7,7 +7,7 @@ import random # for throttling
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client # Use relative import
-from helper_functions import _mark_ticker_as_delisted
+from helper_functions import mark_ticker_as_delisted
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
         if e.response:
             logger.error(f"HTTPError: {e.response.status_code} Client Error for url: {e.response.url}")
             if e.response.status_code == 404:
-                _mark_ticker_as_delisted(ticker, "Yahoo Finance price API call failed with status 404.")
+                mark_ticker_as_delisted(ticker, "Yahoo Finance price API call failed with status 404.")
         logger.error(f"A curl_cffi request error occurred for {ticker}: {e}")
         return None
     except Exception as e:

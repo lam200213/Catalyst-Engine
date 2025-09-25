@@ -2,3 +2,4 @@ Flask
 pandas
 requests
 pytest
+pydantic

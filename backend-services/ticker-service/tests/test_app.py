@@ -80,6 +80,26 @@ class TickerServiceTest(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(data, {"error": "Failed to retrieve any tickers."})
 
+    @patch('app.get_all_us_tickers')
+    def test_get_tickers_internal_validation_error(self, mock_get_tickers):
+        """
+        Test that the endpoint returns a 500 error if the internal function
+        produces data that violates the Pydantic contract (e.g., not a list of strings).
+        """
+        # Mock the internal function to return malformed data (list of dicts instead of strings)
+        mock_get_tickers.return_value = [{"ticker": "AAPL"}, {"ticker": "GOOG"}]
+
+        # Make a request to the endpoint
+        response = self.app.get('/tickers')
+        data = json.loads(response.data)
+
+        # Assertions
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data, {"error": "Internal server error: malformed ticker data."})
+
+        # Ensure the internal function was called
+        mock_get_tickers.assert_called_once()
+
     @patch('requests.get')
     def test_get_tickers_bad_data_format(self, mock_get):
         """

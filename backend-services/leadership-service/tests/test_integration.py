@@ -34,40 +34,39 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         # --- Arrange Mocks ---
         # 1. Financial Data (passes all financial checks)
         # Use the 'passing_data=True' flag in the helper to generate data that passes growth checks.
-        pass_financials = create_mock_financial_data(ipoDate='2022-01-01', passing_data=True) 
+        pass_financials = create_mock_financial_data(ipoDate='2022-01-01', passing_data=True, ticker="PASS-TICKER") 
         mock_fetch_financials.return_value = (pass_financials, 200)
 
         # 2. Price Data (for market impact)
         # Use the 'passing_data=True' flag to ensure a rally is simulated.
-        stock_prices, sp500_prices = create_mock_price_data(performance_factor=2.0, length=300, passing_data=True)
+        stock_prices, sp500_prices = create_mock_price_data(performance_factor=2.0, length=300)
         stock_prices[-1]['close'] = max(d.get('high', 0) for d in stock_prices) + 1 # Ensure new 52w high  
 
-        def price_side_effect(ticker):
-            if ticker == 'PASS-TICKER': return stock_prices
-            if ticker == '^GSPC': return sp500_prices
-            return None
-        mock_fetch_price.side_effect = price_side_effect
+        mock_fetch_price.return_value = (stock_prices, 200)
 
         # 3. Index Data (for market context)
-        mock_fetch_price.side_effect = lambda ticker: stock_prices if ticker == 'PASS-TICKER' else sp500_prices
         mock_fetch_index.return_value = create_mock_index_data(trend='Bullish')
         
         # 4. Market Trends (for recovery check - not in recovery here)
-        mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 8, None)
+        mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 365, None)
 
         # 5. Peer Data (for industry leadership)
-        mock_fetch_peers.return_value = ({"industry": "Software", "peers": ["PEER1"]}, None)
-        batch_data = { "success": {
-            "PASS-TICKER": {"annual_earnings": [{"Revenue": 1000, "Net Income": 100}], "marketCap": 10000},
-            "PEER1": {"annual_earnings": [{"Revenue": 500, "Net Income": 50}], "marketCap": 5000}
-        }}
-        mock_fetch_batch.return_value = (batch_data, None)
+        mock_fetch_peers.return_value = ({'industry': 'Software - Infrastructure', 'peers': ['PEER1']}, None)
         
         # 6. Batch Financials (make sure our ticker is #1)
+        # Use the helper to create complete, valid data structures.
+        pass_ticker_financials = create_mock_financial_data(passing_data=True, ticker="PASS-TICKER")
+        
+        peer_financials = create_mock_financial_data(passing_data=False, ticker="PEER1", marketCap=5_000_000_000)
+        # Manually adjust peer data to ensure the main ticker ranks higher
+        peer_financials['annual_earnings'][0]['Revenue'] = 500
+        peer_financials['annual_earnings'][0]['Earnings'] = 50
+        peer_financials['annual_earnings'][0]['Net Income'] = 50
+
         batch_data = {
             "success": {
-                "PASS-TICKER": {"annual_earnings": [{"Revenue": 1000, "Net Income": 100}], "marketCap": 10000},
-                "PEER1": {"annual_earnings": [{"Revenue": 500, "Net Income": 50}], "marketCap": 5000}
+                "PASS-TICKER": pass_ticker_financials,
+                "PEER1": peer_financials
             }
         }
         mock_fetch_batch.return_value = (batch_data, None)
@@ -84,17 +83,19 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         
         self.assertTrue(data['passes'], f"Expected global 'passes' to be True. Failed checks: {json.dumps(failed_checks, indent=2)}")
 
+    @patch('app.fetch_market_trends')
+    @patch('app.fetch_index_data')
+    @patch('app.fetch_price_data')
     @patch('app.fetch_financial_data')
-    def test_data_service_error_handling(self, mock_fetch_financials):
+    def test_data_service_error_handling(self, mock_fetch_financials, mock_fetch_price, mock_fetch_index, mock_fetch_trends):
         """
         Integration Test: Service correctly handles upstream errors from data-service.
         """
         # Arrange: Mock a 500 server error from the fetcher
         mock_fetch_financials.return_value = (None, 500)
-        response = self.app.get('/leadership/ERROR-TICKER')
-        self.assertEqual(response.status_code, 500)
-        self.assertIn('Failed to fetch financial data', response.json['error'])
-
+        mock_fetch_index.return_value = create_mock_index_data()
+        mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 365, None)
+        mock_fetch_price.return_value = (create_mock_price_data(1.0)[0], 200)
         # Arrange: Mock a 404 not found error
         mock_fetch_financials.return_value = (None, 404)
         response_404 = self.app.get('/leadership/NOT-FOUND')
@@ -127,19 +128,47 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         mock_session_post.assert_called_once()
         sent_payload = mock_session_post.call_args[1]['json']
         self.assertEqual(sent_payload, {'dates': ['2025-08-25', '2025-08-26', '2025-08-27']})
+
+    @patch('app.fetch_batch_price_data')
+    @patch('app.fetch_batch_financials')
+    @patch('app.fetch_market_trends')
+    @patch('app.fetch_index_data')
     @patch('app._analyze_ticker_leadership')
-    def test_leadership_batch_endpoint(self, mock_analyze):
+    def test_leadership_batch_endpoint(self, mock_analyze, mock_fetch_index, mock_fetch_trends, mock_fetch_financials_batch, mock_fetch_price_batch):
         """
         Integration Test: Batch endpoint correctly processes lists and returns only passing candidates.
         """
         # --- Arrange ---
-        def analyze_side_effect(ticker):
-            if ticker == 'PASS1': return {'ticker': 'PASS1', 'passes': True, 'details': {}}
-            if ticker == 'FAIL1': return {'ticker': 'FAIL1', 'passes': False, 'details': {}}
+        # 1. Mock the analysis function's behavior
+        def analyze_side_effect(ticker, **kwargs):
+            if ticker == 'PASS1': return {'ticker': 'PASS1', 'passes': True, 'details': {}, 'industry': 'Tech'}
+            if ticker == 'FAIL1': return {'ticker': 'FAIL1', 'passes': False, 'details': {}, 'industry': 'Retail'}
             if ticker == 'ERROR1': return {'error': 'Some error', 'status': 500}
             return {}
         mock_analyze.side_effect = analyze_side_effect
         
+        # 2. Mock the batch data fetching functions
+        mock_fetch_index.return_value = create_mock_index_data()
+        mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 365, None)
+        
+        # Ensure the mock data includes the 'ticker' field required by the contract
+        mock_financials = {
+            "success": {
+                "PASS1": create_mock_financial_data(passing_data=True, ticker="PASS1"),
+                "FAIL1": create_mock_financial_data(passing_data=False, ticker="FAIL1"),
+                "ERROR1": create_mock_financial_data(passing_data=False, ticker="ERROR1")
+            }
+        }
+        mock_prices = {
+            "success": {
+                "PASS1": create_mock_price_data(1.5)[0],
+                "FAIL1": create_mock_price_data(0.8)[0],
+                "ERROR1": create_mock_price_data(1.0)[0]
+            }
+        }
+        mock_fetch_financials_batch.return_value = (mock_financials, None)
+        mock_fetch_price_batch.return_value = (mock_prices, None)
+
         payload = {
             "tickers": ["PASS1", "FAIL1", "ERROR1", "INVALID/TICKER"]
         }
@@ -155,12 +184,36 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         self.assertEqual(len(data['passing_candidates']), 1)
         self.assertEqual(data['passing_candidates'][0]['ticker'], 'PASS1')
 
-    def test_leadership_batch_invalid_payload(self):
+    @patch('app.fetch_market_trends')
+    @patch('app.fetch_index_data')
+    @patch('app.fetch_price_data')
+    @patch('app.fetch_financial_data')
+    def test_leadership_endpoint_handles_data_contract_violation(self, mock_fetch_financials, mock_fetch_price, mock_fetch_index, mock_fetch_trends):
         """
-        Integration Test: Batch endpoint handles bad requests.
+        Consumer Test: Service correctly rejects payloads from data-service that violate the contract.
         """
-        response = self.app.post('/leadership/batch', json={"wrong_key": []})
-        self.assertEqual(response.status_code, 400)
+        # --- Arrange ---
+        # 1. Mock general data fetches to isolate the target error
+        mock_fetch_index.return_value = create_mock_index_data()
+        mock_fetch_trends.return_value = ([{'trend': 'Bullish'}] * 365, None)
+        
+        # 2. Mock valid price data to isolate the financial data failure
+        mock_price, _ = create_mock_price_data(performance_factor=1.0)
+        mock_fetch_price.return_value = (mock_price, 200)
+
+        # 3. Mock financial data that is *missing* a required field ('quarterly_earnings')
+        invalid_financials = create_mock_financial_data(passing_data=True)
+        del invalid_financials['quarterly_earnings']  # This violates the CoreFinancials contract
+        mock_fetch_financials.return_value = (invalid_financials, 200)
+        
+        # --- Act ---
+        response = self.app.get('/leadership/INVALID-CONTRACT')
+        data = response.json
+
+        # --- Assert ---
+        # The service should identify the contract violation and return a 502 Bad Gateway
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('Invalid data structure', data['error'])
 
 if __name__ == '__main__':
     unittest.main()

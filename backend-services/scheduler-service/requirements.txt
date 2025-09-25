@@ -4,3 +4,4 @@ pymongo
 pytest
 shortuuid
 apscheduler
+pydantic

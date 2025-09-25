@@ -6,7 +6,7 @@ import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client, price_provider # Use relative import
-from helper_functions import _mark_ticker_as_delisted
+from helper_functions import mark_ticker_as_delisted
 from curl_cffi import requests as cffi_requests
 
 #DEBUG
@@ -259,7 +259,7 @@ def _fetch_financials_with_fallback(ticker_symbol, start_time):
     
     except cffi_requests.errors.RequestsError as e:
         if e.response and e.response.status_code == 404:
-            _mark_ticker_as_delisted(ticker_symbol, "Yahoo Finance API call failed with status 404.")
+            mark_ticker_as_delisted(ticker_symbol, "Yahoo Finance API call failed with status 404.")
             logger.debug(f"Fallback for {ticker_symbol} also failed with 404. Ticker is confirmed unavailable.")
         else:
             if e.response:
@@ -297,6 +297,7 @@ def get_core_financials(ticker_symbol: str) -> dict | None:
             return None
 
         data = {
+            'ticker': ticker_symbol,
             'current_price': float(df['close'].iloc[-1]),
             'sma_50': float(df['close'].tail(50).mean()) if len(df) >= 50 else float(df['close'].mean()),
             'sma_200': float(df['close'].tail(200).mean()) if len(df) >= 200 else float(df['close'].mean()),

@@ -3,8 +3,11 @@ import unittest
 from unittest.mock import patch, MagicMock, ANY
 from datetime import date, timedelta
 from app import app
-import json
 import pandas as pd
+from pydantic import ValidationError, TypeAdapter
+from typing import List
+# Make sure the shared models are importable for testing
+from shared.contracts import CoreFinancials, PriceDataItem
 
 class BaseDataServiceTest(unittest.TestCase):
     """
@@ -29,11 +32,102 @@ class BaseDataServiceTest(unittest.TestCase):
     def tearDown(self):
         self.db_patcher.stop()
         self.cache_patcher.stop()
+    # Helper method to create valid mock price data  
+    def _create_valid_price_data(self, custom_data={}):
+        """Creates a single, valid PriceDataItem dictionary."""
+        default_data = {
+            "formatted_date": "2025-09-24",
+            "open": 150.0,
+            "high": 152.0,
+            "low": 149.5,
+            "close": 151.75,
+            "volume": 1000000,
+            "adjclose": 151.75
+        }
+        default_data.update(custom_data)
+        return default_data
 
+    # Helper method to create valid mock financials data
+    def _create_valid_financials_data(self, ticker, overrides=None):
+        """Helper to create a dictionary with valid core financials data."""
+        data = {
+            "ticker": ticker,
+            "marketCap": 100000000000,
+            "sharesOutstanding": 5000000000,
+            "annual_earnings": [{
+                "Earnings": 4.00,
+                "Revenue": 50000000000,
+                "Net Income": 20000000000  
+            }],
+            "quarterly_earnings": [{
+                "Earnings": 1.00,
+                "Revenue": 12000000000,
+                "Net Income": 5000000000 
+            }],
+            "annual_financials": [{
+                "date": "2023-12-31",
+                "Revenue": 50000000000,
+                "Net Income": 20000000000
+            }],
+            "quarterly_financials": [{
+                "date": "2024-03-31",
+                "Revenue": 12000000000,
+                "Net Income": 5000000000
+            }]
+        }
+        if overrides:
+            data.update(overrides)
+        return data
 # =====================================================================
 # ==                      PRICE DATA ENDPOINTS                       ==
 # =====================================================================
 class TestPriceEndpoints(BaseDataServiceTest):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_get_price_output_conforms_to_contract(self, mock_get_stock_data):
+        """GET /price/<ticker>: Tests that the endpoint's JSON output strictly conforms to the PriceDataItem contract."""
+        # --- Arrange ---
+        ticker = "CONTRACT"
+        self.mock_cache.get.return_value = None
+        # This data perfectly matches the PriceDataItem contract
+        provider_data = [self._create_valid_price_data()]
+        mock_get_stock_data.return_value = provider_data
+        PriceDataListValidator = TypeAdapter(List[PriceDataItem])
+
+        # --- Act ---
+        response = self.client.get(f'/price/{ticker}')
+        response_data = response.json
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        try:
+            # Validate that the actual JSON response conforms to the Pydantic model.
+            # This is the core of the producer contract test.
+            PriceDataListValidator.validate_python(response_data)
+        except ValidationError as e:
+            self.fail(f"The /price/<ticker> endpoint produced a JSON response that violates the PriceDataItem contract: {e}")
+
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_get_price_handles_invalid_provider_data(self, mock_get_stock_data):
+        """GET /price/<ticker>: Tests graceful failure when provider data violates the contract."""
+        # --- Arrange ---
+        ticker = "INVALID"
+        self.mock_cache.get.return_value = None
+        # This data violates the contract ('volume' is a string, not an int)
+        provider_data = [{
+            "formatted_date": "2025-09-24", "open": 150.0, "high": 152.0,
+            "low": 149.5, "close": 151.75, "volume": "a-million"
+        }]
+        mock_get_stock_data.return_value = provider_data
+
+        # --- Act ---
+        response = self.client.get(f'/price/{ticker}')
+
+        # --- Assert ---
+        # The service should catch the ValidationError in the helper and return an error status,
+        # not crash or return malformed data.
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("error", response.json)
+        self.assertIn("Could not retrieve valid price data", response.json['error'])
 
     @patch('app.yf_price_provider.get_stock_data')
     def test_get_price_provider_failure(self, mock_get_stock_data):
@@ -60,7 +154,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
         ticker = "GOOG"
         # Simulate a scenario where a previous fetch failed and cached an empty list
         self.mock_cache.get.return_value = []
-        provider_data = [{"formatted_date": "2025-09-20", "close": 150.0}]
+        provider_data = [self._create_valid_price_data()]
         mock_get_stock_data.return_value = provider_data
         
         # --- Act ---
@@ -107,10 +201,10 @@ class TestPriceEndpoints(BaseDataServiceTest):
         last_cached_date_str = (date.today() - timedelta(days=5)).strftime('%Y-%m-%d')
         last_cached_date_obj = date.fromisoformat(last_cached_date_str)
         
-        cached_data = [{"formatted_date": last_cached_date_str, "close": 300.0}]
+        cached_data = [self._create_valid_price_data({"formatted_date": last_cached_date_str})]
         self.mock_cache.get.return_value = cached_data
 
-        new_data_from_provider = [{"formatted_date": "2025-09-20", "close": 305.0}]
+        new_data_from_provider = [self._create_valid_price_data({"formatted_date": (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')})]
         mock_get_stock_data.return_value = new_data_from_provider
 
         # --- Act ---
@@ -132,7 +226,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
         # --- Arrange ---
         ticker = "NVDA"
         current_date_str = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
-        cached_data = [{"formatted_date": current_date_str, "close": 500.0}]
+        cached_data = [self._create_valid_price_data({"formatted_date": current_date_str})]
         self.mock_cache.get.return_value = cached_data
 
         # --- Act ---
@@ -148,12 +242,16 @@ class TestPriceEndpoints(BaseDataServiceTest):
     def test_batch_price_success_with_cache_mix(self, mock_get_stock_data):
         """POST /price/batch: Tests a mix of cached and uncached tickers."""
         # --- Arrange ---
+        valid_cached_data = [self._create_valid_price_data({"close": 100.0})]
+        valid_provider_data = [self._create_valid_price_data({"close": 200.0})]
+        
         def cache_side_effect(key):
             if key == 'price_yfinance_CACHED':
-                return [{"close": 100.0}]
+                return valid_cached_data
             return None
         self.mock_cache.get.side_effect = cache_side_effect
-        provider_data = {"UNCACHED": [{"close": 200.0}], "FAILED": None}
+        
+        provider_data = {"UNCACHED": valid_provider_data, "FAILED": None}
         mock_get_stock_data.return_value = provider_data
 
         # --- Act ---
@@ -162,18 +260,17 @@ class TestPriceEndpoints(BaseDataServiceTest):
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
         data = response.json
-        self.assertEqual(data['success']['CACHED'], [{"close": 100.0}])
-        self.assertEqual(data['success']['UNCACHED'], [{"close": 200.0}])
+        self.assertEqual(data['success']['CACHED'], valid_cached_data)
+        self.assertEqual(data['success']['UNCACHED'], valid_provider_data)
         self.assertIn('FAILED', data['failed'])
         mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'], start_date=None, period='1y')
-        self.mock_cache.set.assert_called_once_with('price_yfinance_UNCACHED', provider_data['UNCACHED'], timeout=ANY)
-
+        self.mock_cache.set.assert_called_once_with('price_yfinance_UNCACHED', valid_provider_data, timeout=ANY)
     
     @patch('app.yf_price_provider.get_stock_data')
     def test_batch_price_all_tickers_cached(self, mock_get_stock_data):
         """POST /price/batch: Tests when all tickers are found in the cache."""
         # --- Arrange ---
-        self.mock_cache.get.return_value = [{"close": 100.0}]
+        self.mock_cache.get.return_value = [self._create_valid_price_data()]
 
         # --- Act ---
         response = self.client.post('/price/batch', json={'tickers': ['AAPL', 'MSFT'], 'source': 'yfinance'})
@@ -205,6 +302,62 @@ class TestPriceEndpoints(BaseDataServiceTest):
 # ==                   CORE FINANCIALS ENDPOINTS                     ==
 # =====================================================================
 class TestFinancialsEndpoints(BaseDataServiceTest):
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_output_conforms_to_contract(self, mock_get_core_financials):
+        """GET /financials/core/<ticker>: Tests that the JSON output strictly conforms to the CoreFinancials contract."""
+        # --- Arrange ---
+        ticker = "GOODDATA"
+        self.mock_cache.get.return_value = None
+        # This data perfectly matches the CoreFinancials contract
+        provider_data = self._create_valid_financials_data(ticker)
+        mock_get_core_financials.return_value = provider_data
+        
+        # --- Act ---
+        response = self.client.get(f'/financials/core/{ticker}')
+        response_data = response.json
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        try:
+            # Validate that the actual JSON response conforms to the Pydantic model.
+            CoreFinancials.model_validate(response_data)
+        except ValidationError as e:
+            self.fail(f"The /financials/core/<ticker> endpoint produced a JSON response that violates the CoreFinancials contract: {e}")
+
+    @patch('app.yf_financials_provider.get_batch_core_financials')
+    def test_batch_financials_contract_enforcement(self, mock_get_batch_financials):
+        """POST /financials/core/batch: Tests contract cleaning and rejection of invalid data."""
+        # --- Arrange ---
+        tickers = ["GOOD", "CLEAN_ME", "INVALID"]
+        self.mock_cache.get.return_value = None
+        
+        mock_get_batch_financials.return_value = {
+            # Valid data
+            "GOOD": self._create_valid_financials_data("GOOD"),
+            # Data with an optional field set to None, which is valid.
+            "CLEAN_ME": self._create_valid_financials_data("CLEAN_ME", {"marketCap": None}),
+            # Data missing a required key ('annual_earnings'), which should cause validation to fail.
+            "INVALID": {"ticker": "INVALID", "quarterly_earnings": []}
+        }
+        
+        # --- Act ---
+        response = self.client.post('/financials/core/batch', json={'tickers': tickers})
+        data = response.json
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        
+        # 1. Test the successfully processed tickers
+        self.assertIn("GOOD", data['success'])
+        self.assertIn("CLEAN_ME", data['success'])
+        
+        # 2. Test that the cleaning logic worked as expected for CLEAN_ME
+        self.assertEqual(data['success']['CLEAN_ME']['marketCap'], 0)
+        
+        # 3. Test that the invalid ticker was correctly identified and failed
+        self.assertIn("INVALID", data['failed'])
+        self.assertNotIn("INVALID", data['success'])
+
     @patch('app.yf_financials_provider.get_batch_core_financials')
     def test_batch_financials_missing_data_contract_fields(self, mock_get_batch_financials):
         """POST /financials/core/batch: Tests graceful handling of missing keys from provider."""
@@ -212,10 +365,12 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         tickers = ["GOOD", "MISSING_KEY"]
         self.mock_cache.get.return_value = None
         
+        missing_key_data = self._create_valid_financials_data("MISSING_KEY")
+        del missing_key_data['marketCap'] # Pydantic will default this to None
+
         mock_get_batch_financials.return_value = {
-            "GOOD": {"totalRevenue": 100, "netIncome": 10, "marketCap": 1000},
-            # This ticker is missing the 'netIncome' field
-            "MISSING_KEY": {"totalRevenue": 200, "marketCap": 2000}
+            "GOOD": self._create_valid_financials_data("GOOD"),
+            "MISSING_KEY": missing_key_data
         }
         
         # --- Act ---
@@ -225,9 +380,7 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.assertEqual(response.status_code, 200)
         data = response.json['success']
         # Check that the service correctly defaulted the missing field to 0
-        self.assertEqual(data["MISSING_KEY"]["totalRevenue"], 200)
-        self.assertEqual(data["MISSING_KEY"]["netIncome"], 0) 
-        self.assertEqual(data["MISSING_KEY"]["marketCap"], 2000)
+        self.assertEqual(data["MISSING_KEY"]["marketCap"], 0)
         self.assertIn("GOOD", data)
 
     @patch('app.yf_financials_provider.get_core_financials')
@@ -235,16 +388,17 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         """GET /financials/core/<ticker>: Tests a cache miss for a decorator-cached endpoint."""
         # --- Arrange ---
         ticker = "AAPL"
-        provider_data = {'marketCap': 2.5e12, 'ipoDate': '1980-12-12'}
+        provider_data = self._create_valid_financials_data(ticker)
         mock_get_core_financials.return_value = provider_data
-        self.mock_cache.get.return_value = None # Explicitly simulate miss for decorator
+        self.mock_cache.get.return_value = None
 
         # --- Act ---
         response = self.client.get(f'/financials/core/{ticker}')
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, provider_data)
+        self.assertEqual(response.json['ticker'], provider_data['ticker'])
+        self.assertEqual(response.json['annual_earnings'], provider_data['annual_earnings'])
         mock_get_core_financials.assert_called_once_with(ticker)
 
     @patch('app.yf_financials_provider.get_core_financials')
@@ -252,8 +406,7 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         """GET /financials/core/<ticker>: Tests a cache hit for a decorator-cached endpoint."""
         # --- Arrange ---
         ticker = "AAPL"
-        cached_data = {'marketCap': 2.5e12, 'ipoDate': '1980-12-12'}
-        # Simulate a cache hit by mocking the cache's get method
+        cached_data = self._create_valid_financials_data(ticker)
         self.mock_cache.get.return_value = cached_data
         
         # --- Act ---
@@ -261,8 +414,8 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, cached_data)
-        # Assert that the underlying provider function was NOT called
+        self.assertEqual(response.json['ticker'], cached_data['ticker'])
+        self.assertEqual(response.json['annual_earnings'], cached_data['annual_earnings'])
         mock_get_core_financials.assert_not_called()
 
     @patch('app.yf_financials_provider.get_core_financials')
@@ -280,13 +433,14 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.assertEqual(response.status_code, 404)
         mock_get_core_financials.assert_called_once_with(ticker)
 
-    
     @patch('app.yf_financials_provider.get_core_financials')
     def test_get_core_financials_gracefully_handles_incomplete_data(self, mock_get_core_financials):
         """GET /financials/core/<ticker>: Ensures incomplete provider data is handled."""
         # --- Arrange ---
         ticker = "INCOMPLETE"
-        provider_data = {'marketCap': 2.5e12} # Missing 'ipoDate'
+        provider_data = self._create_valid_financials_data(ticker)
+
+        del provider_data['marketCap']
         mock_get_core_financials.return_value = provider_data
         self.mock_cache.get.return_value = None
         
@@ -295,13 +449,14 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, provider_data)
+        self.assertEqual(response.json['marketCap'], 0)
 
     def test_get_core_financials_handles_path_traversal_attack(self):
         """GET /financials/core/<ticker>: Tests rejection of malicious input."""
         response = self.client.get('/financials/core/../../etc/passwd')
         self.assertEqual(response.status_code, 400)
         
+
     @patch('app.yf_financials_provider.get_batch_core_financials')
     def test_batch_financials_success(self, mock_get_batch_financials):
         """POST /financials/core/batch: Tests successful retrieval and caching."""
@@ -310,8 +465,8 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.mock_cache.get.return_value = None 
         
         mock_get_batch_financials.return_value = {
-            "AAPL": {"totalRevenue": 100, "netIncome": 10, "marketCap": 1000},
-            "MSFT": {"totalRevenue": 200, "netIncome": 20, "marketCap": 2000},
+            "AAPL": self._create_valid_financials_data("AAPL"),
+            "MSFT": self._create_valid_financials_data("MSFT"),
             "FAILED": None
         }
         
@@ -324,8 +479,9 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.assertIn("AAPL", data['success'])
         self.assertIn("MSFT", data['success'])
         self.assertIn("FAILED", data['failed'])
-        mock_get_batch_financials.assert_called_once_with(tickers, ANY)
+        mock_get_batch_financials.assert_called_once_with(tickers)
         self.assertEqual(self.mock_cache.set.call_count, 2)
+
 
     @patch('app.yf_financials_provider.get_batch_core_financials')
     def test_batch_financials_handles_bad_data_types(self, mock_get_batch_financials):
@@ -335,7 +491,7 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.mock_cache.get.return_value = None
         
         mock_get_batch_financials.return_value = {
-            "BAD_DATA": {"totalRevenue": "invalid", "netIncome": None, "marketCap": 5000}
+            "BAD_DATA": self._create_valid_financials_data("BAD_DATA", {"totalRevenue": "invalid", "Net Income": None})
         }
         
         # --- Act ---
@@ -345,10 +501,8 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.assertEqual(response.status_code, 200)
         data = response.json['success']
         self.assertEqual(data["BAD_DATA"]["totalRevenue"], 0)
-        self.assertEqual(data["BAD_DATA"]["netIncome"], 0)
-        self.assertEqual(data["BAD_DATA"]["marketCap"], 5000)
+        self.assertEqual(data["BAD_DATA"]["Net Income"], 0)
 
-    
     def test_batch_financials_handles_empty_ticker_list(self):
         """POST /financials/core/batch: Tests behavior with an empty ticker list."""
         response = self.client.post('/financials/core/batch', json={'tickers': []})

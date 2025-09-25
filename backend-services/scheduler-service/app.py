@@ -9,7 +9,16 @@ from apscheduler.triggers.cron import CronTrigger
 import requests
 from flask import Flask, jsonify
 from pymongo import MongoClient, errors
+from pydantic import ValidationError, parse_obj_as
 import logging
+from typing import List
+from shared.contracts import (
+    ScreeningJobResult,
+    FinalCandidate,
+    IndustryDiversity,
+    VCPAnalysisBatchItem,
+    LeadershipProfileBatch
+)
 
 app = Flask(__name__)
 
@@ -173,17 +182,16 @@ def _run_vcp_analysis(job_id, tickers):
             timeout=1200,
         )
         if resp.status_code == 200:
-            # Gracefully handle malformed JSON from a downstream service to prevent job failure.
+            # Enforce the data contract for the VCP analysis batch result.
             try:
-                final_candidates = resp.json()
-                if not isinstance(final_candidates, list):
-                    logger.warning(f"Job {job_id}: VCP analysis returned non-list format. Assuming no survivors.")
-                    return []
-                
-                logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(final_candidates)} tickers.")
-                return final_candidates
-            except requests.exceptions.JSONDecodeError:
-                logger.warning(f"Job {job_id}: Could not decode JSON from analysis-service. Skipping VCP analysis.", exc_info=True)
+                vcp_survivors = parse_obj_as(List[VCPAnalysisBatchItem], resp.json())
+                logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(vcp_survivors)} tickers.")
+                return vcp_survivors
+            except (requests.exceptions.JSONDecodeError, ValidationError) as e:
+                logger.warning(
+                    f"Job {job_id}: Could not decode or validate JSON from analysis-service against VCPAnalysisBatchItem contract. Error: {e}",
+                    exc_info=True
+                )
                 return []
         else:
             logger.error(f"Job {job_id}: VCP analysis batch request failed with status {resp.status_code}. Details: {resp.text}")
@@ -199,7 +207,7 @@ def _run_leadership_screening(job_id, vcp_survivors):
         return [], 0
 
     # Extract just the ticker symbols to send in the request
-    vcp_tickers = [candidate.get('ticker') for candidate in vcp_survivors if candidate.get('ticker')]
+    vcp_tickers = [candidate.ticker for candidate in vcp_survivors]
     if not vcp_tickers:
         logger.warning(f"Job {job_id}: No valid tickers found in VCP survivors list.")
         return [], 0
@@ -217,29 +225,32 @@ def _run_leadership_screening(job_id, vcp_survivors):
         )
         resp.raise_for_status()
         
-        # Handle JSON decoding errors gracefully
+        # Enforce the data contract for the leadership screening batch result.
         try:
-            result = resp.json()
-            passing_candidates_details = result.get('passing_candidates', [])
-            unique_industries_count = result.get('unique_industries_count', 0)
-        except requests.exceptions.JSONDecodeError:
-            logger.error(f"Job {job_id}: Could not decode JSON from leadership-service batch endpoint.", exc_info=True)
+            result = LeadershipProfileBatch.model_validate_json(resp.content)
+            passing_candidates_details = result.passing_candidates
+            unique_industries_count = result.unique_industries_count
+        except (requests.exceptions.JSONDecodeError, ValidationError) as e:
+            logger.error(
+                f"Job {job_id}: Could not decode or validate JSON from leadership-service against LeadershipProfileBatch contract. Error: {e}",
+                exc_info=True
+            )
             return [], 0
 
         # Create a dictionary for quick lookup of leadership results by ticker
-        leadership_results_map = {item['ticker']: item['details'] for item in passing_candidates_details}
+        leadership_results_map = {item.ticker: item.model_dump() for item in passing_candidates_details}
         
         # Integrate the leadership results back into the original vcp_survivors data structure
         final_candidates = []
         for candidate in vcp_survivors:
-            ticker = candidate.get('ticker')
-            if ticker in leadership_results_map:
-                # Create a new dictionary to prevent side effects from modifying the original `candidate` object.
-                # This ensures data integrity by isolating the data destined for the final candidates list.
-                enriched_candidate = {
-                    **candidate,
-                    'leadership_results': leadership_results_map[ticker]
-                }
+            if candidate.ticker in leadership_results_map:
+                # Create a FinalCandidate instance, ensuring the data structure is correct.
+                enriched_candidate = FinalCandidate(
+                    ticker=candidate.ticker,
+                    vcp_pass=candidate.vcp_pass,
+                    vcpFootprint=candidate.vcpFootprint,
+                    leadership_results=leadership_results_map[candidate.ticker]
+                )
                 final_candidates.append(enriched_candidate)
         
         logger.info(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(final_candidates)} tickers.")
@@ -282,7 +293,8 @@ def _store_results(job_id, summary_doc, trend_survivors, vcp_survivors, leadersh
     
     # 1. Store the job summary document.
     try:
-        jobs_coll.update_one({"job_id": job_id}, {"$set": summary_doc}, upsert=True)
+        # Use the Pydantic model's dump method for a consistent, validated structure.
+        jobs_coll.update_one({"job_id": job_id}, {"$set": summary_doc.model_dump()}, upsert=True)
         logger.info(f"Job {job_id}: Successfully logged job summary.")
     except errors.PyMongoError as e: 
         logger.exception(f"Job {job_id}: Failed to write job summary to database.")
@@ -291,11 +303,12 @@ def _store_results(job_id, summary_doc, trend_survivors, vcp_survivors, leadersh
     # 2. Store each survivor list in its dedicated collection.
     if not store_stage_survivors(job_id, trend_coll, trend_survivors, "trend"): return False, ({"error": "DB error"}, 500)
 
-    # VCP survivors are dicts, so we extract tickers
-    vcp_tickers = [item.get('ticker') for item in vcp_survivors if item.get('ticker')]
+    # VCP survivors are Pydantic models, so we access attributes with dot notation.
+    vcp_tickers = [item.ticker for item in vcp_survivors if item.ticker]
     if not store_stage_survivors(job_id, vcp_coll, vcp_tickers, "VCP"): return False, ({"error": "DB error"}, 500)
 
-    leadership_tickers = [item.get('ticker') for item in leadership_survivors if item.get('ticker')]
+    # Leadership survivors are also models (`FinalCandidate`), so we use dot notation here too.
+    leadership_tickers = [item.ticker for item in leadership_survivors if item.ticker]
     if not store_stage_survivors(job_id, leadership_coll, leadership_tickers, "leadership"): return False, ({"error": "DB error"}, 500)
 
     # 3. Store the final candidate results
@@ -309,9 +322,10 @@ def _store_results(job_id, summary_doc, trend_survivors, vcp_survivors, leadersh
 
     try:
         processed_time = datetime.now(timezone.utc)
-        # The crucial step: explicitly add the job_id to each candidate document.
+        # Explicitly add the job_id to each candidate document.
+        # Convert Pydantic models to dictionaries for MongoDB insertion.
         candidates_to_insert = [
-            {**candidate, 'job_id': job_id, 'processed_at': processed_time}
+            {**candidate.model_dump(), 'job_id': job_id, 'processed_at': processed_time}
             for candidate in final_candidates
         ]
         
@@ -337,8 +351,6 @@ def run_screening_pipeline():
     unique_part = shortuuid.uuid()[:8]
     job_id = f"{timestamp_str}-{unique_part}"
     logger.info(f"Starting screening job ID: {job_id}")
-
-    final_candidates = []
     
     # 1. Get all available tickers from the ticker service.
     all_tickers, error = _get_all_tickers(job_id)
@@ -391,22 +403,29 @@ def run_screening_pipeline():
     end_time = time.time()
     total_process_time = round(end_time - start_time, 2)
 
-    job_summary = {
-        "job_id": job_id,
-        "processed_at": now,
-        "total_process_time": total_process_time,
-        "total_tickers_fetched": len(all_tickers),
-        "trend_screen_survivors_count": len(trend_survivors),
-        "vcp_survivors_count": len(vcp_survivors),
-        "industry_diversity": {
-            "unique_industries_count": unique_industries_count
-        },
-        "final_candidates_count": len(final_candidates),
-        # Store only ticker lists in the summary to keep it lightweight.
-        "vcp_survivors": [item.get('ticker') for item in vcp_survivors],
-        "leadership_survivors": [item.get('ticker') for item in final_candidates],
-        "final_candidates": final_candidates,
-    }
+    # Use the ScreeningJobResult contract to build the summary document, ensuring
+    # data consistency and validation. This is the single source of truth for the job result structure.
+    try:
+        job_summary = ScreeningJobResult(
+            job_id=job_id,
+            processed_at=now,
+            total_process_time=total_process_time,
+            total_tickers_fetched=len(all_tickers),
+            trend_screen_survivors_count=len(trend_survivors),
+            vcp_survivors_count=len(vcp_survivors),
+            final_candidates_count=len(final_candidates),
+            industry_diversity=IndustryDiversity(
+                unique_industries_count=unique_industries_count
+            ),
+            final_candidates=final_candidates,
+        )
+    except ValidationError as e:
+        logger.error(f"Job {job_id}: Failed to create final job summary due to validation error: {e}")
+        return {"error": "Internal data validation failed when creating job summary.", "details": str(e)}, 500
+    
+    # debug
+    vcp_survivor_tickers = [item.ticker for item in vcp_survivors]
+    logger.info(f"Job {job_id}: Funnel: vcp_survivors: {vcp_survivor_tickers}")
     
     success, error_info = _store_results(
         job_id,
@@ -421,16 +440,13 @@ def run_screening_pipeline():
     
     # 6. Return a success response with job details.
 
-    excluded_keys = {"trend_survivors"}
-
-    # Create a filtered copy of job_summary
-    filtered_result = {k: v for k, v in job_summary.items() if k not in excluded_keys}
+    response_data = job_summary.model_dump()
+    response_data.pop('trend_survivors', None)
 
     logger.info(f"Screening job {job_id} completed successfully.")
     return {
         "message": "Screening job completed successfully.",
-        **filtered_result, # Unpack the summary into the response
-        "unique_industries_count": unique_industries_count,
+        **response_data
     }, 200
 
 # Initialize the scheduler

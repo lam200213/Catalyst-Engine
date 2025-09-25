@@ -96,7 +96,7 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         self.assertGreater(data['sma_50'], 0)
         self.assertGreater(data['sma_200'], 0)
 
-    @patch('providers.yfin.financials_provider._mark_ticker_as_delisted')
+    @patch('providers.yfin.financials_provider.mark_ticker_as_delisted')
     @patch('providers.yfin.financials_provider.yahoo_client.session.get')
     @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
     def test_fallback_marks_delisted_on_404(self, mock_get_auth, mock_session_get, mock_mark_delisted):
@@ -112,7 +112,7 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         self.assertIsNone(result)
         mock_mark_delisted.assert_called_once_with('DELISTED', "Yahoo Finance API call failed with status 404.")
 
-    @patch('providers.yfin.financials_provider._mark_ticker_as_delisted')
+    @patch('providers.yfin.financials_provider.mark_ticker_as_delisted')
     @patch('providers.yfin.financials_provider.yahoo_client.session.get')
     @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
     def test_fallback_does_not_mark_delisted_on_500(self, mock_get_auth, mock_session_get, mock_mark_delisted):
