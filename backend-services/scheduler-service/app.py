@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 import requests
 from flask import Flask, jsonify
 from pymongo import MongoClient, errors
-from pydantic import ValidationError, parse_obj_as
+from pydantic import ValidationError, TypeAdapter
 import logging
 from typing import List
 from shared.contracts import (
@@ -184,7 +184,7 @@ def _run_vcp_analysis(job_id, tickers):
         if resp.status_code == 200:
             # Enforce the data contract for the VCP analysis batch result.
             try:
-                vcp_survivors = parse_obj_as(List[VCPAnalysisBatchItem], resp.json())
+                vcp_survivors = TypeAdapter(List[VCPAnalysisBatchItem]).validate_python(resp.json())
                 logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(vcp_survivors)} tickers.")
                 return vcp_survivors
             except (requests.exceptions.JSONDecodeError, ValidationError) as e:

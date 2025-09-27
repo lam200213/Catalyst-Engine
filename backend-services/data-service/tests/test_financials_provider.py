@@ -96,6 +96,28 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         self.assertGreater(data['sma_50'], 0)
         self.assertGreater(data['sma_200'], 0)
 
+    @patch('providers.yfin.financials_provider.price_provider._get_single_ticker_data')
+    def test_get_core_financials_for_index(self, mock_get_price_data):
+        """Tests the special handling for market index tickers like ^GSPC."""
+        # --- Arrange ---
+        # Mock the price provider to return a simplified historical data structure
+        mock_get_price_data.return_value = [
+            {'formatted_date': '2023-01-01', 'open': 3800, 'high': 3850, 'low': 3790, 'close': 3840, 'volume': 1e9, 'adjclose': 3840},
+            {'formatted_date': '2023-01-02', 'open': 3841, 'high': 3880, 'low': 3830, 'close': 3875, 'volume': 1.1e9, 'adjclose': 3875}
+        ]
+        
+        # --- Act ---
+        result = financials_provider.get_core_financials('^GSPC')
+
+        # --- Assert ---
+        self.assertIsNotNone(result)
+        self.assertIn('current_price', result)
+        self.assertIn('sma_50', result)
+        self.assertNotIn('marketCap', result) # Should not have financial fields
+        self.assertEqual(result['current_price'], 3875)
+        mock_get_price_data.assert_called_once_with('^GSPC', start_date=dt.date.today() - dt.timedelta(days=366))
+
+
     @patch('providers.yfin.financials_provider.mark_ticker_as_delisted')
     @patch('providers.yfin.financials_provider.yahoo_client.session.get')
     @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')

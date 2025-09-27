@@ -99,12 +99,22 @@ def setup_logging(app):
     app.logger.setLevel(log_level)
     app.logger.propagate = False
 
-    # Also set the app logger's level to ensure it processes messages.
-    app.logger.setLevel(logging.INFO)
+    # Find and configure the loggers from the provider and helper modules
+    # This ensures that log messages from background threads are captured correctly.
+    module_loggers = [
+        logging.getLogger('providers.yfin.price_provider'),
+        logging.getLogger('providers.yfin.financials_provider'),
+        logging.getLogger('helper_functions')
+    ]
+    
+    for logger_instance in module_loggers:
+        logger_instance.addHandler(file_handler)
+        logger_instance.addHandler(console_handler)
+        logger_instance.setLevel(logging.INFO)
 
+    app.logger.info("Data service logging initialized.")
 # --- End of Logging Setup ---
 setup_logging(app)
-app.logger.info("Data service logging initialized.")
 
 # Using a ThreadPoolExecutor for concurrent requests in batch endpoints
 executor = ThreadPoolExecutor(max_workers=10)

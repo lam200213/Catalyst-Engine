@@ -3,12 +3,12 @@ import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask import Flask 
+import logging
 import pandas as pd 
 from datetime import datetime, timedelta
 import pandas_market_calendars as mcal
 
-app = Flask(__name__)
+logger = logging.getLogger(__name__)
 
 # Configuration
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
@@ -44,7 +44,7 @@ def fetch_financial_data(ticker):
             
         return financials_response.json(), 200
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"Could not fetch financial data for {ticker}: {e}")
+        logger.error(f"Could not fetch financial data for {ticker}: {e}")
         return None, getattr(e.response, 'status_code', 503)
 
 def fetch_batch_financials(tickers):
@@ -70,7 +70,7 @@ def fetch_price_data(ticker):
         stock_data = stock_response.json()
         return stock_data, 200
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"Error fetching price data for {ticker} after retries: {e}")
+        logger.error(f"Error fetching price data for {ticker} after retries: {e}")
         return None, getattr(e.response, 'status_code', 503)
 
 def fetch_batch_price_data(tickers):
@@ -98,7 +98,7 @@ def fetch_index_data():
             response.raise_for_status()
             index_data[index] = response.json()
         except requests.exceptions.RequestException as e:
-            app.logger.error(f"Error fetching index data for {index} after retries: {e}")
+            logger.error(f"Error fetching index data for {index} after retries: {e}")
             index_data[index] = {}
             
     return index_data
@@ -175,7 +175,7 @@ def fetch_market_trends(n_days=8):
 
     except requests.exceptions.RequestException as e:
         status_code = getattr(e.response, 'status_code', 503)
-        app.logger.error(f"Failed to fetch or calculate market trends: {e}")
+        logger.error(f"Failed to fetch or calculate market trends: {e}")
         return None, (f"Could not fetch market trends data", status_code)
 
 # --- End of helper functions ---

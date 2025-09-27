@@ -52,32 +52,35 @@ class BaseDataServiceTest(unittest.TestCase):
         """Helper to create a dictionary with valid core financials data."""
         data = {
             "ticker": ticker,
-            "marketCap": 100000000000,
-            "sharesOutstanding": 5000000000,
+            "marketCap": 2500000000000.0,
+            "sharesOutstanding": 5000000000.0,
+            "floatShares": 0,
+            "ipoDate": None,
             "annual_earnings": [{
-                "Earnings": 4.00,
-                "Revenue": 50000000000,
-                "Net Income": 20000000000  
+                "Earnings": 4.0, "Revenue": 50000000000.0, "Net Income": 20000000000.0
             }],
             "quarterly_earnings": [{
-                "Earnings": 1.00,
-                "Revenue": 12000000000,
-                "Net Income": 5000000000 
-            }],
-            "annual_financials": [{
-                "date": "2023-12-31",
-                "Revenue": 50000000000,
-                "Net Income": 20000000000
+                "Earnings": 1.0, "Revenue": 12000000000.0, "Net Income": 5000000000.0
             }],
             "quarterly_financials": [{
-                "date": "2024-03-31",
-                "Revenue": 12000000000,
-                "Net Income": 5000000000
+                "Net Income": 5000000000.0, "Total Revenue": 12000000000.0
             }]
         }
         if overrides:
             data.update(overrides)
         return data
+    
+    def _create_mock_index_data(self, ticker="^GSPC"):
+            """Creates a mock data dictionary for a market index."""
+            return {
+                "ticker": ticker,
+                "current_price": 4500.0,
+                "sma_50": 4400.0,
+                "sma_200": 4200.0,
+                "high_52_week": 4600.0,
+                "low_52_week": 3800.0,
+            }
+
 # =====================================================================
 # ==                      PRICE DATA ENDPOINTS                       ==
 # =====================================================================
@@ -419,6 +422,41 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         mock_get_core_financials.assert_not_called()
 
     @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_for_index_success(self, mock_get_financials):
+        """GET /financials/core/:ticker - Tests the happy path for a market index."""
+        # --- Arrange ---
+        self.mock_cache.get.return_value = None
+        mock_data = self._create_mock_index_data(ticker="^GSPC")
+        mock_get_financials.return_value = mock_data
+
+        # --- Act ---
+        response = self.client.get('/financials/core/^GSPC')
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['ticker'], '^GSPC')
+        self.assertIn('current_price', response.json)
+        self.assertNotIn('marketCap', response.json)
+        self.mock_cache.set.assert_called_once_with('financials_^GSPC', mock_data, timeout=ANY)
+
+    # New test case for cache hit on index
+    def test_get_core_financials_for_index_cache_hit(self):
+        """GET /financials/core/:ticker - Tests a cache hit for a market index."""
+        # --- Arrange ---
+        mock_data = self._create_mock_index_data(ticker="^DJI")
+        self.mock_cache.get.return_value = mock_data
+
+        # --- Act ---
+        response = self.client.get('/financials/core/^DJI')
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['ticker'], '^DJI')
+        self.assertEqual(response.json['current_price'], 4500.0)
+        self.mock_cache.get.assert_called_once_with('financials_^DJI')
+
+
+    @patch('app.yf_financials_provider.get_core_financials')
     def test_get_core_financials_not_found(self, mock_get_core_financials):
         """GET /financials/core/<ticker>: Tests 404 response for a non-existent ticker."""
         # --- Arrange ---
@@ -516,6 +554,46 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
             with self.subTest(payload=payload):
                 response = self.client.post('/financials/core/batch', json=payload)
                 self.assertEqual(response.status_code, 400)
+
+    @patch('app.yf_financials_provider.get_core_financials')
+    def test_get_core_financials_invalid_cache_data(self, mock_get_financials):
+        """GET /financials/core/:ticker - Tests refetch when cached data is invalid."""
+        # --- Arrange ---
+        # Use a self-contained, explicit dictionary for the invalid cached data.
+        invalid_cached_data = {
+            "ticker": "AAPL", "marketCap": "this-is-an-invalid-string", "totalRevenue": 1,
+            "netIncome": 1, "sharesOutstanding": 1, "floatShares": 1,
+            "annual_earnings": [], "quarterly_earnings": [],
+            "quarterly_financials": [], "firstTradeDate": "1980-12-12"
+        }
+        self.mock_cache.get.return_value = invalid_cached_data
+        
+        # This is the raw data our mock provider will return.
+        valid_refetched_data = self._create_valid_financials_data("AAPL")
+        mock_get_financials.return_value = valid_refetched_data
+        
+        # This is the data AFTER the app validates and cleans it. We must replicate the
+        # logic of `validate_and_prepare_financials` to create the exact expected result.
+        validated_model = CoreFinancials.model_validate(valid_refetched_data)
+        expected_data = validated_model.model_dump(by_alias=True)
+        
+        # Replicate the cleaning/defaulting step from the helper function
+        expected_data['totalRevenue'] = expected_data.get('totalRevenue') if isinstance(expected_data.get('totalRevenue'), (int, float)) else 0
+        expected_data['Net Income'] = expected_data.get('Net Income') if isinstance(expected_data.get('Net Income'), (int, float)) else 0
+        expected_data['marketCap'] = expected_data.get('marketCap') if isinstance(expected_data.get('marketCap'), (int, float)) else 0
+
+        # --- Act ---
+        response = self.client.get('/financials/core/AAPL')
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        # Verify it's the valid, refetched, and cleaned data
+        self.assertEqual(response.json, expected_data)
+        # Verify a refetch was triggered
+        mock_get_financials.assert_called_once_with('AAPL')
+        # Assert that the CACHED data matches the cleaned, validated object.
+        self.mock_cache.set.assert_called_once_with('financials_AAPL', expected_data, timeout=ANY)
+
 
 # =====================================================================
 # ==                        NEWS ENDPOINTS                           ==

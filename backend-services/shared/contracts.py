@@ -30,14 +30,14 @@ class PriceDataItem(BaseModel):
 # --- Contract 3: CoreFinancials ---
 class EarningItem(BaseModel):
     """Represents a single earnings report (annual or quarterly)."""
-    Revenue: Optional[int] = None # Make optional to handle sparse data
+    Revenue: Optional[float] = None # Make optional to handle sparse data
     Earnings: Optional[float] = None # Make optional and float
-    Net_Income: Optional[int] = Field(None, alias='Net Income')
+    Net_Income: Optional[float] = Field(None, alias='Net Income')
 
 class QuarterlyFinancialItem(BaseModel):
     """Represents a single quarterly financial report for net income calculations."""
-    Net_Income: Optional[int] = Field(None, alias='Net Income')
-    Total_Revenue: Optional[int] = Field(None, alias='Total Revenue')
+    Net_Income: Optional[float] = Field(None, alias='Net Income')
+    Total_Revenue: Optional[float] = Field(None, alias='Total Revenue')
 
 class CoreFinancials(BaseModel):
     """Essential fundamental data for the Leadership screen."""

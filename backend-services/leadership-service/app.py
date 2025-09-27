@@ -61,13 +61,32 @@ def setup_logging(app):
     file_handler.setFormatter(log_formatter)
     console_handler.setFormatter(log_formatter)
 
-    # Add handlers to the app's logger
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(console_handler)
-    app.logger.setLevel(log_level)
-    
-    # Prevent the root logger from handling messages again
-    app.logger.propagate = False
+    # --- Centralized Configuration for All Service Loggers ---
+    # This ensures that any module using logging.getLogger(__name__) will use the same handlers and format,
+    # directing all logs to the service's dedicated log file. This approach is thread-safe and does
+    # not rely on Flask's application context, which is unavailable in background threads.
+    loggers_to_configure = [
+        app.logger,  # The main Flask app logger
+        logging.getLogger('data_fetcher'),
+        logging.getLogger('checks.financial_health_checks'),
+        logging.getLogger('checks.market_relative_checks'),
+        logging.getLogger('checks.industry_peer_checks'),
+        logging.getLogger('checks.utils')
+    ]
+
+    for logger in loggers_to_configure:
+        # Clear any existing handlers to prevent duplicate log entries
+        logger.handlers.clear()
+        
+        # Add the shared handlers configured above
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        
+        # Set the log level
+        logger.setLevel(log_level)
+        
+        # Prevent log messages from propagating to the root logger, which might have its own handlers
+        logger.propagate = False
 
 setup_logging(app)
 # --- End of Logging Setup ---
