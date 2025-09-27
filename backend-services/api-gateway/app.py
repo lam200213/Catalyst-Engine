@@ -58,7 +58,7 @@ def gateway(service, path=""):
         else:  # Default to GET
             # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.
             query_params = dict(request.args)
-            resp = requests.get(target_url, params=query_params, timeout=40)
+            resp = requests.get(target_url, params=query_params, timeout=45)
 
         # Safely handle JSON decoding
         try:
