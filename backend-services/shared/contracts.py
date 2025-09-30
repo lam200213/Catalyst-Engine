@@ -19,12 +19,12 @@ TickerList: TypeAlias = List[str]
 class PriceDataItem(BaseModel):
     """Represents a single time-series data point for a stock."""
     formatted_date: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int
-    adjclose: float
+    open: Optional[float] = None # as some tickers have no data during the period, ie CNFRZ, USBC
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: Optional[float] = None
+    volume: Optional[int] = None
+    adjclose: Optional[float] = None
 
 
 # --- Contract 3: CoreFinancials ---

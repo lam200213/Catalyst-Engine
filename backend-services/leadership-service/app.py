@@ -1,5 +1,5 @@
 import time
-import json
+import threading
 from flask import Flask, jsonify, request
 import os
 import re # regex import for input validation
@@ -28,6 +28,19 @@ app = Flask(__name__)
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 PORT = int(os.getenv("PORT", 5000))
 
+# --- Thread-local storage for context ---
+_thread_local = threading.local()
+
+# --- Custom Logging Filter ---
+class TickerContextFilter(logging.Filter):
+    """
+    This filter injects the ticker symbol from thread-local storage into log records.
+    """
+    def filter(self, record):
+        # Get the ticker from the thread-local storage, default to 'N/A' if not set
+        record.ticker = getattr(_thread_local, 'ticker', 'N/A')
+        return True
+
 # --- Structured Logging Setup ---
 def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
@@ -41,6 +54,9 @@ def setup_logging(app):
     # The filename is now specific to the service and in a dedicated folder.
     log_file = os.path.join(log_directory, "leadership_service.log")
 
+    # Create a filter instance to add ticker context to logs
+    ticker_filter = TickerContextFilter()
+
     # Create a rotating file handler to prevent log files from growing too large
     # It will create up to 5 backup files of 5MB each.
     file_handler = RotatingFileHandler(
@@ -49,14 +65,16 @@ def setup_logging(app):
         backupCount=5
     )
     file_handler.setLevel(log_level)
+    file_handler.addFilter(ticker_filter) # Add filter to handler
 
     # Create a console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
+    console_handler.addFilter(ticker_filter) # Add filter to handler
 
-    # Define the log format
+    # Define the log format to include the new 'ticker' field
     log_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)s - [%(ticker)s] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(log_formatter)
@@ -98,51 +116,62 @@ def leadership_analysis(ticker):
     """Main endpoint for leadership screening analysis"""
     start_time = time.time()
     
-    # Input validation to prevent path traversal
-    if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
-        return jsonify({'error': 'Invalid ticker format'}), 400
-    
-    # Robustly handle mixed return types (tuple on success, dict on error).
-    common_data = fetch_general_data_for_analysis()
-    if isinstance(common_data, dict) and 'error' in common_data:
-        return jsonify({'error': common_data['error']}), common_data.get('status', 503)
-    index_data, market_trends_data = common_data
+    # Set ticker context for logging in this thread
+    _thread_local.ticker = ticker
 
-    financial_data_raw, status_code = fetch_financial_data(ticker)
-    if not financial_data_raw:
-        return jsonify({'error': f"Failed to fetch financial data for {ticker}"}), status_code
-
-    stock_data_raw, status_code  = fetch_price_data(ticker)
-    if not stock_data_raw:
-        return jsonify({'error': f"Failed to fetch price data for {ticker}"}), status_code
-
-    # Validate incoming data against contracts using the centralized helper
-    PriceDataValidator = TypeAdapter(List[PriceDataItem])
-    financial_data = validate_data_contract(financial_data_raw, CoreFinancials, ticker, "CoreFinancials")
-    stock_data = validate_data_contract(stock_data_raw, PriceDataValidator, ticker, "PriceData")
-
-    if not financial_data or not stock_data:
-        return jsonify({
-            "error": "Invalid data structure received from upstream data-service.",
-        }), 502
-
-    # Call the leadership analysis function with all data
-    analysis_result = analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data)
-    
-    if 'error' in analysis_result:
-            status_code = analysis_result.get('status', 500)
-            return jsonify({'error': analysis_result['error']}), status_code
-
-    execution_time = time.time() - start_time
-    analysis_result['metadata'] = {'execution_time': round(execution_time, 3)}
-
-    # Validate the final output against its own contract before sending
     try:
-        validated_response = LeadershipProfileSingle.model_validate(analysis_result)
-        return jsonify(validated_response.model_dump())
-    except ValidationError as e:
-        app.logger.critical(f"Output contract violation for LeadershipProfileSingle for {ticker}: {e}")
-        return jsonify({"error": "An internal error occurred while generating the response."}), 500
+        start_time = time.time()
+
+        # Input validation to prevent path traversal
+        if not re.match(r'^[A-Z0-9\.\-\^]+$', ticker.upper()) or '../' in ticker:
+            return jsonify({'error': 'Invalid ticker format'}), 400
+        
+        # Robustly handle mixed return types (tuple on success, dict on error).
+        common_data = fetch_general_data_for_analysis()
+        if isinstance(common_data, dict) and 'error' in common_data:
+            return jsonify({'error': common_data['error']}), common_data.get('status', 503)
+        index_data, market_trends_data = common_data
+
+        financial_data_raw, status_code = fetch_financial_data(ticker)
+        if not financial_data_raw:
+            return jsonify({'error': f"Failed to fetch financial data for {ticker}"}), status_code
+
+        stock_data_raw, status_code  = fetch_price_data(ticker)
+        if not stock_data_raw:
+            return jsonify({'error': f"Failed to fetch price data for {ticker}"}), status_code
+
+        # Validate incoming data against contracts using the centralized helper
+        PriceDataValidator = TypeAdapter(List[PriceDataItem])
+        financial_data = validate_data_contract(financial_data_raw, CoreFinancials, ticker, "CoreFinancials")
+        stock_data = validate_data_contract(stock_data_raw, PriceDataValidator, ticker, "PriceData")
+
+        if not financial_data or not stock_data:
+            return jsonify({
+                "error": "Invalid data structure received from upstream data-service.",
+            }), 502
+
+        # Call the leadership analysis function with all data
+        analysis_result = analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data)
+        
+        if 'error' in analysis_result:
+                status_code = analysis_result.get('status', 500)
+                return jsonify({'error': analysis_result['error']}), status_code
+
+        execution_time = time.time() - start_time
+        analysis_result['metadata'] = {'execution_time': round(execution_time, 3)}
+
+        # Validate the final output against its own contract before sending
+        try:
+            validated_response = LeadershipProfileSingle.model_validate(analysis_result)
+            return jsonify(validated_response.model_dump())
+        except ValidationError as e:
+            app.logger.critical(f"Output contract violation for LeadershipProfileSingle for {ticker}: {e}")
+            return jsonify({"error": "An internal error occurred while generating the response."}), 500
+
+    finally:
+        # Clean up the ticker context to prevent bleeding into other requests
+        if hasattr(_thread_local, 'ticker'):
+            del _thread_local.ticker
 
 @app.route('/leadership/batch', methods=['POST'])
 def leadership_batch_analysis():
@@ -216,16 +245,30 @@ def leadership_batch_analysis():
 
     # Use a ThreadPoolExecutor to run the I/O-bound analysis tasks in parallel.
     # The number of workers is set to 10 to balance performance without overwhelming downstream services.
+    # logs from each thread are tagged with the correct ticker.
     if analysis_tasks:
         with ThreadPoolExecutor(max_workers=10) as executor:
             # Use functools.partial to pass the pre-fetched market data to the worker function.
             analysis_func = partial(analyze_ticker_leadership, index_data=index_data, market_trends_data=market_trends_data)
 
-            # Create a lambda to unpack the dictionary from analysis_tasks into the arguments of analysis_func
-            unpacker_func = lambda task: analysis_func(ticker=task['ticker'], financial_data=task['financial_data'], stock_data=task['stock_data'])    
+            def worker_with_context(task):
+                """Sets and clears the ticker in thread-local storage for logging."""
+                _thread_local.ticker = task['ticker']
+                try:
+                    # Unpack the task dictionary to call the analysis function
+                    result = analysis_func(
+                        ticker=task['ticker'],
+                        financial_data=task['financial_data'],
+                        stock_data=task['stock_data']
+                    )
+                finally:
+                    # Ensure the context is cleared after the task is done
+                    if hasattr(_thread_local, 'ticker'):
+                        del _thread_local.ticker
+                return result
 
-            # map() efficiently applies the function to each ticker that sucessfully retrieved data and returns results as they complete.
-            results_iterator = executor.map(unpacker_func, analysis_tasks)
+            # map() efficiently applies the wrapper function to each task
+            results_iterator = executor.map(worker_with_context, analysis_tasks)
             for result in results_iterator:
                 # We only care about tickers that pass the screening and have no errors.
                 if 'error' not in result and result.get('passes', False):
