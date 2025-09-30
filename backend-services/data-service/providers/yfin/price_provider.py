@@ -7,7 +7,7 @@ import random # for throttling
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client # Use relative import
-from helper_functions import mark_ticker_as_delisted
+from helper_functions import is_ticker_delisted, mark_ticker_as_delisted
 import os
 import json
 
@@ -42,18 +42,32 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period:
     and formats it into the application's standard list-of-dictionaries format.
     Accepts an optional start_date for incremental fetches for single tickers.
     Handles both single ticker (str) and multiple tickers (list).
-    """
+    """    
     if isinstance(tickers, str):
+        # Pre-flight check to see if we already know this ticker is delisted
+        if is_ticker_delisted(tickers):
+            logger.info(f"Skipping delisted ticker: {tickers}")
+            return None
         return _get_single_ticker_data(tickers, start_date, period)
 
     if isinstance(tickers, list):
+        # Filter out known delisted tickers *before* making API calls.
+        active_tickers = [t for t in tickers if not is_ticker_delisted(t)]
+        
+        if not active_tickers:
+            logger.info("All tickers in the batch were identified as delisted. No API calls made.")
+            return {} # Return an empty dict for a fully filtered batch
+
         results = {}
         # Use ThreadPoolExecutor for concurrent requests
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for each ticker
             # Note: start_date is ignored for batch requests for simplicity.
             # Each ticker is fetched individually.
-            future_to_ticker = {executor.submit(_get_single_ticker_data, ticker, start_date=start_date, period=period): ticker for ticker in tickers}
+            future_to_ticker = {
+                executor.submit(_get_single_ticker_data, ticker, start_date=start_date, period=period): ticker 
+                for ticker in active_tickers # Use the filtered list
+            }
             for future in as_completed(future_to_ticker):
                 ticker = future_to_ticker[future]
                 try:

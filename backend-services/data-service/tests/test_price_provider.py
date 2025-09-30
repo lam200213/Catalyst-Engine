@@ -14,6 +14,48 @@ from providers.yfin import price_provider
 class TestYFinancePriceProvider(unittest.TestCase):
     """Tests for the yfinance price data provider."""
 
+    @patch('providers.yfin.price_provider._get_single_ticker_data')
+    @patch('providers.yfin.price_provider.is_ticker_delisted', return_value=True)
+    def test_get_stock_data_skips_single_delisted_ticker(self, mock_is_delisted, mock_fetch):
+        """
+        Tests that get_stock_data (single mode) skips API calls for a delisted ticker.
+        """
+        # --- Act ---
+        result = price_provider.get_stock_data('DELISTED', period="1y")
+
+        # --- Assert ---
+        self.assertIsNone(result)
+        mock_is_delisted.assert_called_once_with('DELISTED')
+        mock_fetch.assert_not_called()
+
+    @patch('providers.yfin.price_provider._get_single_ticker_data')
+    @patch('providers.yfin.price_provider.is_ticker_delisted')
+    def test_get_stock_data_filters_delisted_in_batch(self, mock_is_delisted, mock_fetch):
+        """
+        Tests that get_stock_data (batch mode) filters out delisted tickers.
+        """
+        # --- Arrange ---
+        # Mock is_ticker_delisted to return True only for 'BADD'
+        mock_is_delisted.side_effect = lambda ticker: ticker == 'BADD'
+        # Mock the actual fetcher to return simple data
+        mock_fetch.return_value = [{"close": 100}]
+
+        # --- Act ---
+        results = price_provider.get_stock_data(['GOOD1', 'BADD', 'GOOD2'], period="1y")
+
+        # --- Assert ---
+        # Check that the delisted check was called for all tickers
+        self.assertEqual(mock_is_delisted.call_count, 3)
+        
+        # Check that the API fetch was only called for the good tickers
+        self.assertEqual(mock_fetch.call_count, 2)
+        
+        # Verify the final result dictionary does not contain the delisted ticker
+        self.assertIn('GOOD1', results)
+        self.assertIn('GOOD2', results)
+        self.assertNotIn('BADD', results)
+
+
     def _get_mock_yahoo_response(self):
         return {
             'chart': {

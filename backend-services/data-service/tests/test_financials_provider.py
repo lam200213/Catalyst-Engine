@@ -15,6 +15,23 @@ from providers.yfin import financials_provider
 class TestYFinanceFinancialsProvider(unittest.TestCase):
     """Consolidated tests for the yfinance financials data provider."""
 
+    @patch('providers.yfin.financials_provider._fetch_financials_with_yfinance')
+    @patch('providers.yfin.financials_provider.is_ticker_delisted', return_value=True)
+    def test_get_core_financials_skips_delisted_ticker(self, mock_is_delisted, mock_primary_fetch):
+        """
+        Tests that get_core_financials skips API calls for a known delisted ticker.
+        """
+        # --- Act ---
+        result = financials_provider.get_core_financials('DELISTED')
+
+        # --- Assert ---
+        # The function should return None immediately
+        self.assertIsNone(result)
+        # Verify that the check was made
+        mock_is_delisted.assert_called_once_with('DELISTED')
+        # CRITICAL: Assert that no downstream API call was attempted
+        mock_primary_fetch.assert_not_called()
+
     @patch('providers.yfin.financials_provider.yf.Ticker')
     def test_primary_fetcher_success(self, mock_yfinance_ticker):
         """Tests the happy path for the primary yfinance library fetcher."""

@@ -6,7 +6,7 @@ import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client, price_provider # Use relative import
-from helper_functions import mark_ticker_as_delisted
+from helper_functions import is_ticker_delisted, mark_ticker_as_delisted
 from curl_cffi import requests as cffi_requests
 
 #DEBUG
@@ -278,6 +278,11 @@ def get_core_financials(ticker_symbol: str) -> dict | None:
     For other tickers, returns standard financial data.
     This function now prioritizes the yfinance library and uses the direct API call as a fallback.
     """
+    # Pre-flight check to see if we already know this ticker is delisted
+    if is_ticker_delisted(ticker_symbol):
+        logger.debug(f"Skipping core financials for {ticker_symbol} because it is delisted.")
+        return None
+
     start_time = time.time()
     logger.debug(f"Attempting to get core financials for {ticker_symbol}")
 
@@ -326,7 +331,6 @@ def get_batch_core_financials(tickers: list[str]) -> dict:
 
     # Limit concurrency directly to prevent rate-limiting.
     # We will use a new ThreadPoolExecutor with a controlled number of workers.
-    # A max_worker value of 2 is a safe starting point.
     with ThreadPoolExecutor(max_workers=1) as limited_executor:
         future_to_ticker = {limited_executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
         for future in as_completed(future_to_ticker):

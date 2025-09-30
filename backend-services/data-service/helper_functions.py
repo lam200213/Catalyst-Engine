@@ -161,6 +161,36 @@ def check_market_trend_context(index_data, details):
         # Handle any errors gracefully
         details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}", trend='Unknown'))
 
+def is_ticker_delisted(ticker: str) -> bool:
+    """
+    Checks the ticker_status collection to see if a ticker has been marked as delisted.
+    Returns True if the ticker is found in the collection, False otherwise.
+    """
+    client = None  # Initialize client to None
+    try:
+        mongo_uri = os.getenv("MONGO_URI", "mongodb://mongodb:27017/")
+        # Use a short timeout to avoid blocking the request for too long
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
+        db = client.stock_analysis
+        ticker_status_coll = db.ticker_status
+        
+        # Check if a document with the ticker exists. count_documents is efficient.
+        count = ticker_status_coll.count_documents({"ticker": ticker}, limit=1)
+        
+        if count > 0:
+            logger.debug(f"Pre-flight check: Ticker {ticker} is known to be delisted. Skipping API call.")
+            return True
+        return False
+        
+    except errors.PyMongoError as e:
+        # If the DB check fails, log it but don't block the request.
+        # It's better to attempt the API call than to fail because of a transient DB issue.
+        logger.warning(f"Could not check delisted status for {ticker} from MongoDB: {e}")
+        return False
+    finally:
+        if client:
+            client.close()
+
 def mark_ticker_as_delisted(ticker: str, reason: str):
     """Writes a ticker's status as 'delisted' to the ticker_status collection."""
     try:
