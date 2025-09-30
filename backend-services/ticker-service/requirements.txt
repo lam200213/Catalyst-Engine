@@ -3,3 +3,5 @@ pandas
 requests
 pytest
 pydantic
+pymongo
+PyMongo[srv]

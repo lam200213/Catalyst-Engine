@@ -32,7 +32,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "AAPL", "passes": True})
-        mock_get.assert_called_once_with('http://screening-service:3002/screen/AAPL', params={}, timeout=40)
+        mock_get.assert_called_once_with('http://screening-service:3002/screen/AAPL', params={}, timeout=45)
 
     # Test to verify query parameters are forwarded
     @patch('requests.get')
@@ -45,7 +45,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ticker": "MSFT", "analysis": "VCP detected"})
-        mock_get.assert_called_once_with('http://analysis-service:3003/analyze/MSFT', params={'mode': 'fast'}, timeout=40)
+        mock_get.assert_called_once_with('http://analysis-service:3003/analyze/MSFT', params={'mode': 'fast'}, timeout=45)
 
     # Corrected test to verify the right endpoint is called
     @patch('requests.get')
@@ -58,7 +58,7 @@ class TestGateway(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, ["AAPL", "GOOG", "TSLA"])
-        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=40)
+        mock_get.assert_called_once_with('http://ticker-service:5001/tickers', params={}, timeout=45)
 
     @patch('requests.post')
     def test_routes_post_to_cache_clear_endpoint(self, mock_post):

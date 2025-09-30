@@ -138,9 +138,22 @@ def _process_chunk(chunk):
         if failed_tickers:
             print(f"Warning: Data could not be fetched for the following tickers: {failed_tickers}")
 
+        # Manual validation for nested data to catch contract violations 
+        # that the top-level BatchResponse validation might miss. This ensures each
+        # item in the successful list conforms to the PriceDataItem contract.
+        PriceDataValidator = TypeAdapter(List[PriceDataItem])
+        validated_success_data = {}
+        for ticker, historical_data in successful_data.items():
+            try:
+                PriceDataValidator.validate_python(historical_data)
+                validated_success_data[ticker] = historical_data
+            except ValidationError as e:
+                # This is a contract violation. Log it and exclude the ticker from processing.
+                print(f"Warning: Batch data contract violation for ticker {ticker}. Skipping. Error: {e}")
+
         # 2. Apply screening logic to the successfully fetched data
         # The data is already fetched, so this part is just CPU-bound.
-        for ticker, historical_data in successful_data.items():
+        for ticker, historical_data in validated_success_data.items():
             result = apply_screening_criteria(ticker, historical_data)
             if result.get("passes", False):
                 passing_in_chunk.append(ticker)

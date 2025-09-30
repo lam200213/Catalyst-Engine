@@ -60,31 +60,53 @@ class TestAnalysisEndpoint(unittest.TestCase):
         self.assertIn('chart_data', json_data)
 
     @patch('app.requests.get')
-    def test_analyze_data_contract_violation(self, mock_get):
+    def test_analyze_data_contract_violation_for_required_field(self, mock_get):
         """
-        Consumer Test: Verifies the service returns a 502 error if the
-        upstream data-service provides a payload that violates the data contract.
+        Consumer Test: Verifies a 502 error if the upstream payload
+        violates the data contract by missing a REQUIRED field ('formatted_date').
         """
-        # Arrange: Create an invalid payload missing the required 'close' field in the second item.
+        # Arrange: Create a payload missing the required 'formatted_date' field.
         invalid_payload = [
-            {'formatted_date': '2024-01-01', 'open': 100, 'high': 101, 'low': 99, 'close': 100.5, 'volume': 1000, 'adjclose': 100.5},
-            {'formatted_date': '2024-01-02', 'open': 101, 'high': 102, 'low': 100, 'volume': 1200, 'adjclose': 101.5} # Missing 'close'
+            {'formatted_date': '2024-01-01', 'close': 100.5},
+            {'close': 101.5} # Missing 'formatted_date'
         ]
-        
-        # Mock the response from data-service. The status is 200, but the content is invalid.
         mock_get.return_value = MagicMock(
             status_code=200,
             content=json.dumps(invalid_payload).encode('utf-8')
         )
 
-        # Act: Call the endpoint
-        response = self.app.get('/analyze/INVALIDDATA')
+        # Act
+        response = self.app.get('/analyze/CONTRACTVIOLATION')
 
-        # Assert: The service should detect the contract violation and return a 502 Bad Gateway.
+        # Assert: Pydantic validation should fail and return a 502.
         self.assertEqual(response.status_code, 502)
         json_data = response.get_json()
         self.assertIn("Invalid data structure", json_data['error'])
         self.assertIn("Field required", json_data['details'])
+
+    @patch('app.requests.get')
+    def test_analyze_data_with_unusable_records(self, mock_get):
+        """
+        Consumer Test: Verifies a 404 error if the upstream payload is
+        schema-valid but all records are unusable (e.g., missing 'close' price).
+        """
+        # Arrange: Payload where all records are missing the optional 'close' field.
+        unusable_payload = [
+            {'formatted_date': '2024-01-01', 'open': 100},
+            {'formatted_date': '2024-01-02', 'open': 101}
+        ]
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            content=json.dumps(unusable_payload).encode('utf-8')
+        )
+
+        # Act
+        response = self.app.get('/analyze/UNUSABLEDATA')
+
+        # Assert: The service should filter records, find no data, and return 404.
+        self.assertEqual(response.status_code, 404)
+        json_data = response.get_json()
+        self.assertIn("No price data available", json_data['error'])
 
     @patch('app.requests.get')
     def test_analyze_data_service_404_error(self, mock_get):

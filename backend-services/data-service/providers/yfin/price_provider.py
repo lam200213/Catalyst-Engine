@@ -8,6 +8,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client # Use relative import
 from helper_functions import mark_ticker_as_delisted
+import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +119,28 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
             return None
 
         data = response.json()
-        #  Pass ticker to transformation function
-        return _transform_yahoo_response(data, ticker)
+        #  Pass ticker to transformation function and save the result
+        transformed_data = _transform_yahoo_response(data, ticker)
+
+        # if transformed_data:
+        #     # --- LOGGING/SAVING BLOCK ---
+        #     try:
+        #         log_dir = os.path.join('/app/logs', 'price_fetches')
+        #         date_str = dt.datetime.now().strftime('%Y-%m-%d')
+        #         ticker_log_dir = os.path.join(log_dir, date_str)
+        #         os.makedirs(ticker_log_dir, exist_ok=True)
+        #         file_path = os.path.join(ticker_log_dir, f"{ticker}.json")
+
+        #         with open(file_path, 'w') as f:
+        #             json.dump(transformed_data, f, indent=4)
+
+        #         logger.debug(f"Successfully saved price data for {ticker} to {file_path}")
+
+        #     except Exception as log_e:
+        #         logger.error(f"Failed to save price fetch log for {ticker}: {log_e}")
+        #     # --- END LOGGING/SAVING BLOCK ---
+
+        return transformed_data
 
     except cffi_requests.errors.RequestsError as e:
         if e.response:

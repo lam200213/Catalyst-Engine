@@ -76,13 +76,18 @@ def _validate_and_parse_price_data(response, ticker_for_log):
 def prepare_historical_data(historical_data):
     """
     Transforms data-service response into sorted lists of close prices and dates.
+    Filters out any data points where 'close' price is null or missing.
     Expected input format: [{'formatted_date': 'YYYY-MM-DD', 'close': X.X, ...}]
     """
     if not historical_data:
         return [], [], []
 
-    # Sort data by date to ensure chronological order
-    sorted_data = sorted(historical_data, key=lambda x: x['formatted_date'])
+    # Filter out entries with no 'close' price and then sort chronologically
+    valid_data = [item for item in historical_data if item.get('close') is not None]
+    if not valid_data:
+        return [], [], []
+        
+    sorted_data = sorted(valid_data, key=lambda x: x['formatted_date'])
     prices = [item['close'] for item in sorted_data]
     dates = [item['formatted_date'] for item in sorted_data]
     return prices, dates, sorted_data

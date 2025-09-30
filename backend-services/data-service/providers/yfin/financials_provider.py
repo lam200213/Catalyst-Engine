@@ -172,7 +172,7 @@ def _fetch_financials_with_yfinance(ticker):
     # --- LOGGING/SAVING BLOCK ---
     # Save the *final constructed data object* to a structured log file.
     try:
-        log_dir = os.path.join('/app/logs', 'yfinance_fetches')
+        log_dir = os.path.join('/app/logs', 'finance_fetches')
         date_str = dt.datetime.now().strftime('%Y-%m-%d')
         ticker_log_dir = os.path.join(log_dir, date_str)
         os.makedirs(ticker_log_dir, exist_ok=True)

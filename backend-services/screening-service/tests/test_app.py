@@ -59,7 +59,7 @@ class TestScreeningServiceDataContracts(unittest.TestCase):
         ticker_chunk = ["MSFT", "GOOG"]
         invalid_batch_payload = {
             "success": {
-                "MSFT": [{"formatted_date": "2025-09-25", "open": 400.0, "high": 405.0, "low": 398.0, "volume": 20000000, "adjclose": 402.0}] # "close" is missing
+                "MSFT": [{"formatted_date": "2025-09-25", "open": 400.0, "high": 405.0, "low": 398.0, "close": 402.0, "volume": "lots-of-shares", "adjclose": 402.0}] # <-- volume is a string
             },
             "failed": ["GOOG"]
         }
@@ -75,11 +75,16 @@ class TestScreeningServiceDataContracts(unittest.TestCase):
         # 3. Assert
         self.assertEqual(result, []) # Still check the return value
         
-        # New Assertion: Check that a specific warning was printed
+        # A more robust assertion that checks all calls made to the print mock.
+        # This ensures the test passes if the expected warning is present, even if other
+        # warnings (like for failed tickers) are also printed.
         mock_print.assert_called()
-        # Get the first argument of the first call to print()
-        log_message = mock_print.call_args[0][0] 
-        self.assertIn("Batch data contract violation", log_message)
+        
+        all_log_messages = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any("Batch data contract violation" in msg for msg in all_log_messages),
+            f"Expected log message containing 'Batch data contract violation' not found in actual logs: {all_log_messages}"
+        )
 
     @patch('app.requests.post')
     def test_process_chunk_handles_malformed_top_level_key(self, mock_post):

@@ -168,8 +168,6 @@ def mark_ticker_as_delisted(ticker: str, reason: str):
         client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
         db = client.stock_analysis
         ticker_status_coll = db.ticker_status
-        # Create index if it doesn't exist
-        ticker_status_coll.create_index("ticker", unique=True)
         
         update_doc = {
             "$set": {
