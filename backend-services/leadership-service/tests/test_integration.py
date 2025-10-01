@@ -21,8 +21,8 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         app.config['TESTING'] = True
         self.app = app.test_client()
 
-    @patch('checks.industry_peer_checks.fetch_batch_financials')
-    @patch('checks.industry_peer_checks.fetch_peer_data')
+    @patch('app.fetch_batch_financials')
+    @patch('app.fetch_peer_data')
     @patch('app.fetch_general_data_for_analysis')
     @patch('app.fetch_price_data')
     @patch('app.fetch_financial_data')
@@ -78,6 +78,65 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         failed_checks = {k: v for k, v in data.get('details', {}).items() if isinstance(v, dict) and not v.get('pass')}
         
         self.assertTrue(data['passes'], f"Expected global 'passes' to be True. Failed checks: {json.dumps(failed_checks, indent=2)}")
+
+    @patch('app.fetch_batch_financials')
+    @patch('app.fetch_peer_data')
+    @patch('app.fetch_batch_price_data')
+    @patch('app.fetch_general_data_for_analysis')
+    def test_leadership_batch_endpoint_full_integration(self, mock_fetch_general, mock_fetch_price_batch, mock_fetch_peers_batch, mock_fetch_financials_batch):
+        """
+        Integration Test: Batch endpoint correctly orchestrates all data fetching,
+        validation, and analysis for a mixed list of tickers.
+        """
+        # --- Arrange Mocks ---
+        
+        # 1. Mock General Market Data
+        mock_fetch_general.return_value = (create_mock_index_data(), [{'trend': 'Bullish'}] * 365)
+
+        # 2. Mock Price Data for the 3 valid candidates
+        mock_prices = {
+            "success": {
+                "PASS": create_mock_price_data(1.5)[0],
+                "FAIL": create_mock_price_data(0.8)[0],
+                "NO_PEERS": create_mock_price_data(1.2)[0]
+            }, "failed": []
+        }
+        mock_fetch_price_batch.return_value = (mock_prices, None)
+
+        # 3. Mock Peer Data, including one failure
+        def peers_side_effect(ticker):
+            if ticker == 'PASS': return ({'industry': 'Tech', 'peers': ['PEER_PASS']}, None)
+            if ticker == 'FAIL': return ({'industry': 'Retail', 'peers': ['PEER_FAIL']}, None)
+            if ticker == 'NO_PEERS': return (None, ("Peer fetch failed", 500))
+            return ({}, None)
+        mock_fetch_peers_batch.side_effect = peers_side_effect
+
+        # 4. Mock Financials for all candidates AND their peers
+        mock_financials = {
+            "success": {
+                "PASS": create_mock_financial_data(passing_data=True, ticker="PASS"),
+                "FAIL": create_mock_financial_data(passing_data=False, ticker="FAIL"), # Fails its own checks
+                "NO_PEERS": create_mock_financial_data(passing_data=True, ticker="NO_PEERS"),
+                "PEER_PASS": create_mock_financial_data(ticker="PEER_PASS", marketCap=1e9), # Peer is weaker
+                "PEER_FAIL": create_mock_financial_data(ticker="PEER_FAIL", marketCap=1e12) # Peer is stronger
+            }, "failed": []
+        }
+        mock_fetch_financials_batch.return_value = (mock_financials, None)
+        
+        payload = {"tickers": ["PASS", "FAIL", "NO_PEERS", "INVALID/TICKER"]}
+
+        # --- Act ---
+        response = self.app.post('/leadership/batch', json=payload)
+        data = response.json
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data['metadata']['total_processed'], 4)
+        # Only 'PASS' should succeed. 'FAIL' fails its own checks. 'NO_PEERS' is skipped due to peer fetch error.
+        self.assertEqual(data['metadata']['total_passed'], 1)
+        self.assertEqual(len(data['passing_candidates']), 1)
+        self.assertEqual(data['passing_candidates'][0]['ticker'], 'PASS')
+        self.assertEqual(mock_fetch_financials_batch.call_count, 1) # Verifies batching happened
 
     @patch('app.fetch_general_data_for_analysis') # Patched the correct higher-level function
     @patch('app.fetch_price_data')

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-01
-Implement a new helper function, `is_ticker_delisted`, to allow different providers to quickly check a ticker's status without duplicating database connection logic.
+Implemented Batch Peer Data Requests in leadership-service by : Refactor industry_peer_checks.py to Separate Logic from I/O, Update helper_functions.py to Pass Pre-fetched Data and Implement the New Batch Workflow in app.py.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

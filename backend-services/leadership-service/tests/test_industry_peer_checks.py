@@ -5,9 +5,42 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from checks.industry_peer_checks import check_industry_leadership
+from checks.industry_peer_checks import check_industry_leadership, analyze_industry_leadership
 
 class TestIndustryPeerChecks(unittest.TestCase):
+
+    def test_analyze_industry_leadership_wrapper(self):
+        """
+        Tests the analyze_industry_leadership wrapper to ensure it validates
+        peer contracts and correctly filters the all_financial_data map.
+        """
+        details = {}
+        
+        # --- Scenario 1: Valid data ---
+        peers_data_raw = {"industry": "Software", "peers": ["PEER1"]}
+        all_financials = {
+            "TICKER": {"annual_earnings": [{"Revenue": 1000, "Net Income": 100}], "marketCap": 10000, "ticker": "TICKER"},
+            "PEER1": {"annual_earnings": [{"Revenue": 500, "Net Income": 50}], "marketCap": 5000, "ticker": "PEER1"},
+            "UNRELATED": {"annual_earnings": [{"Revenue": 100, "Net Income": 10}], "marketCap": 1000, "ticker": "UNRELATED"}
+        }
+        
+        analyze_industry_leadership("TICKER", peers_data_raw, all_financials, details)
+        result = details['is_industry_leader']
+        
+        self.assertTrue(result['pass'])
+        self.assertEqual(result['rank'], 1)
+        # Asserts that the 'UNRELATED' ticker was correctly excluded from the ranking.
+        self.assertEqual(result['total_peers_ranked'], 2)
+
+        # --- Scenario 2: Invalid peer data contract ---
+        details = {}
+        invalid_peers_raw = {"industry": "Hardware", "peers": "NOT_A_LIST"} # Violates contract
+        
+        analyze_industry_leadership("TICKER", invalid_peers_raw, all_financials, details)
+        result = details['is_industry_leader']
+        
+        self.assertFalse(result['pass'])
+        self.assertIn("Invalid peer data structure", result['message'])
 
     def test_check_industry_leadership(self):
         details = {}

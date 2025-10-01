@@ -1,3 +1,5 @@
+# backend-services/leadership-service/app.py
+# responsible for handling API routing and HTTP request/response logic
 import time
 import threading
 from flask import Flask, jsonify, request
@@ -5,7 +7,7 @@ import os
 import re # regex import for input validation
 import logging 
 from logging.handlers import RotatingFileHandler
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from checks import industry_peer_checks
 from pydantic import ValidationError, TypeAdapter
@@ -16,6 +18,7 @@ from data_fetcher import (
     fetch_price_data,
     fetch_batch_financials,
     fetch_batch_price_data,
+    fetch_peer_data,
 )
 from helper_functions import (
     validate_data_contract,
@@ -140,10 +143,26 @@ def leadership_analysis(ticker):
         if not stock_data_raw:
             return jsonify({'error': f"Failed to fetch price data for {ticker}"}), status_code
 
+        peers_data_raw, peer_error = fetch_peer_data(ticker)
+        if peer_error:
+            return jsonify({'error': peer_error[0]}), peer_error[1]
+
+        # Fetch financials for the ticker and all its peers
+        all_related_tickers = [ticker] + peers_data_raw.get('peers', [])
+        all_financial_data_raw, fin_error = fetch_batch_financials(list(set(all_related_tickers)))
+        if fin_error:
+            return jsonify({'error': fin_error[0]}), fin_error[1]
+
         # Validate incoming data against contracts using the centralized helper
         PriceDataValidator = TypeAdapter(List[PriceDataItem])
         financial_data = validate_data_contract(financial_data_raw, CoreFinancials, ticker, "CoreFinancials")
         stock_data = validate_data_contract(stock_data_raw, PriceDataValidator, ticker, "PriceData")
+
+        all_financial_data = {}
+        for ticker, data in all_financial_data_raw.get('success', {}).items():
+            validated_data = validate_data_contract(data, CoreFinancials, ticker, "CoreFinancials")
+            if validated_data:
+                all_financial_data[ticker] = validated_data
 
         if not financial_data or not stock_data:
             return jsonify({
@@ -151,7 +170,10 @@ def leadership_analysis(ticker):
             }), 502
 
         # Call the leadership analysis function with all data
-        analysis_result = analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data)
+        analysis_result = analyze_ticker_leadership(
+            ticker, index_data, market_trends_data,
+            financial_data, stock_data, peers_data_raw, all_financial_data
+        )
         
         if 'error' in analysis_result:
                 status_code = analysis_result.get('status', 500)
@@ -194,7 +216,7 @@ def leadership_batch_analysis():
     if not sanitized_tickers:
         return jsonify({'passing_candidates': [], 'metadata': {'total_processed': len(tickers), 'total_passed': 0, 'execution_time': 0}}), 200
 
-    # --- 2. Fetch All Required Data in Batches ---
+    # --- 2. Fetch Common and Price Data ---
     app.logger.info("Fetching general market and trend data...")
     # Robustly handle mixed return types (tuple on success, dict on error).
     common_data = fetch_general_data_for_analysis()
@@ -202,20 +224,42 @@ def leadership_batch_analysis():
         return jsonify({'error': common_data['error']}), common_data.get('status', 503)
     index_data, market_trends_data = common_data
 
-    app.logger.info(f"Fetching batch financial data for {len(sanitized_tickers)} tickers...")
-    all_financial_data, financial_error = fetch_batch_financials(sanitized_tickers)
-    if financial_error:
-        return jsonify({"error": financial_error[0]}), financial_error[1]
-
     app.logger.info(f"Fetching batch price data for {len(sanitized_tickers)} tickers...")
     all_price_data, price_error = fetch_batch_price_data(sanitized_tickers)
     if price_error:
         return jsonify({"error": price_error[0]}), price_error[1]
 
+    # --- 3. Efficiently Fetch All Peer and Financial Data ---
+    all_tickers_for_financials = set(sanitized_tickers)
+    peers_map = {} # To store peer data for each candidate
+
+    # Fetch peer lists in parallel
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ticker = {executor.submit(fetch_peer_data, ticker): ticker for ticker in sanitized_tickers}
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                peers_data, error = future.result()
+                if not error and peers_data and 'peers' in peers_data:
+                    peers_map[ticker] = peers_data
+                    all_tickers_for_financials.update(peers_data['peers'])
+                elif error:
+                    app.logger.warning(f"Could not fetch peer data for {ticker}: {error[0]}")
+            except Exception as exc:
+                app.logger.error(f"Generated an exception while fetching peers for {ticker}: {exc}")
+
+    # Single batch call for all financials (candidates + all unique peers)
+    app.logger.info(f"Fetching batch financials for {len(all_tickers_for_financials)} unique tickers...")
+    all_financial_data_raw, financial_error = fetch_batch_financials(list(all_tickers_for_financials))
+    if financial_error:
+        return jsonify({"error": financial_error[0]}), financial_error[1]
+
+    # --- 4. Validate All Fetched Data ---
+
     # Validate all successfully fetched data using the centralized helper
     PriceDataValidator = TypeAdapter(List[PriceDataItem])
     successful_financials = {}
-    for ticker, data in all_financial_data.get('success', {}).items():
+    for ticker, data in all_financial_data_raw.get('success', {}).items():
         validated_data = validate_data_contract(data, CoreFinancials, ticker, "CoreFinancials")
         if validated_data:
             successful_financials[ticker] = validated_data
@@ -226,20 +270,23 @@ def leadership_batch_analysis():
         if validated_data:
             successful_prices[ticker] = validated_data
 
-    # --- 3. Prepare Analysis Tasks (CPU-Bound) ---
+    # --- 5. Prepare Analysis Tasks (CPU-Bound) ---
     analysis_tasks = []
     for ticker in sanitized_tickers:
-        if ticker in successful_financials and ticker in successful_prices:
+        # A ticker is viable for analysis only if we have its own price data,
+        # its own financial data, AND its peer data.
+        if ticker in successful_prices and ticker in successful_financials and ticker in peers_map:
             task = {
                 "ticker": ticker,
                 "financial_data": successful_financials[ticker],
-                "stock_data": successful_prices[ticker]
+                "stock_data": successful_prices[ticker],
+                "peers_data": peers_map[ticker]
             }
             analysis_tasks.append(task)
         else:
-            app.logger.warning(f"Skipping {ticker} from analysis due to missing price or financial data.")
+            app.logger.warning(f"Skipping {ticker} from analysis due to missing price, own financial, or peer data.")
 
-    # --- 4. Execute Analysis in Parallel ---
+    # --- 6. Execute Analysis in Parallel ---
     passing_candidates = []
     unique_industries = set()
 
@@ -249,7 +296,7 @@ def leadership_batch_analysis():
     if analysis_tasks:
         with ThreadPoolExecutor(max_workers=10) as executor:
             # Use functools.partial to pass the pre-fetched market data to the worker function.
-            analysis_func = partial(analyze_ticker_leadership, index_data=index_data, market_trends_data=market_trends_data)
+            analysis_func = partial(analyze_ticker_leadership, index_data=index_data, market_trends_data=market_trends_data, all_financial_data=successful_financials)
 
             def worker_with_context(task):
                 """Sets and clears the ticker in thread-local storage for logging."""
@@ -259,7 +306,8 @@ def leadership_batch_analysis():
                     result = analysis_func(
                         ticker=task['ticker'],
                         financial_data=task['financial_data'],
-                        stock_data=task['stock_data']
+                        stock_data=task['stock_data'],
+                        peers_data=task['peers_data']
                     )
                 finally:
                     # Ensure the context is cleared after the task is done
@@ -315,7 +363,18 @@ def industry_rank_analysis(ticker):
     # Create a dictionary to hold the results for this specific request.
     details = {}
 
-    industry_peer_checks.get_and_check_industry_leadership(ticker, details)
+    peers_data_raw, error = fetch_peer_data(ticker)
+    if error:
+        return jsonify({'error': f"Upstream error: {error[0]}"}), 502
+
+    all_tickers = [ticker] + peers_data_raw.get("peers", [])
+    batch_financials, error = fetch_batch_financials(list(set(all_tickers)))
+    if error:
+        return jsonify({'error': f"Upstream error fetching batch financials: {error[0]}"}), 502
+    
+    all_financial_data = batch_financials.get("success", {})
+
+    industry_peer_checks.analyze_industry_leadership(ticker, peers_data_raw, all_financial_data, details)
     result = details.get('is_industry_leader')
 
     if not result or result.get("pass") is None:

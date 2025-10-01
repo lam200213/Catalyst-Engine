@@ -44,7 +44,7 @@ def fetch_general_data_for_analysis():
     return index_data, market_trends_data
 
 # helper function to perform leadership analysis
-def analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data):
+def analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_data, stock_data, peers_data, all_financial_data):
     """
     Analyzes a single ticker for leadership criteria.
     Returns a dictionary with the analysis result, or an error dictionary.
@@ -98,7 +98,7 @@ def analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_
         # Assign the nested result to its own key, ie: shallow_decline, new_52_week_high, recent_breakout
         results['market_trend_impact'] = details.get('market_trend_impact', {})
         
-        industry_peer_checks.get_and_check_industry_leadership(ticker, details)
+        industry_peer_checks.analyze_industry_leadership(ticker, peers_data, all_financial_data, details)
         results['is_industry_leader'] = details.get('is_industry_leader', {"pass": False, "message": "Check failed to run."})
 
         core_criteria = [

@@ -16,19 +16,12 @@ DATA_SERVICE_URL = "http://data-service:3001"
 # Functions for financial statements (like check_yoy_eps_growth) expect newest-to-oldest data, 
 # while functions for price history expect oldest-to-newest, due to the data properties.
 
-def get_and_check_industry_leadership(ticker, details):
+def analyze_industry_leadership(ticker, peers_data_raw, all_financial_data, details):
     """
-    Orchestrates the entire industry leadership check: fetches necessary data
-    and then calls the analysis function. This is the single entry point.
+    Analyzes industry leadership using pre-fetched data. This is now a pure
+    processing function without I/O operations.
     """
     metric_key = 'is_industry_leader'
-    
-    # --- 1. Fetch all necessary data ---
-    peers_data_raw, error = fetch_peer_data(ticker)
-    if error:
-        logging.error(f"Failed to fetch peer data for {ticker}: {error[0]}")
-        details.update(failed_check(metric_key, f"Upstream error: {error[0]}"))
-        return # Stop execution for this check
 
     # Validate the raw peer data against the IndustryPeers contract
     try:
@@ -44,20 +37,17 @@ def get_and_check_industry_leadership(ticker, details):
         details.update(failed_check(metric_key, "No peer data was found for this ticker."))
         return
 
+    # Extract the subset of financial data relevant to this ticker and its peers
     peer_tickers = [t.strip().replace('/', '-') for t in raw_peer_tickers if t]
-    all_tickers = list(set(peer_tickers + [ticker]))
+    relevant_tickers = list(set(peer_tickers + [ticker]))
     
-    batch_financials, error = fetch_batch_financials(all_tickers)
-    if error:
-        logging.error(f"Failed to fetch batch financials: {error[0]}")
-        details.update(failed_check(metric_key, f"Upstream error fetching batch financials: {error[0]}"))
-        return
-        
-    batch_financial_data = batch_financials.get("success", {})
+    batch_financial_data = {
+        t: all_financial_data[t]
+        for t in relevant_tickers if t in all_financial_data
+    }
 
-    # --- 2. Call the original analysis function with the fetched data ---
+    # Call the original analysis function with the filtered data
     check_industry_leadership(ticker, peers_data, batch_financial_data, details)
-
 
 def check_industry_leadership(ticker, peers_data, batch_financial_data, details):
     """
