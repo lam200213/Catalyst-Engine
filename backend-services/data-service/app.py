@@ -33,10 +33,10 @@ config = {
     "CACHE_DEFAULT_TIMEOUT": 300 # Default 5 minutes for routes without explicit timeout
 }
 
-PRICE_CACHE_TTL = 172800 # 2 days
-NEWS_CACHE_TTL = 14400 # 4 hours
-FINANCIALS_CACHE_TTL = 604800 # 7 days
-INDUSTRY_CACHE_TTL = 604800 # 7 days
+PRICE_CACHE_TTL = 1209600 # 14 days, 0 for indefinite
+NEWS_CACHE_TTL = 604800 # 7 days
+FINANCIALS_CACHE_TTL = 1209600 # 14 days
+INDUSTRY_CACHE_TTL = 1209600 # 14 days
 
 app.config.from_mapping(config)
 cache = Cache(app)
@@ -333,7 +333,7 @@ def get_data(ticker: str):
                 return jsonify(validated_cached_data)
             # If data is old, set the start date for an incremental fetch.
             new_start_date = last_date + timedelta(days=1)
-            cached_data = validated_cached_data # Use the validated version for appending later
+            cached_data = validated_cached_data # Use the validated version for appending later, resetting the TTL
         else:
             app.logger.warning(f"Cached data for {ticker} failed validation. Performing full fetch.")
             cached_data = None # Invalidate broken cache data
