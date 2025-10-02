@@ -3,6 +3,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **GET `/tickers`** 
   - Retrieves a list of all US stock tickers from the ticker-service.  
+  - **Data Contract:** Produces [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/tickers
@@ -12,6 +13,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     * Proxies to: `data-service`
     * Retrieves historical price data for a ticker, with caching.
     * **Note:** The `source` parameter is handled by the `data-service` directly, not the gateway.
+    * **Data Contract:** Produces [`PriceData`](./DATA_CONTRACTS.md#2-pricedata).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/price/AAPL?source=yfinance
@@ -20,6 +22,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 * **GET `/news/:ticker`**
     * Proxies to: `data-service`
     * Retrieves recent news articles for a ticker, with caching.
+    * **Data Contract:** Produces [`NewsData`](./DATA_CONTRACTS.md#4-newsdata).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/news/AAPL
@@ -28,6 +31,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **POST `/price/batch`**
   - Proxies to: `data-service`
   - Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
+  - **Data Contract:** The `success` object contains key-value pairs where each value adheres to the [`PriceData`](./DATA_CONTRACTS.md#2-pricedata) contract.
   - **Example Usage:**
     ```bash
     curl -X POST http://localhost:3000/price/batch \
@@ -38,11 +42,17 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     - Returns two lists: `success` for tickers where data was retrieved, and `failed` for tickers that could not be processed.
     ```json
     {
-      "success": [
-        {"ticker": "AAPL", "data": [...]},
-        {"ticker": "GOOGL", "data": [...]},
-        {"ticker": "MSFT", "data": [...]}
-      ],
+      "success": {
+        "AAPL": [
+          {"formatted_date": "2024-01-01", "close": 180.0, ...}
+        ],
+        "GOOGL": [
+          {"formatted_date": "2024-01-01", "close": 140.0, ...}
+        ],
+        "MSFT": [
+          {"formatted_date": "2024-01-01", "close": 400.0, ...}
+        ]
+      },
       "failed": ["FAKETICKER"]
     }
     ```
@@ -51,6 +61,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Proxies to: data-service
   - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
 
+  - **Data Contract:** N/A
   - **Example Usage:**
       ```Bash
         curl -X POST http://localhost:3000/cache/clear
@@ -66,6 +77,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Proxies to the Screening Service.
   - Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
   - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+  - **Data Contract:** Produces [`ScreeningResultSingle`](./DATA_CONTRACTS.md#6-screeningresult).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/screen/AAPL
@@ -108,6 +120,8 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - **Query Parameters**:
     - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
   - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
+  - **Data Contract:** Produces [`VCPAnalysisSingle`](./DATA_CONTRACTS.md#7-vcpanalysis).
+
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/screen/AAPL
@@ -147,6 +161,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **POST `/analyze/batch`**  
   - Proxies to the Analysis Service.  
   - Analyzes a batch of tickers (typically those that have passed the trend screen) against the Volatility Contraction Pattern (VCP) criteria. This is a critical internal endpoint called by the scheduler-service to efficiently process candidates in the screening funnel.
+  - **Data Contract:** Produces a list of [`VCPAnalysisBatchItem`](./DATA_CONTRACTS.md#7-vcpanalysis).
   - **Request Body**:
     ```json
     {
@@ -180,6 +195,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **GET `/financials/core/:ticker`**  
   - Purpose: Retrieves core fundamental data required for the Leadership Profile screening. Data is cached to improve performance.
+  - **Data Contract:** Produces [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/financials/core/AAPL
@@ -187,28 +203,26 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - **Example Response (`GET /financials/core/AAPL`):**
   ```json
   {
+    "ticker": "AAPL",
     "marketCap": 2800000000000,
     "sharesOutstanding": 15500000000,
     "floatShares": 15400000000,
     "ipoDate": "1980-12-12",
+    "annual_earnings": [
+        { "Revenue": 383285000000, "Earnings": 6.13, "Net Income": 96995000000 }
+    ],
     "quarterly_earnings": [
-      {
-        "date": "3Q2024",
-        "revenue": 90000000000,
-        "earnings": 25000000000
-      }
+        { "Revenue": 90753000000, "Earnings": 1.53, "Net Income": 23636000000 }
     ],
     "quarterly_financials": [
-        {
-            "date": "2024-06-30",
-            "Basic EPS": 1.53
-        }
+        { "Net Income": 23636000000, "Total Revenue": 90753000000 }
     ]
   }
 
 - **GET `/leadership/<path:ticker>`**  
   - Proxies to: `leadership-service`
   - Purpose: Applies the 10 "Leadership Profile" criteria to the specified ticker.
+  - **Data Contract:** Produces [`LeadershipProfileSingle`](./DATA_CONTRACTS.md#8-leadershipprofile).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/leadership/AAPL
@@ -246,9 +260,32 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
+- **GET `/industry/peers/:ticker`**
+  - Proxies to: data-service
+  - Purpose: Retrieves industry classification and a list of peer tickers. Used by the leadership-service.
+  - **Data Contract:** Produces [`IndustryPeers`](./DATA_CONTRACTS.md#5-industrypeers).
+  - **Example Usage:**
+    ```bash
+    curl http://localhost:3000/industry/peers/NVDA
+    ```
+  - **Example Usage (from another service):**
+    ```python
+    import requests
+    data_service_url = "http://data-service:3001"
+    response = requests.get(f"{data_service_url}/industry/peers/NVDA")
+    ```
+  - **Example Success Response:**
+    ```json
+    {
+      "industry": "Semiconductors",
+      "peers": ["AVGO", "QCOM", "AMD", "INTC"]
+    }
+    ```
+
 - **GET `/leadership/industry_rank/:ticker`**  
   - Proxies to: `leadership-service`
   - Purpose: Ranks the specified ticker against its industry peers based on revenue, market cap, and net income.
+  - **Data Contract:** N/A (Custom Response Structure)
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/leadership/industry_rank/NVDA
@@ -288,6 +325,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - Proxies to: leadership-service
   - Purpose: A standard health check endpoint used for service monitoring to confirm that the service is running and responsive.
 
+  - **Data Contract:** N/A
   - **Example Usage (from a monitoring tool or another service)**
       ```bash
       curl http://leadership-service:3005/health
@@ -303,6 +341,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **POST `/jobs/screening/start`**
   - Proxies to: `scheduler-service`
   - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.
+  - Purpose: Triggers a new, full screening pipeline job.
   - **Example Usage:**
     ```bash
     curl -X POST http://localhost:3000/jobs/screening/start
@@ -332,6 +371,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
   - Proxies to: data-service
   - Purpose: Retrieves core financial data for a batch of tickers. This is used by the leadership-service to efficiently gather the necessary data for its industry peer ranking analysis.
 
+  - **Data Contract:** The `success` object contains key-value pairs where each value adheres to the [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials) contract.
   - **Request Body:**
       ```JSON
       {
@@ -370,7 +410,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 - **POST `/market-trend/calculate`**  
   - Proxies to: data-service
   - Purpose: On-demand endpoint to calculate, store, and return market trends for a specific list of dates. This is an internal utility endpoint.
-
+  - **Data Contract:** N/A (Custom Response Structure)
   - **Request Body:**
       ```JSON
       {
@@ -412,7 +452,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
   - Query Parameters:
     - start_date (optional): The start date for the filter (e.g., 2025-07-01).
     - end_date (optional): The end date for the filter (e.g., 2025-08-01).
-
+  - **Data Contract:** N/A (Custom Response Structure)
   - **Example Usage (from another service)**
       ```PYTHON
       {
@@ -446,7 +486,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 - **POST `/screen/batch`**  
   - Proxies to: screening-service
   - Purpose: Processes a list of tickers and returns only those that pass the 8 foundational SEPA trend criteria. It's a critical component of the main screening pipeline, called by the scheduler-service.
-
+  - **Data Contract:** Produces `{"passing_tickers": TickerList}`. See [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
   - **Request Body:**
       ```JSON
       {
@@ -473,7 +513,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 - **POST `/leadership/batch`**  
   - Proxies to: leadership-service
   - Purpose: Screens a batch of tickers (typically those that have passed the trend and VCP screens) against the 10 "Leadership Profile" criteria. Called by the scheduler-service to efficiently find the top candidates.
-
+  - **Data Contract:** Produces [`LeadershipProfileBatch`](./DATA_CONTRACTS.md#8-leadershipprofile).
   - **Request Body:**
       ```JSON
       {

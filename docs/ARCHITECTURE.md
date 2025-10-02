@@ -34,6 +34,7 @@
 │   │   │   ├── test_finnhub_provider.py
 │   │   │   └── test_marketaux_provider.py
 │   │   ├── app.py
+│   │   ├── helper_functions.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── leadership-service/  # Python/Flask - Applies leadership criteria
@@ -43,11 +44,13 @@
 │   │   │   ├── test_market_relative_checks.py
 │   │   │   ├── test_industry_peer_checks.py
 │   │   ├── app.py
-│   │   ├── checks/
+│   │   ├── checks/          # Business logic for each leadership check
 │   │   │   ├── financial_health_checks.py
 │   │   │   ├── market_relative_checks.py
 │   │   │   ├── industry_peer_checks.py
-│   │   ├── data_fetcher.py          # Service Client: Handles communication with data-service
+│   │   │   ├── utils.py
+│   │   ├── data_fetcher.py  # Service Client: Handles communication with data-service
+│   │   ├── helper_functions.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
@@ -62,7 +65,7 @@
 │   │   ├──  app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   └── shared/              # Data contract
+│   └── shared/              # Pydantic models for inter-service data contracts
 │       ├── __init__.py 
 │       ├── contracts.py
 ├── frontend-app/            # React/Vite - User Interface

@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-02
-Added Testing for Batch Operations and graceful degradation when the provider returns an incomplete data set (e.g., missing a single metric like marketCap) in data-service; Update test cases in scheduler-service to align with the previous change of run_screening_pipeline function in app.py converts the ticker list into a set to efficiently remove delisted tickers.
+Updated relevant documentation for previous implementations.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
