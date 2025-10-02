@@ -15,6 +15,71 @@ from providers.yfin import financials_provider
 class TestYFinanceFinancialsProvider(unittest.TestCase):
     """Consolidated tests for the yfinance financials data provider."""
 
+    @patch('providers.yfin.financials_provider.yf.Ticker')
+    def test_primary_fetcher_handles_incomplete_info(self, mock_yfinance_ticker):
+        """
+        Tests that the primary fetcher handles info dicts that are missing non-critical fields.
+        This aligns with the test plan's requirement for graceful degradation.
+        """
+        # --- Arrange ---
+        mock_instance = mock_yfinance_ticker.return_value
+        # Simulate a response that has marketCap but is missing floatShares
+        mock_instance.info = {
+            'marketCap': 2.5e12,
+            'sharesOutstanding': 15e9,
+            # 'floatShares' is intentionally missing
+            'firstTradeDateMilliseconds': 345479400000
+        }
+        mock_instance.quarterly_income_stmt = pd.DataFrame()
+        mock_instance.income_stmt = pd.DataFrame()
+
+        # --- Act ---
+        result = financials_provider._fetch_financials_with_yfinance('AAPL')
+
+        # --- Assert ---
+        # The function should still succeed and return a result
+        self.assertIsNotNone(result)
+        self.assertEqual(result['marketCap'], 2.5e12)
+        # The missing field should be present but have a value of None
+        self.assertIn('floatShares', result)
+        self.assertIsNone(result['floatShares'])
+
+    @patch('providers.yfin.financials_provider.get_core_financials')
+    def test_get_batch_core_financials_handles_mix_of_success_and_failure(self, mock_get_core_financials):
+        """
+        Tests the batch fetching function with a mix of successful and failed tickers.
+        """
+        # --- Arrange ---
+        # Mock the single-ticker function that the batch function calls
+        def side_effect(ticker):
+            if ticker == 'AAPL':
+                return {'ticker': 'AAPL', 'marketCap': 2.5e12}
+            elif ticker == 'FAIL':
+                # Simulate a complete failure for this ticker
+                return None
+            else:
+                return None
+
+        mock_get_core_financials.side_effect = side_effect
+
+        tickers_to_test = ['AAPL', 'FAIL']
+
+        # --- Act ---
+        results = financials_provider.get_batch_core_financials(tickers_to_test)
+
+        # --- Assert ---
+        # The mock function should have been called for each ticker in the batch
+        self.assertEqual(mock_get_core_financials.call_count, 2)
+        
+        # Verify the structure of the returned dictionary
+        self.assertIn('AAPL', results)
+        self.assertIn('FAIL', results)
+        
+        # Check the content for both the successful and failed tickers
+        self.assertIsNotNone(results['AAPL'])
+        self.assertEqual(results['AAPL']['marketCap'], 2.5e12)
+        self.assertIsNone(results['FAIL'])
+
     @patch('providers.yfin.financials_provider._fetch_financials_with_yfinance')
     @patch('providers.yfin.financials_provider.is_ticker_delisted', return_value=True)
     def test_get_core_financials_skips_delisted_ticker(self, mock_is_delisted, mock_primary_fetch):

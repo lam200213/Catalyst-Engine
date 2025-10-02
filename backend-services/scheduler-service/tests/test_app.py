@@ -20,10 +20,12 @@ class TestScheduler(unittest.TestCase):
     @patch('app._run_leadership_screening')
     @patch('app._run_vcp_analysis')
     @patch('app._run_trend_screening')
+    @patch('app.get_db_collections')
     @patch('app._get_all_tickers')
     def test_full_pipeline_success(
         self,
         mock_get_tickers,
+        mock_get_db,
         mock_trend_screen,
         mock_vcp_analysis,
         mock_leadership_screen,
@@ -34,6 +36,10 @@ class TestScheduler(unittest.TestCase):
         Ensures data flows correctly between mocked stages and the final results are stored.
         """
         # --- Arrange: Mock the return values for each stage of the screening funnel ---
+        mock_ticker_status_coll = MagicMock()
+        mock_ticker_status_coll.find.return_value = [] # No delisted tickers to remove
+        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+
         mock_get_tickers.return_value = (['TICKER_A', 'TICKER_B', 'TICKER_C'], None)
         mock_trend_screen.return_value = (['TICKER_A', 'TICKER_B'], None)
         
@@ -67,12 +73,14 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(json_data['trend_screen_survivors_count'], 2)
         self.assertEqual(json_data['vcp_survivors_count'], 1)
         self.assertEqual(json_data['final_candidates_count'], 1)
-        self.assertEqual(json_data['industry_diversity']['unique_industries_count'], 1) # Latest Add: Check nested structure
+        self.assertEqual(json_data['industry_diversity']['unique_industries_count'], 1) 
         self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
 
         # Verify that each stage was called with the output of the previous stage
         mock_get_tickers.assert_called_once()
-        mock_trend_screen.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B', 'TICKER_C'])
+        call_args, _ = mock_trend_screen.call_args
+        self.assertCountEqual(call_args[1], ['TICKER_A', 'TICKER_B', 'TICKER_C'])
+
         mock_vcp_analysis.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B'])
         mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, mock_vcp_analysis.return_value)
         
