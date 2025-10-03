@@ -128,11 +128,23 @@ class LeadershipProfileMetadata(BaseModel):
     """Execution metadata for a leadership screen."""
     execution_time: float
 
+class LeadershipSummary(BaseModel):
+    qualified_profiles: List[str]
+    message: str
+
+class ProfileDetail(BaseModel):
+    pass_status: bool = Field(..., alias='pass') # Use alias to allow 'pass' as field name
+    passed_checks: int
+    total_checks: int
+
+    model_config = ConfigDict(populate_by_name=True)
 
 class LeadershipProfileSingle(BaseModel):
     """Detailed breakdown of the leadership screen for one ticker."""
     ticker: str
-    passes: bool
+    passes: bool  # The overall pass/fail flag
+    leadership_summary: LeadershipSummary
+    profile_details: Dict[str, ProfileDetail]
     details: Dict[str, LeadershipMetricDetail]
     industry: Optional[str] = None
     metadata: LeadershipProfileMetadata
@@ -142,7 +154,7 @@ class LeadershipProfileForBatch(BaseModel):
     """Schema for candidates inside the leadership batch result."""
     ticker: str
     passes: bool
-    details: Dict[str, Any] # containing pass and message keys
+    leadership_summary: LeadershipSummary
     industry: Optional[str] = None
 
 
@@ -158,7 +170,6 @@ class LeadershipProfileBatch(BaseModel):
     passing_candidates: List[LeadershipProfileForBatch]
     unique_industries_count: int
     metadata: LeadershipProfileBatchMetadata
-
 
 # --- Contract 9: ScreeningJobResult ---
 class FinalCandidate(BaseModel):

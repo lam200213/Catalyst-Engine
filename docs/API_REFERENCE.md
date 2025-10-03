@@ -230,30 +230,43 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
    - **Example Success Response:**
     ```json
     {
-      "ticker": "AAPL",
+      "ticker": "NVDA",
       "passes": true,
-      "details": {
-        "is_small_to_mid_cap": {
+      "leadership_summary": {
+        "qualified_profiles": [
+          "Explosive Grower",
+          "Market Favorite"
+        ],
+        "message": "Qualifies as a Explosive Grower, Market Favorite with supporting characteristics in other profiles."
+      },
+      "profile_details": {
+        "explosive_grower": {
           "pass": true,
-          "message": "Market cap $2,8T is within the range of $300M to $10B."
+          "passed_checks": 4,
+          "total_checks": 4
         },
-        "is_recent_ipo": {
+        "high_potential_setup": {
           "pass": false,
-          "message": "IPO was 43.7 years ago, which is older than the 10-year threshold."
+          "passed_checks": 1,
+          "total_checks": 3
         },
-        "has_limited_float": {
-          "pass": false,
-          "message": "Float is 99.8%, which is above the 20% threshold."
-        },
-        "has_accelerating_growth": {
+        "market_favorite": {
           "pass": true,
-          "message": "All metrics (Earnings, Revenue, Margin) show accelerating quarter-over-quarter growth."
-        },
-        "is_industry_leader": {
-            "pass": true,
-            "rank": 1
+          "passed_checks": 2,
+          "total_checks": 2
         }
       },
+      "details": {
+        "is_small_to_mid_cap": {
+          "pass": false,
+          "message": "Market cap $2,220,000,000,000 is outside the required range."
+        },
+        "is_industry_leader": {
+          "pass": true,
+          "message": "Passes. Ticker ranks #1 out of 15 in its industry."
+        }
+      },
+      "industry": "Semiconductors",
       "metadata": {
         "execution_time": 0.458
       }
@@ -533,22 +546,41 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
   - **Example Success Response:**
       ```JSON
       {
-        "passing_candidates": [
-          {
-            "ticker": "AAPL",
-            "passes": true,
-            "details": {
-              "is_small_to_mid_cap": {
-                  "pass": true,
-                  "message": "Market cap is within the required range."
+        "tickers": ["NVDA", "AAPL", "TSLA"]
+      }
+      ```
+  - **Example Usage (from another service)**
+      ```PYTHON
+      import requests
+
+      leadership_service_url = "http://leadership-service:3005"
+      payload = {"tickers": ["NVDA", "CRWD"]}
+      response = requests.post(f"{leadership_service_url}/leadership/batch", json=payload)
+      ```
+  - **Example Success Response:**
+      ```JSON
+      {
+          "passing_candidates": [
+              {
+                  "ticker": "NVDA",
+                  "passes": true,
+                  "leadership_summary": {
+                      "qualified_profiles": ["Explosive Grower", "Market Favorite"],
+                      "message": "Qualifies as a Explosive Grower, Market Favorite with supporting characteristics in other profiles."
+                  },
+                  "profile_details": {
+                      "explosive_grower": { "pass": true, "passed_checks": 4, "total_checks": 4 },
+                      "high_potential_setup": { "pass": false, "passed_checks": 1, "total_checks": 3 },
+                      "market_favorite": { "pass": true, "passed_checks": 2, "total_checks": 2 }
+                  },
+                  "industry": "Semiconductors"
               }
-            }
+          ],
+          "unique_industries_count": 1,
+          "metadata": {
+              "total_processed": 2,
+              "total_passed": 1,
+              "execution_time": 5.123
           }
-        ],
-        "metadata": {
-          "total_processed": 2,
-          "total_passed": 1,
-          "execution_time": 1.234
-        }
       }
       ```

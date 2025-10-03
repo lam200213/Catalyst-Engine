@@ -210,19 +210,19 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
                         stock_decline = (stock_high - stock_current) / stock_high
 
             # Check if stock's decline is less than the S&P 500's decline
-            is_pass = sp500_decline > 0 and stock_decline < sp500_decline
+            shallow_decline = sp500_decline > 0 and stock_decline < sp500_decline
             message = f"Stock decline ({stock_decline:.1%}) is {'shallower' if is_pass else 'not shallower'} than S&P 500 decline ({sp500_decline:.1%})."
-            sub_results['shallow_decline'] = {"pass": is_pass, "message": message}
+            sub_results['shallow_decline'] = {"pass": shallow_decline, "message": message}
 
         elif is_recovery_phase:
             # New High Check During Market Recovery
             new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
-            is_pass = new_high_in_last_20d
+
             message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
                        f"a new 52-week high within 20 days of the turning point, {high_date}.")
 
             sub_results['new_52_week_high_last_20d'] = {
-                "pass": is_pass,
+                "pass": new_high_in_last_20d,
                 "high_date": high_date,
                 "message": message
             }
@@ -253,33 +253,58 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
                     "pass": recent_breakout,
                     "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
                 }
+            is_pass = any([new_high_in_last_20d, recent_breakout])
 
         elif market_trend_context in ['Bullish', 'Neutral']:
             # Check for new high in the last 20 days and during Market Recovery
             if turning_point_date:
                 new_high_in_20d_after_turn, _ = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
-                is_pass = new_high_in_20d_after_turn
 
                 message = (f"When market was in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
                         f"a new 52-week high within 20 days of the turning point.")
                 sub_results['new_52_week_high_after_turn'] = {
-                    "pass": is_pass,
+                    "pass": new_high_in_20d_after_turn,
                     "message": message
                 }
 
             new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20)
-            is_pass = new_high_in_last_20d
 
             message = (f"Stock {'showed' if is_pass else 'did not show'} "
                        f"recent strength by making a new 52-week high in the last 20 days, {high_date}.")
+            
             sub_results['new_52_week_high_last_20d'] = {
                 "pass": new_high_in_last_20d,
                 "high_date": high_date,
                 "message": message
             }
 
+            relative_strength_pass = False
+            rs_message = "Could not compare performance against S&P 500."
+            if stock_data and index_data.get('^GSPC') and len(stock_data) >= 252:
+                sp500_data = index_data['^GSPC']
+                sp500_high = sp500_data.get('high_52_week')
+                sp500_current = sp500_data.get('current_price')
+                
+                valid_highs = [d['high'] for d in stock_data[-252:] if d.get('high') is not None]
+                if valid_highs:
+                    stock_high = max(valid_highs)
+                    stock_current = stock_data[-1].get('close')
+
+                    if all(v is not None and isinstance(v, (int, float)) and v > 0 for v in [sp500_high, sp500_current, stock_high, stock_current]):
+                        sp500_drawdown = (sp500_high - sp500_current) / sp500_high
+                        stock_drawdown = (stock_high - stock_current) / stock_high
+                        relative_strength_pass = stock_drawdown < sp500_drawdown
+                        rs_message = f"Stock drawdown ({stock_drawdown:.1%}) is {'better' if relative_strength_pass else 'not better'} than S&P 500 ({sp500_drawdown:.1%})."
+            
+            sub_results['relative_strength_vs_sp500'] = {
+                "pass": relative_strength_pass,
+                "message": rs_message
+            }
+            is_pass = all([relative_strength_pass, new_high_in_last_20d])
+            if turning_point_date:
+                is_pass = is_pass and new_high_in_20d_after_turn
+
         # --- 3. Finalize Result ---
-        is_pass = any(sub.get('pass', False) for sub in sub_results.values())
         message = f"Market trend impact evaluated in {market_trend_context} context."
 
         details[metric_key] = {

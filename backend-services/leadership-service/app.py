@@ -12,7 +12,7 @@ from functools import partial
 from checks import industry_peer_checks
 from pydantic import ValidationError, TypeAdapter
 from typing import List
-from shared.contracts import CoreFinancials, PriceDataItem, LeadershipProfileSingle, LeadershipProfileBatch
+from shared.contracts import CoreFinancials, PriceDataItem, LeadershipProfileSingle, LeadershipProfileBatch, LeadershipProfileForBatch
 from data_fetcher import (
     fetch_financial_data,
     fetch_price_data,
@@ -320,7 +320,17 @@ def leadership_batch_analysis():
             for result in results_iterator:
                 # We only care about tickers that pass the screening and have no errors.
                 if 'error' not in result and result.get('passes', False):
-                    passing_candidates.append(result)
+                    # Construct the leaner object for the batch response
+                    # This ensures the output conforms to the LeadershipProfileForBatch contract.
+                    candidate_for_batch = {
+                        "ticker": result.get("ticker"),
+                        "passes": result.get("passes"),
+                        "leadership_summary": result.get("leadership_summary"),
+                        "profile_details": result.get("profile_details"),
+                        "industry": result.get("industry")
+                    }
+                    passing_candidates.append(candidate_for_batch)
+                    
                     if result.get('industry'):
                         unique_industries.add(result['industry'])
 
@@ -340,7 +350,7 @@ def leadership_batch_analysis():
     # Validate the final output against its own contract before sending
     try:
         validated_response = LeadershipProfileBatch.model_validate(response)
-        return jsonify(validated_response.model_dump())
+        return jsonify(validated_response.model_dump(by_alias=True))
     except ValidationError as e:
         app.logger.critical(f"Output contract violation for LeadershipProfileBatch: {e}")
         return jsonify({"error": "An internal error occurred while generating the batch response."}), 500
