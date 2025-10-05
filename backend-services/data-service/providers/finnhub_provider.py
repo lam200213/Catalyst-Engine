@@ -3,6 +3,17 @@ import finnhub
 import os
 import datetime as dt
 import time
+import threading
+from collections import deque
+
+import logging
+logger = logging.getLogger(__name__)
+
+# --- Thread-safe Rate Limiting Globals ---
+# A deque is efficient for adding/removing from both ends
+_finnhub_call_timestamps = deque()
+_finnhub_lock = threading.Lock()
+FINNHUB_MAX_CALLS_PER_MINUTE = 59 # Stay just under the limit of 60 calls per minute
 
 def get_stock_data(ticker: str) -> list | None:
     """
@@ -29,7 +40,7 @@ def get_stock_data(ticker: str) -> list | None:
 
         # Fetch candle data from Finnhub
         res = finnhub_client.stock_candles(ticker, 'D', start_ts, end_ts)
-        print(f"Finnhub API response for {ticker}: {res}")
+        logger.info(f"Finnhub API response for {ticker}: {res}")
 
         # Finnhub returns 'no_data' in the 's' field on failure.
         if res.get('s') == 'no_data' or 'c' not in res:
@@ -52,7 +63,7 @@ def get_stock_data(ticker: str) -> list | None:
         return standardized_data
         
     except Exception as e:
-        print(f"Error fetching data from Finnhub for {ticker}: {e}")
+        logger.error(f"Error fetching data from Finnhub for {ticker}: {e}")
         return None
 
 def get_company_peers_and_industry(ticker: str) -> dict | None:
@@ -65,6 +76,23 @@ def get_company_peers_and_industry(ticker: str) -> dict | None:
     Returns:
         A dictionary with 'industry' and 'peers' data, or None if an error occurs.
     """
+    global _finnhub_call_timestamps
+    with _finnhub_lock:
+        now = time.time()
+        # Remove timestamps older than 60 seconds
+        while _finnhub_call_timestamps and _finnhub_call_timestamps[0] < now - 60:
+            _finnhub_call_timestamps.popleft()
+
+        # If we have reached the limit, calculate wait time and sleep
+        if len(_finnhub_call_timestamps) >= FINNHUB_MAX_CALLS_PER_MINUTE:
+            oldest_call_time = _finnhub_call_timestamps[0]
+            wait_time = 60 - (now - oldest_call_time)
+            logger.info(f"Finnhub rate limit reached. Waiting for {wait_time:.2f} seconds...")
+            time.sleep(wait_time)
+        
+        # Record the timestamp of the current call
+        _finnhub_call_timestamps.append(time.time())
+
     try:
         api_key = os.getenv('FINNHUB_API_KEY')
         if not api_key:
@@ -83,5 +111,5 @@ def get_company_peers_and_industry(ticker: str) -> dict | None:
         }
         
     except Exception as e:
-        print(f"Error fetching company peers and industry from Finnhub for {ticker}: {e}")
+        logger.error(f"Error fetching company peers and industry from Finnhub for {ticker}: {e}")
         return None

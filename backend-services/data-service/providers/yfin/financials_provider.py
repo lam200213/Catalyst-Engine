@@ -166,7 +166,7 @@ def _fetch_financials_with_yfinance(ticker):
         'quarterly_earnings': quarterly_financials,
         'quarterly_financials': quarterly_financials, # Retained for compatibility
         # Also include the raw info object for complete debugging if needed
-        'raw_info': info 
+        'raw_info': stock
     }
 
     # --- LOGGING/SAVING BLOCK ---
@@ -196,17 +196,9 @@ def _fetch_financials_with_yfinance(ticker):
         logger.error(f"Failed to save yfinance fetch log for {ticker}: {log_e}")
     # --- END LOGGING/SAVING BLOCK ---
 
-    # Consolidate all data into the final dictionary.
-    return {
-        'ticker': ticker,
-        'marketCap': info.get('marketCap'),
-        'sharesOutstanding': info.get('sharesOutstanding'),
-        'floatShares': info.get('floatShares'),
-        'ipoDate': ipo_date, # Use the processed date
-        'annual_earnings': annual_financials,
-        'quarterly_earnings': quarterly_financials,
-        'quarterly_financials': quarterly_financials,
-    }
+    # Return the final data object
+    del final_data_object['raw_info']
+    return final_data_object
     
 @yahoo_client.retry_on_failure(attempts=3, delay=3, backoff=2)
 def _fetch_financials_with_fallback(ticker_symbol, start_time):

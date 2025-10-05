@@ -45,6 +45,7 @@ class CoreFinancials(BaseModel):
     marketCap: Optional[float] = 0
     sharesOutstanding: Optional[float] = 0
     floatShares: Optional[float] = 0
+    industry: Optional[str] = None
     ipoDate: Optional[str] = None
     annual_earnings: List[EarningItem]
     quarterly_earnings: List[EarningItem]
@@ -155,6 +156,7 @@ class LeadershipProfileForBatch(BaseModel):
     ticker: str
     passes: bool
     leadership_summary: LeadershipSummary
+    profile_details: Dict[str, ProfileDetail]
     industry: Optional[str] = None
 
 

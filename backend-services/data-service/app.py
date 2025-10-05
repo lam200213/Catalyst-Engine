@@ -394,7 +394,7 @@ def get_data(ticker: str):
         return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
 
 # Helper function for caching news data as a dict.
-@cache.cached(timeout=NEWS_CACHE_TTL, key_prefix='news_%s')
+@cache.cached(timeout=NEWS_CACHE_TTL, key_prefix='news_%s', unless=lambda result: result is None)
 def get_news_cached(ticker: str):
     """Helper function that fetches and returns news data (dict). Cachable."""
     app.logger.info(f"DATA-SERVICE: Cache MISS for news: {ticker}")
@@ -437,13 +437,15 @@ def clear_cache():
         return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
     
 # Helper function for caching industry/peers data as a dict.
-@cache.cached(timeout=INDUSTRY_CACHE_TTL, key_prefix='peers_%s')
+@cache.cached(timeout=INDUSTRY_CACHE_TTL, key_prefix='peers_%s', unless=lambda result: result is None)
 def get_industry_peers_cached(ticker: str):
     """Helper function that fetches and returns industry/peers data (dict). Cachable."""
     app.logger.info(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
     data = finnhub_provider.get_company_peers_and_industry(ticker)
     if data:
         app.logger.info(f"CACHE INSERT for industry/peers: {ticker}")
+    else:
+        app.logger.warning(f"DATA-SERVICE: Provider returned NO peer data for {ticker}. Will not cache this null result.")
     return data
 
 @app.route('/industry/peers/<path:ticker>', methods=['GET'])

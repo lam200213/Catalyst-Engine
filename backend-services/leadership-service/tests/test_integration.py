@@ -140,11 +140,12 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         sent_payload = mock_session_post.call_args[1]['json']
         self.assertEqual(sent_payload, {'dates': ['2025-08-25', '2025-08-26', '2025-08-27']})
 
+    @patch('app.fetch_peer_data')
     @patch('app.fetch_batch_price_data')
     @patch('app.fetch_batch_financials')
     @patch('app.fetch_general_data_for_analysis') # Patched the correct higher-level function
     @patch('app.analyze_ticker_leadership')       # Patched the correct function name
-    def test_leadership_batch_endpoint(self, mock_analyze, mock_fetch_general, mock_fetch_financials_batch, mock_fetch_price_batch):
+    def test_leadership_batch_endpoint(self, mock_analyze, mock_fetch_general, mock_fetch_financials_batch, mock_fetch_price_batch, mock_fetch_peers):
         """
         Integration Test: Batch endpoint correctly processes lists and returns only passing candidates.
         """
@@ -170,6 +171,7 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         
         # 2. Mock the batch data fetching functions
         mock_fetch_general.return_value = (create_mock_index_data(), [{'trend': 'Bullish'}] * 365)
+        mock_fetch_peers.return_value = ({'industry': 'Tech', 'peers': []}, None)
         
         # Ensure the mock data includes the 'ticker' field required by the contract
         mock_financials = {
@@ -205,17 +207,20 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         self.assertEqual(len(data['passing_candidates']), 1)
         self.assertEqual(data['passing_candidates'][0]['ticker'], 'PASS1')
 
+    @patch('app.fetch_batch_financials')
+    @patch('app.fetch_peer_data')
     @patch('app.fetch_general_data_for_analysis') # Patched the correct higher-level function
     @patch('app.fetch_price_data')
     @patch('app.fetch_financial_data')
-    def test_leadership_endpoint_handles_data_contract_violation(self, mock_fetch_financials, mock_fetch_price, mock_fetch_general):
+    def test_leadership_endpoint_handles_data_contract_violation(self, mock_fetch_financials, mock_fetch_price, mock_fetch_general, mock_fetch_peers, mock_fetch_batch_financials):
         """
         Consumer Test: Service correctly rejects payloads from data-service that violate the contract.
         """
         # --- Arrange ---
         # 1. Mock general data fetches to isolate the target error
         mock_fetch_general.return_value = (create_mock_index_data(), [{'trend': 'Bullish'}] * 365)
-        
+        mock_fetch_peers.return_value = ({'industry': 'Software', 'peers': []}, None)
+
         # 2. Mock valid price data to isolate the financial data failure
         mock_price, _ = create_mock_price_data(performance_factor=1.0)
         mock_fetch_price.return_value = (mock_price, 200)
@@ -225,6 +230,8 @@ class TestLeadershipScreeningIntegration(unittest.TestCase):
         del invalid_financials['quarterly_earnings']  # This violates the CoreFinancials contract
         mock_fetch_financials.return_value = (invalid_financials, 200)
         
+        mock_fetch_batch_financials.return_value = ({'success': {'INVALID-CONTRACT': invalid_financials}}, None)
+
         # --- Act ---
         response = self.app.get('/leadership/INVALID-CONTRACT')
         data = response.json
