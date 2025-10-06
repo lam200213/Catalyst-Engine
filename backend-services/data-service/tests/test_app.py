@@ -17,6 +17,7 @@ class BaseDataServiceTest(unittest.TestCase):
     """
     def setUp(self):
         app.config['TESTING'] = True
+        app.config['CACHE_KEY_PREFIX'] = 'flask_cache_'
         self.client = app.test_client()
 
         # Patch the persistent database client (for market_trends)
@@ -28,6 +29,9 @@ class BaseDataServiceTest(unittest.TestCase):
         # Patch the cache client used for all caching operations
         self.cache_patcher = patch('app.cache')
         self.mock_cache = self.cache_patcher.start()
+        # The app uses `cache.cache._write_client`, so we must mock that specific path.
+        self.mock_redis_client = self.mock_cache.cache._write_client = MagicMock()
+
 
     def tearDown(self):
         self.db_patcher.stop()
@@ -636,6 +640,43 @@ class TestNewsEndpoint(BaseDataServiceTest):
 
 class TestIndustryPeersEndpoint(BaseDataServiceTest):
 
+    @patch('app.finnhub_provider.get_company_peers_and_industry')
+    def test_industry_peers_endpoint_with_real_cache(self, mock_get_peers):
+        """
+        Tests that the /industry/peers endpoint correctly caches its response.
+        """
+        # Temporarily stop the global cache mock from the base class to test the real cache decorator
+        self.cache_patcher.stop()
+        
+        # Need to get the real cache object from the app context
+        from app import cache
+        cache.clear() # Ensure a clean slate for the test
+
+        try:
+            # --- Arrange ---
+            ticker = 'AAPL'
+            mock_peer_data = {'industry': 'Technology', 'peers': ['MSFT', 'GOOG']}
+            mock_get_peers.return_value = mock_peer_data
+
+            # --- Act ---
+            # First call: should be a cache MISS, calling the provider
+            response1 = self.client.get(f'/industry/peers/{ticker}')
+            # Second call: should be a cache HIT, provider should not be called again
+            response2 = self.client.get(f'/industry/peers/{ticker}')
+
+            # --- Assert ---
+            self.assertEqual(response1.status_code, 200)
+            self.assertEqual(response1.json, mock_peer_data)
+            self.assertEqual(response2.status_code, 200)
+            self.assertEqual(response2.json, mock_peer_data)
+
+            # The crucial assertion: prove the provider was only called ONCE for two requests.
+            mock_get_peers.assert_called_once_with(ticker)
+        
+        finally:
+            # Restart the patcher to not interfere with other tests
+            self.cache_patcher.start()
+
     @patch('app.get_industry_peers_cached')
     def test_get_industry_peers_success_cache_miss(self, mock_get_industry_peers_cached):
         """GET /industry/peers/<ticker>: Tests cache miss."""
@@ -776,13 +817,59 @@ class TestMarketTrendEndpoints(BaseDataServiceTest):
 # =====================================================================
 class TestSystemEndpoints(BaseDataServiceTest):
 
-    def test_clear_cache_endpoint(self):
-        """POST /cache/clear: Tests that the endpoint calls cache.clear()"""
-        response = self.client.post('/cache/clear')
+    def test_clear_cache_all_default(self):
+        """POST /cache/clear: Tests clearing all caches with an empty payload."""
+        response = self.client.post('/cache/clear', json={})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, {"message": "All data service caches have been cleared."})
+        self.assertIn("All data service caches have been cleared.", response.json['message'])
         self.mock_cache.clear.assert_called_once()
+        self.mock_redis_client.keys.assert_not_called()
 
+    def test_clear_cache_all_explicit(self):
+        """POST /cache/clear: Tests clearing all caches with 'type': 'all'."""
+        response = self.client.post('/cache/clear', json={'type': 'all'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("All data service caches have been cleared.", response.json['message'])
+        self.mock_cache.clear.assert_called_once()
+        self.mock_redis_client.keys.assert_not_called()
+
+    def test_clear_cache_specific_type_success(self):
+        """POST /cache/clear: Tests clearing a specific cache type successfully."""
+        cache_type_to_clear = 'industry'
+        # redis-py returns keys as bytes
+        redis_keys = [b'flask_cache_peers_NVDA', b'flask_cache_peers_AMD']
+        self.mock_redis_client.keys.return_value = redis_keys
+        
+        response = self.client.post('/cache/clear', json={'type': cache_type_to_clear})
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(f"Cleared {len(redis_keys)} entries from the '{cache_type_to_clear}' cache.", response.json['message'])
+        self.assertEqual(response.json['keys_deleted'], len(redis_keys))
+        
+        # Check correct pattern was used (user 'industry' maps to 'peers_*')
+        self.mock_redis_client.keys.assert_called_once_with('flask_cache_peers_*')
+        self.mock_redis_client.delete.assert_called_once_with(*redis_keys)
+        self.mock_cache.clear.assert_not_called()
+
+    def test_clear_cache_specific_type_no_keys_found(self):
+        """POST /cache/clear: Tests clearing a specific cache type when no keys are found."""
+        cache_type_to_clear = 'news'
+        self.mock_redis_client.keys.return_value = [] # No keys found
+        
+        response = self.client.post('/cache/clear', json={'type': cache_type_to_clear})
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No entries found", response.json['message'])
+        self.assertEqual(response.json['keys_deleted'], 0)
+        self.mock_redis_client.keys.assert_called_once_with('flask_cache_news_*')
+        self.mock_redis_client.delete.assert_not_called()
+
+    def test_clear_cache_invalid_type(self):
+        """POST /cache/clear: Tests request with an invalid cache type."""
+        response = self.client.post('/cache/clear', json={'type': 'invalid_type'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json)
+        self.assertIn("Invalid cache type 'invalid_type'", response.json['error'])
 
 if __name__ == '__main__':
     unittest.main()

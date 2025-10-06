@@ -61,6 +61,11 @@ except Exception as e:
     db = None
 # --- End of Persistent DB Client Setup ---
 
+# --- Custom Exceptions ---
+class ProviderNoDataError(Exception):
+    """Custom exception raised when a data provider returns no data."""
+    pass
+
 # --- Logging Setup ---
 def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
@@ -423,30 +428,74 @@ def get_news(ticker: str):
 @app.route('/cache/clear', methods=['POST'])
 def clear_cache():
     """
-    Manually drops the price and news cache collections from MongoDB.
-    This is useful for forcing a data refresh after deploying application updates.
+    Manually clears specified application caches from Redis.
+    - If no type is specified or type is 'all', clears all caches.
+    - If a type ('price', 'news', 'financials', 'industry') is specified,
+      clears only that cache.
     """
+    app.logger.info(f"Received /cache/clear request with payload: {request.get_json(silent=True)}")
+    payload = request.get_json(silent=True) or {}
+    cache_type = payload.get('type')
+
     try:
-        cache.clear()
-        app.logger.info("Cleared all application caches.")
-        # The market_trends collection is persistent storage, not a cache, so it is managed separately.
-        # It can be cleared if needed using direct DB access, but is excluded from the general cache clear.
-        return jsonify({"message": "All data service caches have been cleared."}), 200
+        if not cache_type or cache_type == 'all':
+            cache.clear()
+            message = "All data service caches have been cleared."
+            # The market_trends collection is persistent storage, not a cache, so it is managed separately.
+            # It can be cleared if needed using direct DB access, but is excluded from the general cache clear.
+            app.logger.info(message)
+            return jsonify({"message": message}), 200
+
+        valid_types = {
+            'price': 'price_*',
+            'news': 'news_*',
+            'financials': 'financials_*',
+            'industry': 'peers_*'  # User 'industry' maps to internal 'peers_' prefix
+        }
+
+        if cache_type not in valid_types:
+            return jsonify({
+                "error": f"Invalid cache type '{cache_type}'. Valid types are: {list(valid_types.keys())} or 'all'."
+            }), 400
+        
+        # Get config from the Flask app object, not the cache object.
+        prefix = app.config.get("CACHE_KEY_PREFIX", "flask_cache_")
+        pattern = f"{prefix}{valid_types[cache_type]}"
+
+        # Use the underlying redis client
+        redis_client = cache.cache._write_client
+        keys_to_delete = redis_client.keys(pattern)
+
+        if keys_to_delete:
+            redis_client.delete(*keys_to_delete)
+            message = f"Cleared {len(keys_to_delete)} entries from the '{cache_type}' cache."
+            app.logger.info(message)
+            return jsonify({"message": message, "keys_deleted": len(keys_to_delete)}), 200
+        else:
+            message = f"No entries found in the '{cache_type}' cache to clear."
+            app.logger.info(message)
+            return jsonify({"message": message, "keys_deleted": 0}), 200
+
     except Exception as e:
         app.logger.error(f"Error clearing cache: {e}", exc_info=True)
         return jsonify({"error": "Failed to clear caches.", "details": str(e)}), 500
+
     
 # Helper function for caching industry/peers data as a dict.
-@cache.cached(timeout=INDUSTRY_CACHE_TTL, key_prefix='peers_%s', unless=lambda result: result is None)
+@cache.cached(timeout=INDUSTRY_CACHE_TTL, key_prefix='peers_%s')
 def get_industry_peers_cached(ticker: str):
-    """Helper function that fetches and returns industry/peers data (dict). Cachable."""
+    """
+    Helper function that fetches industry/peers data.
+    Raises ProviderNoDataError if the provider returns no data.
+    """
     app.logger.info(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
     data = finnhub_provider.get_company_peers_and_industry(ticker)
-    if data:
+    if data and data.get('peers'):
         app.logger.info(f"CACHE INSERT for industry/peers: {ticker}")
+        return data
     else:
-        app.logger.warning(f"DATA-SERVICE: Provider returned NO peer data for {ticker}. Will not cache this null result.")
-    return data
+        app.logger.warning(f"DATA-SERVICE: Provider returned NO peer data for {ticker}. Will not cache.")
+        raise ProviderNoDataError(f"No peer data found for {ticker}")
 
 @app.route('/industry/peers/<path:ticker>', methods=['GET'])
 def get_industry_peers(ticker: str):

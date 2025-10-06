@@ -178,6 +178,10 @@ def _fetch_financials_with_yfinance(ticker):
         os.makedirs(ticker_log_dir, exist_ok=True)
         file_path = os.path.join(ticker_log_dir, f"{ticker}.json")
         
+        # Create a serializable copy of the data and remove the raw_info object
+        serializable_data = final_data_object.copy()
+        del serializable_data['raw_info']
+
         # Write the 'final_data_object' to the JSON file.
         with open(file_path, 'w') as f:
             # Use a custom encoder to handle potential non-serializable data like NaN
@@ -188,7 +192,7 @@ def _fetch_financials_with_yfinance(ticker):
                     if isinstance(obj, (pd.Timestamp, dt.datetime, dt.date)):
                         return obj.isoformat()  # Or str(obj) for a simple string representation
                     return json.JSONEncoder.default(self, obj)
-            json.dump(final_data_object, f, indent=4, cls=CustomEncoder)
+            json.dump(serializable_data, f, indent=4, cls=CustomEncoder)
             
         logger.debug(f"Successfully saved complete financial data for {ticker} to {file_path}")
 

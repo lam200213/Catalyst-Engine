@@ -59,19 +59,39 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **POST `/cache/clear`**  
   - Proxies to: data-service
-  - Purpose: Manually clears all cached data (prices and news) from the MongoDB database. This is a developer utility to ensure fresh data is fetched from source APIs after deploying code changes.
-
+  - Purpose: Manually clears cached data from Redis. This is a developer utility to force a refresh of data from source APIs. It can clear all caches or a specific type of cache.
   - **Data Contract:** N/A
+  - **Request Body (JSON, optional):**
+    - Specify a `type` to clear a specific cache. If the body is omitted or `type` is `"all"`, all caches are cleared.
+    - Valid types: `"price"`, `"news"`, `"financials"`, `"industry"`.
   - **Example Usage:**
       ```Bash
         curl -X POST http://localhost:3000/cache/clear
       ```
-
   - **Example Success Response:**
       ```JSON
       {
         "message": "All data service caches have been cleared."
       }
+  - **Example Usage (Clear only price cache):**
+      ```bash
+      curl -X POST http://localhost:3000/cache/clear \
+        -H "Content-Type: application/json" \
+        -d '{"type": "price"}'
+      ```
+  - **Example Success Response (Specific):**
+      ```json
+      {
+        "message": "Cleared 1542 entries from the 'price' cache.",
+        "keys_deleted": 1542
+      }
+      ```
+  - **Example Error Response (Invalid Type):**
+      ```json
+      {
+        "error": "Invalid cache type 'invalid_type'. Valid types are: ['price', 'news', 'financials', 'industry'] or 'all'."
+      }
+      ```
 
 - **GET `/screen/:ticker`**
   - Proxies to the Screening Service.
