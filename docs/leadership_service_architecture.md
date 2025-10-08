@@ -56,130 +56,70 @@ flowchart TD
 
 3. **Data Fetching (data_fetcher.py)**: The service's dedicated data client fetches all necessary data from the data-service in parallel, including core financials, historical prices, industry peers, and market trend context.
 
-4. **Analysis Orchestration (helper_functions.py)**: The main analyze_ticker_leadership function receives the aggregated data. It then systematically executes all 10 leadership checks.
+4. **Analysis Orchestration (helper_functions.py)**: The main analyze_ticker_leadership function receives the aggregated data. It systematically executes all 9 leadership checks.
 
 5. **Logic Execution (checks/*.py)**: Each check is performed by a dedicated function within the appropriate module, returning a detailed pass/fail result with a descriptive message.
 
-6. **Response Aggregation**: The orchestrator compiles the results from all checks into a final JSON object, determines the overall passes status, and returns it to the API layer.
+6. **Profile Evaluation**: The orchestrator evaluates the results against three predefined Leadership Profiles ("Explosive Grower," "High Potential Setup," "Market Favorite") using a two-tiered logic. A stock must pass 100% of the checks in at least one profile and at least one check in the other supporting profiles to achieve an overall pass.
 
-7. **Contract Validation**: Before sending the final HTTP response, the output data is validated against the formal Pydantic data contracts (LeadershipProfileSingle or LeadershipProfileBatch) to ensure system-wide data integrity.
+7. **Response Aggregation**: The orchestrator compiles the results from all checks, the profile evaluation, and a summary message into a final JSON object, determines the overall passes status, and returns it to the API layer.
 
-## 3. Core Modules & Responsibilities
+8. **Contract Validation**: Before sending the final HTTP response, the output data is validated against the formal Pydantic data contracts (LeadershipProfileSingle or LeadershipProfileBatch) to ensure system-wide data integrity.
 
-### app.py
+## 3. Leadership Metrics Deep Dive
+A stock is evaluated against 9 distinct metrics which are grouped into three Leadership Profiles. To be considered a leadership candidate, a stock must meet a two-tiered passing **Logic**:
 
-**Role**: API Layer & Request Handler.
+**Primary Pass Condition**: Achieve a 100% pass rate on all criteria within at least one of the three profiles.
 
-**Responsibilities**:
+**Supporting Pass Condition**: For the remaining profiles, the stock must pass at least one criterion in each to show supporting characteristics.
 
-- Defines all Flask routes (/leadership/<ticker>, /leadership/batch, /leadership/industry_rank/<ticker>, /health).
-- Handles incoming HTTP requests, including parsing JSON payloads and URL parameters.
-- Implements robust input validation to prevent common vulnerabilities (e.g., path traversal).
-- Orchestrates the high-level workflow by calling the data_fetcher and helper_functions.
-- Manages concurrent processing for batch requests using a ThreadPoolExecutor.
-- Sets up and configures structured, thread-safe logging with ticker context.
-- Validates final outgoing responses against Pydantic contracts.
+### Profile 1: The "Explosive Grower" 🚀
+Identifies companies with outstanding financial performance and momentum.
 
-### data_fetcher.py
-
-**Role**: Dedicated Service Client.
-
-**Responsibilities**:
-
-- Manages all communication with the upstream data-service.
-- Implements resilient data fetching logic using a shared requests.Session with connection pooling and an automatic retry strategy.
-- Contains specific functions for each required data type:
-  - fetch_financial_data, fetch_batch_financials
-  - fetch_price_data, fetch_batch_price_data
-  - fetch_peer_data
-  - fetch_index_data, fetch_market_trends
-- Abstracts away the complexities of HTTP requests from the main application logic.
-
-### helper_functions.py
-
-**Role**: Analysis Orchestrator & Utility Hub.
-
-**Responsibilities**:
-
-- Contains the primary analyze_ticker_leadership function, which serves as the central orchestrator for running all 10 leadership checks.
-- Houses the validate_data_contract utility function, providing a single, consistent way to enforce Pydantic contracts on data received from the data-service.
-- Includes the fetch_general_data_for_analysis function to efficiently retrieve market context data (indices, trends) common to all analyses.
-
-### checks/ Directory
-
-This module contains the core business logic, with each file dedicated to a specific category of analysis.
-
-- **financial_health_checks.py**: Performs checks related to the company's intrinsic financial characteristics (e.g., market cap, IPO date, float, earnings growth).
-- **market_relative_checks.py**: Compares the stock's performance and behavior against the broader market context (e.g., performance during rallies, reaction to market trends).
-- **industry_peer_checks.py**: Analyzes the stock's standing within its specific industry by ranking it against its peers on key metrics.
-- **utils.py**: Provides common utility functions for the check modules, such as the failed_check helper for creating consistent failure responses.
-
-## 4. Leadership Metrics Deep Dive
-
-A stock must pass all applicable metrics to be considered a leadership candidate.
-
-### 1. Small to Mid-Cap ($300M–$10B)
-
-**Logic**: Leadership profiles are typically found in companies with significant room for growth.
-
-**Function**: check_is_small_to_mid_cap
-
-**Implementation**: Checks if the company's marketCap is between $300 million and $10 billion.
-
-### 2. Early-Stage Company (≤10 Years Post-IPO)
-
-**Logic**: Younger, innovative companies often exhibit the most explosive growth.
-
-**Function**: check_is_early_stage
-
-**Implementation**: Calculates the number of years since the company's ipoDate. Passes if the result is 10 years or less.
-
-### 3. Limited Float
-
-**Logic**: A smaller supply of available shares (float) can lead to more powerful price moves when demand increases.
-
-**Function**: check_has_limited_float
-
-**Implementation**: Passes if the company's floatShares is less than 100 million, categorizing it as "Low" or "Medium" float.
-
-### 4. Accelerating Growth (EPS, Sales, Margin)
-
+#### 1. Accelerating Growth (EPS, Sales, Margin)
 **Logic**: True leaders show not just growth, but accelerating growth.
-
 **Function**: check_accelerating_growth
+**Implementation**: Calculates the Quarter-over-Quarter (QoQ) growth rates for Earnings, Revenue, and Net Margin for the last 3 quarters. Passes only if all three metrics show strictly increasing growth rates over this period. Capped or incalculable rates are handled gracefully.
 
-**Implementation**: Calculates the Quarter-over-Quarter (QoQ) growth rates for Earnings, Revenue, and Net Margin for the last 3 quarters. Passes only if all three metrics show strictly increasing growth rates over this period.
-
-### 5. Strong YoY EPS Growth (>25%)
-
+#### 2. Strong YoY EPS Growth (>25%)
 **Logic**: Demonstrates strong annual momentum in profitability.
-
 **Function**: check_yoy_eps_growth
-
 **Implementation**: Compares the most recent quarter's Earnings Per Share (EPS) to the same quarter from the previous year. Passes if the growth is greater than 25%. Growth rates are highlighted as "Standard," "High," or "Exceptional."
 
-### 6. Consecutive Quarterly Growth (>20%)
-
+#### 3. Consecutive Quarterly Growth (>20%)
 **Logic**: Indicates sustained, high-velocity growth in recent periods.
-
 **Function**: check_consecutive_quarterly_growth
-
 **Implementation**: Calculates the QoQ EPS growth for each of the last 4 quarters. Passes if all four quarters individually show growth greater than 20%.
 
-### 7. Positive Recent Earnings
-
+#### 4. Positive Recent Earnings
 **Logic**: The company must be profitable.
-
 **Function**: check_positive_recent_earnings
-
 **Implementation**: Checks if the EPS for both the most recent quarter and the last full fiscal year are positive.
 
-### 8. Market Trend Alignment
+### Profile 2: The "High-Potential Setup" 💡
+Identifies companies with structural characteristics that often precede explosive price moves.
 
+#### 5. Small to Mid-Cap ($300M–$10B)
+**Logic**: Leadership profiles are typically found in companies with significant room for growth.
+**Function**: check_is_small_to_mid_cap
+**Implementation**: Checks if the company's marketCap is between $300 million and $10 billion.
+
+#### 6. Early-Stage Company (≤10 Years Post-IPO)
+**Logic**: Younger, innovative companies often exhibit the most explosive growth.
+**Function**: check_is_early_stage
+**Implementation**: Calculates the number of years since the company's ipoDate. Passes if the result is 10 years or less.
+
+#### 7. Limited Float
+**Logic**: A smaller supply of available shares (float) can lead to more powerful price moves when demand increases.
+**Function**: check_has_limited_float
+**Implementation**: Passes if the company's floatShares is less than 100 million, categorizing it as "Low" or "Medium" float.
+
+### Profile 3: The "Market Favorite" ⭐
+Identifies companies demonstrating leadership and attracting institutional attention.
+
+#### 8. Market Trend Alignment
 **Logic**: The stock's behavior should be strong relative to the overall market's condition.
-
 **Function**: evaluate_market_trend_impact
-
 **Implementation**:
 
 - Determines Market Context: Classifies the current market as 'Bullish', 'Bearish', or 'Neutral' based on recent trend data.
@@ -188,7 +128,7 @@ A stock must pass all applicable metrics to be considered a leadership candidate
   - In a Bullish or Neutral market, it passes if the stock has recently made a new 52-week high, indicating leadership.
   - In a Recovery Phase (just after a market bottom), it passes if the stock makes a new high within 20 days of the market's turning point.
 
-### 9. Industry Leadership (Top 3 Rank)
+#### 9. Industry Leadership (Top 3 Rank)
 
 **Logic**: A true leader must be one of the top performers in its specific industry.
 

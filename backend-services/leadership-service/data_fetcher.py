@@ -90,17 +90,7 @@ def fetch_index_data():
     """Fetch major index data from data service"""
     # Fetch data for all three major indices for market trend context
     indices = ['^GSPC', '^DJI', '^IXIC']
-    index_data = {}
-    for index in indices:
-        try:
-            url = f"{DATA_SERVICE_URL}/financials/core/{index}"
-            response = session.get(url, timeout=10)
-            response.raise_for_status()
-            index_data[index] = response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching index data for {index} after retries: {e}")
-            index_data[index] = {}
-            
+    index_data = fetch_batch_price_data(indices)            
     return index_data
 
 def fetch_peer_data(ticker):

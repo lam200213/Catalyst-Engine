@@ -64,6 +64,12 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data, details)
               or an error message if data cannot be processed.
     """
     metric_key = 'is_industry_leader'
+    # Add a guard clause to gracefully handle missing peer data
+    if not peers_data:
+        logger.warning(f"Skipping industry leadership check for {ticker}: No peer data was provided.")
+        details.update(failed_check(metric_key, "Skipped. Peer data could not be fetched from the upstream service."))
+        return
+
     try:
         # -- data handling -- 
         industry_name = peers_data.get("industry")

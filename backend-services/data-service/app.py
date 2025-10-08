@@ -490,12 +490,22 @@ def get_industry_peers_cached(ticker: str):
     """
     app.logger.info(f"DATA-SERVICE: Cache MISS for industry/peers: {ticker}")
     data = finnhub_provider.get_company_peers_and_industry(ticker)
+    
+    # If the provider had a total failure, it returns None.
+    if data is None:
+        app.logger.warning(f"DATA-SERVICE: Provider returned None for {ticker}. Caching default empty result.")
+        raise ProviderNoDataError(f"No peer data found for {ticker}")
+
+    # If the provider returned data but the peers list is empty, log it.
+    if not data.get("peers"):
+        app.logger.warning(f"DATA-SERVICE: Provider returned data with an empty peer list for {ticker}. This is now a valid, non-error state.")
+
     if data and data.get('peers'):
         app.logger.info(f"CACHE INSERT for industry/peers: {ticker}")
         return data
-    else:
-        app.logger.warning(f"DATA-SERVICE: Provider returned NO peer data for {ticker}. Will not cache.")
-        raise ProviderNoDataError(f"No peer data found for {ticker}")
+
+    # In all successful cases (with or without peers), return the data.
+    return data
 
 @app.route('/industry/peers/<path:ticker>', methods=['GET'])
 def get_industry_peers(ticker: str):
@@ -506,6 +516,10 @@ def get_industry_peers(ticker: str):
         return jsonify({"error": "Invalid ticker format"}), 400
 
     data = get_industry_peers_cached(ticker)
+
+    if not data or not data.get("peers"):
+        app.logger.warning(f"Finnhub returned no peers for {ticker}. Returning None as per service logic.")
+        return jsonify({"error": f"No industry peers found for ticker {ticker}"}), 404
 
     # Filter out delisted tickers from the peer list.
     if data and data.get('peers'):

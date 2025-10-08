@@ -145,7 +145,8 @@ def leadership_analysis(ticker):
 
         peers_data_raw, peer_error = fetch_peer_data(ticker)
         if peer_error:
-            return jsonify({'error': peer_error[0]}), peer_error[1]
+            app.logger.warning(f"Could not fetch peer data for {ticker}: {peer_error[0]}. Proceeding without industry check.")
+            peers_data_raw = {}  # Use an empty dict to signal failure downstream
 
         # Fetch financials for the ticker and all its peers
         all_related_tickers = [ticker] + peers_data_raw.get('peers', [])
@@ -273,18 +274,17 @@ def leadership_batch_analysis():
     # --- 5. Prepare Analysis Tasks (CPU-Bound) ---
     analysis_tasks = []
     for ticker in sanitized_tickers:
-        # A ticker is viable for analysis only if we have its own price data,
-        # its own financial data, AND its peer data.
+        # A ticker is viable if we have its own price and financial data. Peer data is optional.
         if ticker in successful_prices and ticker in successful_financials and ticker in peers_map:
             task = {
                 "ticker": ticker,
                 "financial_data": successful_financials[ticker],
                 "stock_data": successful_prices[ticker],
-                "peers_data": peers_map[ticker]
+                "peers_data": peers_map.get(ticker, {}) # Pass peer data if available, otherwise pass an empty dict
             }
             analysis_tasks.append(task)
         else:
-            app.logger.warning(f"Skipping {ticker} from analysis due to missing price, own financial, or peer data.")
+            app.logger.warning(f"Skipping {ticker} from analysis due to missing its own price or financial data.")
 
     # --- 6. Execute Analysis in Parallel ---
     passing_candidates = []

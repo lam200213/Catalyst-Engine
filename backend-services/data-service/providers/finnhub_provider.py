@@ -102,6 +102,12 @@ def get_company_peers_and_industry(ticker: str) -> dict | None:
         
         peers = finnhub_client.company_peers(ticker)
 
+        # If the external API returns an empty list for peers,
+        # we treat it as "no data" and return None. This aligns with the
+        # upstream service's business logic which requires tickers to have peer data.
+        if not peers:
+            logger.warning(f"Finnhub returned no peers for {ticker}. Returning None as per service logic.")
+
         profile = finnhub_client.company_profile2(symbol=ticker)
         industry = profile.get('finnhubIndustry') if profile else None
         

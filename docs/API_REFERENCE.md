@@ -82,8 +82,8 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
   - **Example Success Response (Specific):**
       ```json
       {
+        "keys_deleted": 1542,
         "message": "Cleared 1542 entries from the 'price' cache.",
-        "keys_deleted": 1542
       }
       ```
   - **Example Error Response (Invalid Type):**

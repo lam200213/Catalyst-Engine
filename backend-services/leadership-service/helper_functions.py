@@ -73,6 +73,9 @@ def analyze_ticker_leadership(ticker, index_data, market_trends_data, financial_
     if not financial_data:
         logger.error(f"Missing financial data for {ticker} in analysis function.")
         return {'ticker': ticker, 'error': 'Missing financial data for analysis', 'status': 400}
+    
+    if not peers_data or not peers_data.get("peers"):
+        logger.warning(f"No peer data available for {ticker}. Skipping industry leadership check.")
 
     # --- DEBUGGING BLOCK ---
     # Print the exact data received to the container's logs
