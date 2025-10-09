@@ -92,6 +92,7 @@ Provides essential, high-level fundamental data points for a single stock ticker
         "marketCap": { "title": "Marketcap", "type": ["number", "null"], "default": 0 },
         "sharesOutstanding": { "title": "Sharesoutstanding", "type": ["number", "null"], "default": 0 },
         "floatShares": { "title": "Floatshares", "type": ["number", "null"], "default": 0 },
+        "industry": { "title": "Industry", "type": ["string", "null"] },
         "ipoDate": { "title": "Ipodate", "type": ["string", "null"] },
         "annual_earnings": {
           "title": "Annual Earnings",
@@ -302,6 +303,12 @@ Contains the result of the leadership screening for a single ticker. The format 
       "properties": {
         "ticker": { "title": "Ticker", "type": "string" },
         "passes": { "title": "Passes", "type": "boolean" },
+        "leadership_summary": { "$ref": "#/definitions/LeadershipSummary" },
+        "profile_details": {
+          "title": "Profile Details",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/ProfileDetail" }
+        },
         "details": {
           "title": "Details",
           "type": "object",
@@ -310,8 +317,31 @@ Contains the result of the leadership screening for a single ticker. The format 
         "industry": { "title": "Industry", "type": ["string", "null"] },
         "metadata": { "$ref": "#/definitions/LeadershipProfileMetadata" }
       },
-      "required": ["ticker", "passes", "details", "metadata"],
+      "required": ["ticker", "passes", "leadership_summary", "profile_details", "details", "metadata"],
       "definitions": {
+        "LeadershipSummary": {
+          "title": "LeadershipSummary",
+          "type": "object",
+          "properties": {
+            "qualified_profiles": {
+              "title": "Qualified Profiles",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "message": { "title": "Message", "type": "string" }
+          },
+          "required": ["qualified_profiles", "message"]
+        },
+        "ProfileDetail": {
+          "title": "ProfileDetail",
+          "type": "object",
+          "properties": {
+            "pass": { "title": "Pass", "type": "boolean" },
+            "passed_checks": { "title": "Passed Checks", "type": "integer" },
+            "total_checks": { "title": "Total Checks", "type": "integer" }
+          },
+          "required": ["pass", "passed_checks", "total_checks"]
+        },
         "LeadershipMetricDetail": {
           "title": "LeadershipMetricDetail",
           "type": "object",
@@ -332,7 +362,140 @@ Contains the result of the leadership screening for a single ticker. The format 
       }
     }
     ```
-
+-   **JSON Schema (for batch response):**
+    ```json
+    {
+        "title": "LeadershipProfileBatch",
+        "type": "object",
+        "properties": {
+            "passing_candidates": {
+                "title": "Passing Candidates",
+                "type": "array",
+                "items": {
+                    "$ref": "#/definitions/LeadershipProfileForBatch"
+                }
+            },
+            "unique_industries_count": {
+                "title": "Unique Industries Count",
+                "type": "integer"
+            },
+            "metadata": {
+                "$ref": "#/definitions/LeadershipProfileBatchMetadata"
+            }
+        },
+        "required": [
+            "passing_candidates",
+            "unique_industries_count",
+            "metadata"
+        ],
+        "definitions": {
+            "LeadershipSummary": {
+                "title": "LeadershipSummary",
+                "type": "object",
+                "properties": {
+                    "qualified_profiles": {
+                        "title": "Qualified Profiles",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "message": {
+                        "title": "Message",
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "qualified_profiles",
+                    "message"
+                ]
+            },
+            "ProfileDetail": {
+                "title": "ProfileDetail",
+                "type": "object",
+                "properties": {
+                    "pass": {
+                        "title": "Pass",
+                        "type": "boolean"
+                    },
+                    "passed_checks": {
+                        "title": "Passed Checks",
+                        "type": "integer"
+                    },
+                    "total_checks": {
+                        "title": "Total Checks",
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "pass",
+                    "passed_checks",
+                    "total_checks"
+                ]
+            },
+            "LeadershipProfileForBatch": {
+                "title": "LeadershipProfileForBatch",
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "title": "Ticker",
+                        "type": "string"
+                    },
+                    "passes": {
+                        "title": "Passes",
+                        "type": "boolean"
+                    },
+                    "leadership_summary": {
+                        "$ref": "#/definitions/LeadershipSummary"
+                    },
+                    "profile_details": {
+                        "title": "Profile Details",
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/definitions/ProfileDetail"
+                        }
+                    },
+                    "industry": {
+                        "title": "Industry",
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                },
+                "required": [
+                    "ticker",
+                    "passes",
+                    "leadership_summary",
+                    "profile_details"
+                ]
+            },
+            "LeadershipProfileBatchMetadata": {
+                "title": "LeadershipProfileBatchMetadata",
+                "type": "object",
+                "properties": {
+                    "total_processed": {
+                        "title": "Total Processed",
+                        "type": "integer"
+                    },
+                    "total_passed": {
+                        "title": "Total Passed",
+                        "type": "integer"
+                    },
+                    "execution_time": {
+                        "title": "Execution Time",
+                        "type": "number"
+                    }
+                },
+                "required": [
+                    "total_processed",
+                    "total_passed",
+                    "execution_time"
+                ]
+            }
+        }
+    }
+    ```
 ---
 
 ## 9. ScreeningJobResult

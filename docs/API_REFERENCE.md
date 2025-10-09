@@ -241,7 +241,7 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 
 - **GET `/leadership/<path:ticker>`**  
   - Proxies to: `leadership-service`
-  - Purpose: Applies the 10 "Leadership Profile" criteria to the specified ticker.
+  - Purpose: Applies the 9 leadership criteria, grouped into 3 distinct profiles, to the specified ticker. 
   - **Data Contract:** Produces [`LeadershipProfileSingle`](./DATA_CONTRACTS.md#8-leadershipprofile).
   - **Example Usage:**
     ```bash
