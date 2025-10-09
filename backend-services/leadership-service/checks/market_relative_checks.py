@@ -144,6 +144,195 @@ def _check_new_high_in_window(stock_data, window_days, start_date_str=None):
     
     return bool(new_high_made), date_of_high
 
+def _get_market_context(market_trends_data):
+    """Determines the overall market context ('Bearish', 'Recovery', 'Bullish', 'Neutral')."""
+    if not market_trends_data or len(market_trends_data) < 8:
+        return 'Unknown', None, False
+
+    current_market_trend = market_trends_data[-1].get('trend', 'Unknown')
+    turning_point_date = _find_market_turning_point(market_trends_data)
+    
+    is_recovery_phase = False
+    if turning_point_date:
+        # Define recovery phase as within 20 calendar days of a market turn
+        days_since_turn = (datetime.now().date() - datetime.strptime(turning_point_date, '%Y-%m-%d').date()).days
+        if 0 <= days_since_turn <= 20:
+            is_recovery_phase = True
+            
+    # The recovery phase takes precedence over a simple bullish context for more specific checks.
+    final_context = "Recovery" if is_recovery_phase else current_market_trend
+    
+    return final_context, turning_point_date, is_recovery_phase
+
+def _calculate_drawdown(price_history: list, days: int = 240):
+    """
+    Calculates the high, current price, and drawdown percentage from a list of price data.
+    Returns (None, None, None) if data is insufficient.
+    """
+    # Handling for summary dictionary structure.
+    if isinstance(price_history, dict):
+        # This path is for test structures that pass a summary dictionary.
+        high_price = price_history.get('high_52_week')
+        current_price = price_history.get('current_price')
+        # The test modifies 'current_price', but live data might not have it.
+        # Fallback to 'close' if 'current_price' isn't in the dict.
+        if current_price is None:
+            current_price = price_history.get('close')
+
+        if high_price is None or current_price is None or high_price == 0:
+            return high_price, current_price, None
+        
+        drawdown = (high_price - current_price) / high_price
+        return high_price, current_price, drawdown
+
+    if not price_history or len(price_history) < days:
+        return None, None, None
+
+    relevant_period = price_history[-days:]
+    
+    # Ensure highs are valid numbers before calculating max
+    valid_highs = [p['high'] for p in relevant_period if p.get('high') is not None]
+    if not valid_highs:
+        return None, None, None
+
+    high_price = max(valid_highs)
+    current_price = relevant_period[-1].get('close')
+
+    if high_price is None or current_price is None or high_price == 0:
+        return high_price, current_price, None
+
+    drawdown = (high_price - current_price) / high_price
+    return high_price, current_price, drawdown
+
+def _check_shallow_decline(stock_data, sp500_data, sub_results):
+    """Check if stock's decline is shallower than the S&P 500's."""
+    _, _, stock_decline = _calculate_drawdown(stock_data)
+    _, _, sp500_decline = _calculate_drawdown(sp500_data)
+
+    passes = False
+    if stock_decline is not None and sp500_decline is not None and sp500_decline > 0:
+        passes = stock_decline < sp500_decline
+        message = f"Stock decline ({stock_decline:.1%}) is {'shallower' if passes else 'not shallower'} than S&P 500 ({sp500_decline:.1%})."
+    else:
+        message = "Could not calculate or compare declines."
+
+    sub_results['shallow_decline'] = {"pass": passes, "message": message}
+    return passes
+
+def _check_recent_breakout(stock_data, sub_results):
+    """
+    Checks if a stock showed a recent breakout on high volume.
+    A breakout is defined as today's price being >5% above the 20-day average
+    and today's volume being >50% above the 20-day average.
+
+    Args:
+        stock_data (list): List of stock price data dictionaries.
+        sub_results (dict): Dictionary to store detailed check results.
+
+    Returns:
+        bool: True if a recent breakout is detected, False otherwise.
+    """
+    key = 'recent_breakout'
+    if not stock_data or len(stock_data) < 20:
+        sub_results[key] = {"pass": False, "message": "Insufficient data for breakout check (requires 20 days)."}
+        return False
+
+    # Use last 20 trading days
+    recent_data = stock_data[-20:]
+    recent_prices = [day['close'] for day in recent_data if day and day.get('close') is not None]
+    recent_volumes = [day['volume'] for day in recent_data if day and day.get('volume') is not None]
+
+    # Need at least two data points to calculate an average and compare
+    if len(recent_prices) < 2 or len(recent_volumes) < 2:
+        sub_results[key] = {"pass": False, "message": "Not enough valid price/volume data in the last 20 days."}
+        return False
+
+    # Averages are calculated on the 19 days preceding the most recent day
+    avg_price = sum(recent_prices[:-1]) / len(recent_prices[:-1])
+    avg_volume = sum(recent_volumes[:-1]) / len(recent_volumes[:-1])
+
+    current_price = recent_prices[-1]
+    current_volume = recent_volumes[-1]
+
+    # Define breakout conditions
+    price_breakout = current_price > (avg_price * 1.05)  # 5% above average
+    volume_breakout = current_volume > (avg_volume * 1.5) if avg_volume > 0 else False
+
+    is_pass = price_breakout and volume_breakout
+
+    message = (f"Recent breakout detected: Price {current_price:.2f} vs avg {avg_price:.2f}, "
+               f"Volume {current_volume} vs avg {int(avg_volume)}.") if is_pass else "No recent price/volume breakout detected."
+
+    sub_results[key] = {
+        "pass": is_pass,
+        "message": message
+    }
+    return is_pass
+
+def _check_recovery_strength(stock_data, turning_point_date, sub_results):
+    """
+    Checks if the stock showed leadership during a market recovery.
+    Passes if EITHER of the following is true:
+    1. It made a new 52-week high within 20 days of the market turning point.
+    2. It showed a recent price/volume breakout in the last 20 days.
+    """
+    key_new_high = 'new_52_week_high_in_recovery'
+    if not turning_point_date:
+        sub_results[key_new_high] = {"pass": False, "message": "No turning point date provided for recovery check."}
+        # Also add a placeholder for the breakout check to ensure consistent output structure
+        sub_results['recent_breakout'] = {"pass": False, "message": "Skipped due to missing turning point."}
+        return False
+
+    # Check 1: New 52-week high since the turn
+    new_high_pass, high_date = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
+    message_high = (f"Market recovery started {turning_point_date}. "
+                    f"Stock {'made' if new_high_pass else 'did not make'} a new 52-week high "
+                    f"within 20 days (High on: {high_date}).")
+    sub_results[key_new_high] = {
+        "pass": new_high_pass,
+        "high_date": high_date,
+        "message": message_high
+    }
+
+    # Check 2: Recent price and volume breakout
+    breakout_pass = _check_recent_breakout(stock_data, sub_results)
+
+    # A stock is considered strong in recovery if it achieves EITHER a new high OR a breakout
+    return new_high_pass or breakout_pass
+def _check_bullish_strength(stock_data, sp500_data, turning_point_date, sub_results):
+    """Run all checks for a Bullish or Neutral market context."""
+    # Check 1: New high in last 20 days
+    new_high_pass, high_date = _check_new_high_in_window(stock_data, 20)
+    # Corrected message to use its own pass flag
+    new_high_message = (f"Stock {'showed' if new_high_pass else 'did not show'} recent strength by making a new high in the last 20 days.")
+    if high_date:
+        new_high_message += f" (High on {high_date})"
+    sub_results['new_52_week_high_last_20d'] = {"pass": new_high_pass, "high_date": high_date, "message": new_high_message}
+    
+    # Check 2: Relative strength vs S&P 500
+    rs_pass, rs_message = _check_relative_strength(stock_data, sp500_data)
+    sub_results['relative_strength_vs_sp500'] = {"pass": rs_pass, "message": rs_message}
+    
+    # Check 3 (optional): If there was a recent turning point, did it show strength then?
+    recovery_pass = True # Default to true if no recent turning point
+    if turning_point_date:
+        recovery_pass = _check_recovery_strength(stock_data, turning_point_date, sub_results)
+
+    # Final pass condition for this context
+    return all([new_high_pass, rs_pass, recovery_pass])
+
+def _check_relative_strength(stock_data, sp500_data):
+    """Compare stock drawdown to S&P 500 drawdown."""
+    _, _, stock_drawdown = _calculate_drawdown(stock_data)
+    _, _, sp500_drawdown = _calculate_drawdown(sp500_data)
+
+    if stock_drawdown is not None and sp500_drawdown is not None:
+        passes = stock_drawdown < sp500_drawdown
+        message = f"Stock drawdown ({stock_drawdown:.1%}) is {'better' if passes else 'not better'} than S&P 500 ({sp500_drawdown:.1%})."
+        return passes, message
+    
+    return False, "Could not compare performance against S&P 500."
+
 # Logic functions
 def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, details):
     """ 
@@ -152,7 +341,6 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
     - Recovery Phase: Checks if stock made a new 52-week high within 20 days of a market turning point.
     - Bullish/Neutral: Checks if stock made a new 52-week high in the last 10 or 20 days.
     
-    PS: Data of price history is in order of oldest-to-newest.
     Args:
         stock_data (list): List of stock price data dictionaries.
         index_data (dict): Dictionary containing the LATEST market index data.
@@ -174,15 +362,12 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
             return
 
         # --- 1. Determine Market Context ---
-        current_market_trend_info = market_trends_data[-1]
-        market_trend_context = current_market_trend_info.get('trend', 'Unknown')
-        turning_point_date = _find_market_turning_point(market_trends_data)
+        context, turning_point_date, is_recovery = _get_market_context(market_trends_data)
+        sp500_data = index_data.get('^GSPC')
 
-        is_recovery_phase = False
-        if turning_point_date:
-            days_since_turn = (datetime.now() - datetime.strptime(turning_point_date, '%Y-%m-%d')).days
-            if 0 <= days_since_turn <= 20: # Recovery phase is defined as 20 days post-turn
-                is_recovery_phase = True
+        if context == 'Unknown' or not sp500_data:
+            details.update(failed_check(metric_key, "Market context is unknown or S&P 500 data is missing."))
+            return
 
         # --- 2. Execute Checks Based on Context ---
         # Initialize evaluation results
@@ -190,127 +375,20 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
         message = "No specific leadership signal detected for current market context."
         sub_results = {}
 
-        if market_trend_context == 'Bearish':
-            # Shallow Decline Check
-            stock_decline, sp500_decline = None, None
-
-            # A stock's correction from its 52-week high must not be more than the current correction of the S&P 500 (SPY)
-            if stock_data and '^GSPC' in index_data:
-                sp500_data = index_data['^GSPC']
-                sp500_high = sp500_data.get('high_52_week')
-                sp500_current = sp500_data.get('current_price')
-                if sp500_high and sp500_current and sp500_high > 0:
-                    sp500_decline = (sp500_high - sp500_current) / sp500_high
-
-                # Find stock's 52-week high and current price
-                if len(stock_data) >= 252:  # Approximately 1 year of trading days
-                    stock_high = max(day['high'] for day in stock_data[-252:])
-                    stock_current = stock_data[-1]['close']
-                    if stock_high > 0:
-                        stock_decline = (stock_high - stock_current) / stock_high
-
-            # Check if stock's decline is less than the S&P 500's decline
-            shallow_decline = sp500_decline > 0 and stock_decline < sp500_decline
-            message = f"Stock decline ({stock_decline:.1%}) is {'shallower' if is_pass else 'not shallower'} than S&P 500 decline ({sp500_decline:.1%})."
-            sub_results['shallow_decline'] = {"pass": shallow_decline, "message": message}
-
-        elif is_recovery_phase:
-            # New High Check During Market Recovery
-            new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
-
-            message = (f"Market is in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
-                       f"a new 52-week high within 20 days of the turning point, {high_date}.")
-
-            sub_results['new_52_week_high_last_20d'] = {
-                "pass": new_high_in_last_20d,
-                "high_date": high_date,
-                "message": message
-            }
-
-            recent_breakout = False
-            # Breakout Check During Market Recovery
-            if turning_point_date and stock_data and len(stock_data) >= 20:
-                # Look for a breakout in the last 20 trading days
-                recent_prices = [day['close'] for day in stock_data[-20:]]
-                recent_volumes = [day['volume'] for day in stock_data[-20:] if 'volume' in day]
-
-                if recent_prices and recent_volumes:
-                    # Calculate average price and volume for the period
-                    avg_price = sum(recent_prices[:-1]) / len(recent_prices[:-1])  # Exclude today
-                    avg_volume = sum(recent_volumes[:-1]) / len(recent_volumes[:-1]) if len(recent_volumes) > 1 else 0
-
-                    # Check if today's price and volume are significantly higher
-                    current_price = recent_prices[-1]
-                    current_volume = recent_volumes[-1] if recent_volumes else 0
-
-                    price_breakout = current_price > (avg_price * 1.05)  # 5% above average
-                    volume_breakout = current_volume > (avg_volume * 1.5) if avg_volume > 0 else False
-
-                    if price_breakout and volume_breakout:
-                        recent_breakout = True
-
-                sub_results['recent_breakout'] = {
-                    "pass": recent_breakout,
-                    "message": "Stock showed recent breakout during recovery." if recent_breakout else "No recent breakout detected."
-                }
-            is_pass = any([new_high_in_last_20d, recent_breakout])
-
-        elif market_trend_context in ['Bullish', 'Neutral']:
-            # Check for new high in the last 20 days and during Market Recovery
-            if turning_point_date:
-                new_high_in_20d_after_turn, _ = _check_new_high_in_window(stock_data, 20, start_date_str=turning_point_date)
-
-                message = (f"When market was in recovery (turn on {turning_point_date}). Stock {'made' if is_pass else 'did not make'} "
-                        f"a new 52-week high within 20 days of the turning point.")
-                sub_results['new_52_week_high_after_turn'] = {
-                    "pass": new_high_in_20d_after_turn,
-                    "message": message
-                }
-
-            new_high_in_last_20d, high_date = _check_new_high_in_window(stock_data, 20)
-
-            message = (f"Stock {'showed' if is_pass else 'did not show'} "
-                       f"recent strength by making a new 52-week high in the last 20 days, {high_date}.")
-            
-            sub_results['new_52_week_high_last_20d'] = {
-                "pass": new_high_in_last_20d,
-                "high_date": high_date,
-                "message": message
-            }
-
-            relative_strength_pass = False
-            rs_message = "Could not compare performance against S&P 500."
-            if stock_data and index_data.get('^GSPC') and len(stock_data) >= 252:
-                sp500_data = index_data['^GSPC']
-                sp500_high = sp500_data.get('high_52_week')
-                sp500_current = sp500_data.get('current_price')
-                
-                valid_highs = [d['high'] for d in stock_data[-252:] if d.get('high') is not None]
-                if valid_highs:
-                    stock_high = max(valid_highs)
-                    stock_current = stock_data[-1].get('close')
-
-                    if all(v is not None and isinstance(v, (int, float)) and v > 0 for v in [sp500_high, sp500_current, stock_high, stock_current]):
-                        sp500_drawdown = (sp500_high - sp500_current) / sp500_high
-                        stock_drawdown = (stock_high - stock_current) / stock_high
-                        relative_strength_pass = stock_drawdown < sp500_drawdown
-                        rs_message = f"Stock drawdown ({stock_drawdown:.1%}) is {'better' if relative_strength_pass else 'not better'} than S&P 500 ({sp500_drawdown:.1%})."
-            
-            sub_results['relative_strength_vs_sp500'] = {
-                "pass": relative_strength_pass,
-                "message": rs_message
-            }
-            is_pass = all([relative_strength_pass, new_high_in_last_20d])
-            if turning_point_date:
-                is_pass = is_pass and new_high_in_20d_after_turn
+        if context == 'Bearish':
+            is_pass = _check_shallow_decline(stock_data, sp500_data, sub_results)
+        elif context == 'Recovery':
+            is_pass = _check_recovery_strength(stock_data, turning_point_date, sub_results)
+        elif context in ['Bullish', 'Neutral']:
+            is_pass = _check_bullish_strength(stock_data, sp500_data, turning_point_date, sub_results)
 
         # --- 3. Finalize Result ---
-        message = f"Market trend impact evaluated in {market_trend_context} context."
+        message = f"Market trend impact evaluated in {context} context."
 
         details[metric_key] = {
             "pass": is_pass,
-            "market_trend_context": market_trend_context,
-            "is_recovery_phase": is_recovery_phase,
+            "market_trend_context": context,
+            "is_recovery_phase": is_recovery,
             "turning_point_date": turning_point_date,
             "sub_results": sub_results,
             "message": message
@@ -318,4 +396,5 @@ def evaluate_market_trend_impact(stock_data, index_data, market_trends_data, det
 
     except Exception as e:
         # Handle any errors gracefully
+        logger.error(f"Error in evaluate_market_trend_impact: {e}", exc_info=True)
         details.update(failed_check(metric_key, f"An unexpected error occurred: {str(e)}"))

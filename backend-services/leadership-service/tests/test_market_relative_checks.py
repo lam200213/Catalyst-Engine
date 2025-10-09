@@ -39,7 +39,7 @@ class TestMarketRelativeChecks(unittest.TestCase):
         result = details['market_trend_impact']
         self.assertTrue(result['is_recovery_phase'])
         self.assertIsNotNone(result['turning_point_date'])
-        self.assertTrue(result['sub_results']['new_52_week_high_last_20d']['pass'])
+        self.assertTrue(result['sub_results']['new_52_week_high_in_recovery']['pass'])
 
     def test_market_context_is_sustained_bull(self):
         """Test ensures a sustained bull market is not flagged as recovery."""

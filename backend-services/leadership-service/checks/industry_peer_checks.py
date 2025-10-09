@@ -23,6 +23,12 @@ def analyze_industry_leadership(ticker, peers_data_raw, all_financial_data, deta
     """
     metric_key = 'is_industry_leader'
 
+    # Add a guard clause to gracefully handle missing peer data
+    if not peers_data_raw:
+        logger.warning(f"Skipping industry leadership check for {ticker}: No peer data was provided.")
+        details.update(failed_check(metric_key, "Skipped. Peer data could not be fetched from the upstream service."))
+        return
+
     # Validate the raw peer data against the IndustryPeers contract
     try:
         peers_data = IndustryPeers.model_validate(peers_data_raw).model_dump()
@@ -64,11 +70,6 @@ def check_industry_leadership(ticker, peers_data, batch_financial_data, details)
               or an error message if data cannot be processed.
     """
     metric_key = 'is_industry_leader'
-    # Add a guard clause to gracefully handle missing peer data
-    if not peers_data:
-        logger.warning(f"Skipping industry leadership check for {ticker}: No peer data was provided.")
-        details.update(failed_check(metric_key, "Skipped. Peer data could not be fetched from the upstream service."))
-        return
 
     try:
         # -- data handling -- 

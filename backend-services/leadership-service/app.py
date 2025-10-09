@@ -160,10 +160,10 @@ def leadership_analysis(ticker):
         stock_data = validate_data_contract(stock_data_raw, PriceDataValidator, ticker, "PriceData")
 
         all_financial_data = {}
-        for ticker, data in all_financial_data_raw.get('success', {}).items():
-            validated_data = validate_data_contract(data, CoreFinancials, ticker, "CoreFinancials")
+        for t, data in all_financial_data_raw.get('success', {}).items():
+            validated_data = validate_data_contract(data, CoreFinancials, t, "CoreFinancials")
             if validated_data:
-                all_financial_data[ticker] = validated_data
+                all_financial_data[t] = validated_data
 
         if not financial_data or not stock_data:
             return jsonify({

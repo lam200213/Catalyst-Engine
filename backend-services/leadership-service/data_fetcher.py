@@ -90,8 +90,11 @@ def fetch_index_data():
     """Fetch major index data from data service"""
     # Fetch data for all three major indices for market trend context
     indices = ['^GSPC', '^DJI', '^IXIC']
-    index_data = fetch_batch_price_data(indices)            
-    return index_data
+    index_data, error = fetch_batch_price_data(indices)
+    if error:
+        logger.error(f"Failed to fetch index data: {error[0]}")
+        return None  # Return only the 'success' dictionary from the batch response.
+    return index_data.get('success', {})  # Return only the data dictionary on success.
 
 def fetch_peer_data(ticker):
     """Fetches industry and peer list from the data-service."""

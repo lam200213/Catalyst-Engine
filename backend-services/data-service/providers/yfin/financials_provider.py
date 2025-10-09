@@ -12,6 +12,8 @@ from curl_cffi import requests as cffi_requests
 #DEBUG
 import logging
 import json
+import pickle
+import threading
 
 # Proxies are now loaded from an environment variable for better configuration management.
 import os # Add os import for environment variable access
@@ -50,65 +52,6 @@ def _transform_income_statements(statements, shares_outstanding):
             'Total Revenue': total_revenue,
         })
     return transformed
-
-def _serialize_yfinance_ticker_obj(ticker_obj):
-    """
-    Converts a yfinance.Ticker object into a JSON-serializable dictionary
-    by accessing its data properties and converting pandas objects.
-    Note: Accessing each property may trigger a lazy-loaded network request.
-    """
-    if not isinstance(ticker_obj, yf.Ticker):
-        return None
-
-    def pandas_to_serializable(pd_obj):
-        """Converts pandas DataFrame or Series to a serializable list of dicts."""
-        if pd_obj is None or pd_obj.empty:
-            return None
-        # Convert Series to a DataFrame to standardize processing
-        if isinstance(pd_obj, pd.Series):
-            pd_obj = pd_obj.to_frame()
-        # Reset index to turn it into a column (e.g., for dates)
-        df_reset = pd_obj.reset_index()
-        # Replace pandas-specific NA/NaT values with None for JSON compatibility
-        df_cleaned = df_reset.where(pd.notna(df_reset), None)
-        return df_cleaned.to_dict('records')
-
-    # Properties that are typically dicts, lists, or simple types
-    simple_attributes = [
-        'info', 'calendar', 'isin', 'options', 'news'
-    ]
-    # Properties that return pandas DataFrames or Series
-    pandas_attributes = [
-        'actions', 'dividends', 'splits', 'capital_gains', 'shares', 
-        'financials', 'quarterly_financials', 'major_holders', 
-        'institutional_holders', 'mutualfund_holders', 'balance_sheet', 
-        'quarterly_balance_sheet', 'cashflow', 'quarterly_cashflow', 
-        'earnings', 'quarterly_earnings', 'sustainability', 'recommendations', 
-        'earnings_dates', 'earnings_trend', 'earnings_forecasts', 
-        'revenue_forecasts', 'analyst_price_target', 'recommendations_summary',
-        'upgrades_downgrades'
-    ]
-
-    serialized_data = {}
-    
-    # Process simple attributes
-    for attr in simple_attributes:
-        try:
-            serialized_data[attr] = getattr(ticker_obj, attr)
-        except Exception:
-            # Attribute might not exist for the ticker (e.g., no options data)
-            serialized_data[attr] = None
-
-    # Process pandas attributes
-    for attr in pandas_attributes:
-        try:
-            data = getattr(ticker_obj, attr)
-            serialized_data[attr] = pandas_to_serializable(data)
-        except Exception:
-            # Attribute might not exist or fetching could fail
-            serialized_data[attr] = None
-            
-    return serialized_data
 
 @yahoo_client.retry_on_failure(attempts=3, delay=3, backoff=2)
 def _fetch_financials_with_yfinance(ticker):
@@ -225,7 +168,7 @@ def _fetch_financials_with_yfinance(ticker):
         'quarterly_earnings': quarterly_financials,
         'quarterly_financials': quarterly_financials, # Retained for compatibility
         # Also include the raw info object for complete debugging if needed
-        'raw_info': stock
+        'raw_info': info 
     }
 
     # --- LOGGING/SAVING BLOCK ---
@@ -235,20 +178,10 @@ def _fetch_financials_with_yfinance(ticker):
         date_str = dt.datetime.now().strftime('%Y-%m-%d')
         ticker_log_dir = os.path.join(log_dir, date_str)
         os.makedirs(ticker_log_dir, exist_ok=True)
-        file_path = os.path.join(ticker_log_dir, f"{ticker}.json")
         
-        # Create a serializable copy of the data and remove the raw_info object
-        serializable_data = final_data_object.copy()
-
-        # Serialize the raw yfinance Ticker object for comprehensive logging.
-        # This raw object itself is not returned by the function, only saved in the log.
-        if 'raw_info' in serializable_data and serializable_data['raw_info']:
-            serializable_data['raw_info'] = _serialize_yfinance_ticker_obj(serializable_data['raw_info'])
-        else:
-            serializable_data['raw_info'] = None # Ensure the key exists but is null
-
-        # Write the 'serializable_data' to the JSON file.
-        with open(file_path, 'w') as f:
+        # 1. Save the clean, structured JSON file
+        json_file_path = os.path.join(ticker_log_dir, f"{ticker}.json")
+        with open(json_file_path, 'w') as f:
             # Use a custom encoder to handle potential non-serializable data like NaN
             class CustomEncoder(json.JSONEncoder):
                 def default(self, obj):
@@ -257,12 +190,11 @@ def _fetch_financials_with_yfinance(ticker):
                     if isinstance(obj, (pd.Timestamp, dt.datetime, dt.date)):
                         return obj.isoformat()  # Or str(obj) for a simple string representation
                     return json.JSONEncoder.default(self, obj)
-            json.dump(serializable_data, f, indent=4, cls=CustomEncoder)
-            
-        logger.debug(f"Successfully saved complete financial data for {ticker} to {file_path}")
-
+            json.dump(final_data_object, f, indent=4, cls=CustomEncoder)
+        logger.debug(f"Successfully saved structured financial data for {ticker} to {json_file_path}")
+      
     except Exception as log_e:
-        logger.error(f"Failed to save yfinance fetch log for {ticker}: {log_e}")
+        logger.error(f"Failed to save financial fetch logs for {ticker}: {log_e}")
     # --- END LOGGING/SAVING BLOCK ---
 
     # Return the final data object
