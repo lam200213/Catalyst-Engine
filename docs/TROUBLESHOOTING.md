@@ -24,6 +24,18 @@ Error response from daemon: Conflict. The container name "/some-service" is alre
    ```Bash  
    docker-compose up --build -d
 
+
+### **API Rate limited**
+
+**Error:** You might see an error like this when running docker-compose up:
+
+providers.yfin.financials_provider - ERROR - Failed to process TICKER in batch after all retries. Error: Too Many Requests. Rate limited. Try after a while.
+
+**Cause:** This happens when your IP address is temporary rate limited by yahoo finance.
+
+**Solution:**
+
+1. **Utilize Proxies**
 ---
 
 # Developer Diagnostic Tools 🛠️

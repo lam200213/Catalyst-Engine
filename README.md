@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-09
-Updated documenatation; Testing the usage of PROXIES in /yfin, removing time.sleep() in price and financial.py; Shift the concurrency burden from the screening-service to the data-service, as data-service is the one doing the slow, external I/O-bound work
+2025-10-10
+Updated yfin financial provider to integrate Rotating Proxies with yfinance; Removed ProviderNoDataError if finnhub returns no Peer data; Debugged failed to call the fallback mechanism when the primary yfinance fetch fails; Ensured the rotating proxy system is used for all yfinance calls.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

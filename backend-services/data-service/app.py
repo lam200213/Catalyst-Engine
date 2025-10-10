@@ -67,7 +67,7 @@ def setup_logging(app):
     for logger_instance in module_loggers:
         logger_instance.addHandler(file_handler)
         logger_instance.addHandler(console_handler)
-        logger_instance.setLevel(logging.INFO)
+        logger_instance.setLevel(logging.DEBUG)
 
     app.logger.info("Data service logging initialized.")
 # --- End of Logging Setup ---
@@ -498,7 +498,7 @@ def get_industry_peers_cached(ticker: str):
     # If the provider had a total failure, it returns None.
     if data is None:
         app.logger.warning(f"DATA-SERVICE: Provider returned None for {ticker}. Caching default empty result.")
-        raise ProviderNoDataError(f"No peer data found for {ticker}")
+        return
 
     # If the provider returned data but the peers list is empty, log it.
     if not data.get("peers"):
