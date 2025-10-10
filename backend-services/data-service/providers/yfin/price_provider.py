@@ -36,7 +36,7 @@ def _transform_yahoo_response(response_json: dict, ticker: str) -> list | None:
         logger.error(f"Error transforming Yahoo Finance data for {ticker}: {e}")
         return None
 
-def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period: str = None, max_workers: int = 4) -> dict | list | None:
+def get_stock_data(tickers: str | list[str], executor: ThreadPoolExecutor, start_date: dt.date = None, period: str = None) -> dict | list | None:
     """
     Fetches historical stock data from Yahoo Finance using curl_cffi
     and formats it into the application's standard list-of-dictionaries format.
@@ -59,22 +59,20 @@ def get_stock_data(tickers: str | list[str], start_date: dt.date = None, period:
             return {} # Return an empty dict for a fully filtered batch
 
         results = {}
-        # Use ThreadPoolExecutor for concurrent requests
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Create a future for each ticker
-            # Note: start_date is ignored for batch requests for simplicity.
-            # Each ticker is fetched individually.
-            future_to_ticker = {
-                executor.submit(_get_single_ticker_data, ticker, start_date=start_date, period=period): ticker 
-                for ticker in active_tickers # Use the filtered list
-            }
-            for future in as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                try:
-                    results[ticker] = future.result()
-                except Exception as exc:
-                    print(f"ERROR: {ticker} generated an exception: {exc}")
-                    results[ticker] = None
+        # Create a future for each ticker
+        # Note: start_date is ignored for batch requests for simplicity.
+        # Each ticker is fetched individually.
+        future_to_ticker = {
+            executor.submit(_get_single_ticker_data, ticker, start_date=start_date, period=period): ticker 
+            for ticker in active_tickers # Use the filtered list
+        }
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                results[ticker] = future.result()
+            except Exception as exc:
+                print(f"ERROR: {ticker} generated an exception: {exc}")
+                results[ticker] = None
         return results
 
     # Invalid input type
@@ -94,7 +92,7 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
     if not crumb:
         return None
     #  Introduce request throttling to avoid rate-limiting.
-    time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds
+    # time.sleep(random.uniform(0.5, 1.5)) # Wait 0.5-1.5 seconds
 
     # --- Date Range Logic ---
     # This section determines the appropriate Yahoo Finance API URL based on whether
@@ -162,6 +160,7 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
             if e.response.status_code == 404:
                 mark_ticker_as_delisted(ticker, "Yahoo Finance price API call failed with status 404.")
         logger.error(f"A curl_cffi request error occurred for {ticker}: {e}")
+        logger.error(f"Proxy used: {proxy}")
         return None
     except Exception as e:
         logger.error(f"An unexpected error occurred in yfinance_provider for {ticker}: {e}")

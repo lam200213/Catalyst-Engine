@@ -34,6 +34,10 @@ SUPPORTED_IMPERSONATE_PROFILES = [
 # Proxies are now loaded from an environment variable for better configuration management.
 import os # Add os import for environment variable access
 PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
+if PROXIES:
+    logger.info(f"Successfully loaded {len(PROXIES)} proxies from environment.")
+else:
+    logger.warning("YAHOO_FINANCE_PROXIES environment variable not set or is empty. No proxies will be used.")
 
 # A single session is created with a random profile when the service starts.
 # This session is reused for all requests to maintain authentication cookies (for the crumb).
@@ -48,11 +52,18 @@ def _get_random_user_agent() -> str:
     return random.choice(USER_AGENTS)
 
 def _get_random_proxy() -> dict | None:
-    """Returns a random proxy if available."""
-    if not PROXIES:
+    """
+    Returns a random proxy from the configured list if available or None to use the local IP.
+    This ensures that even with proxies configured, some requests will use the direct connection.
+    """
+    proxy_choices = PROXIES + [None]
+    chosen_proxy = random.choice(proxy_choices)
+    if chosen_proxy is None:
+        # logger.info("Using local IP address (no proxy for this request).")
         return None
-    proxy_url = random.choice(PROXIES)
-    return {"http": proxy_url, "https": proxy_url}
+    
+    # logger.info(f"Using proxy: {chosen_proxy}")
+    return {"http": chosen_proxy, "https": chosen_proxy}
 
 def _get_yahoo_auth():
     """

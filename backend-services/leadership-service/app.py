@@ -274,8 +274,16 @@ def leadership_batch_analysis():
     # --- 5. Prepare Analysis Tasks (CPU-Bound) ---
     analysis_tasks = []
     for ticker in sanitized_tickers:
+        if ticker not in successful_prices:
+            app.logger.warning(f"Skipping {ticker} from analysis due to missing price data.")
+            continue
+            
+        if ticker not in successful_financials:
+            app.logger.warning(f"Skipping {ticker} from analysis due to missing financial data.")
+            continue
+
         # A ticker is viable if we have its own price and financial data. Peer data is optional.
-        if ticker in successful_prices and ticker in successful_financials and ticker in peers_map:
+        if ticker in successful_prices and ticker in successful_financials:
             task = {
                 "ticker": ticker,
                 "financial_data": successful_financials[ticker],
@@ -283,8 +291,6 @@ def leadership_batch_analysis():
                 "peers_data": peers_map.get(ticker, {}) # Pass peer data if available, otherwise pass an empty dict
             }
             analysis_tasks.append(task)
-        else:
-            app.logger.warning(f"Skipping {ticker} from analysis due to missing its own price or financial data.")
 
     # --- 6. Execute Analysis in Parallel ---
     passing_candidates = []

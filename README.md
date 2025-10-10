@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-09
-Updated documenatation
+Updated documenatation; Testing the usage of PROXIES in /yfin, removing time.sleep() in price and financial.py; Shift the concurrency burden from the screening-service to the data-service, as data-service is the one doing the slow, external I/O-bound work
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

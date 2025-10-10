@@ -11,19 +11,75 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient, errors
 from pymongo.errors import OperationFailure
-from pydantic import ValidationError, TypeAdapter
 from typing import List
-from shared.contracts import PriceDataItem, CoreFinancials
 
+# --- 1. Initialize Flask App and Basic Config ---
+app = Flask(__name__)
+PORT = int(os.environ.get('PORT', 3001))
+
+# --- 2. Define Logging Setup Function ---
+def setup_logging(app):
+    """Configures comprehensive logging for the Flask app."""
+    log_directory = "/app/logs"
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
+
+    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+
+    # The filename is now specific to the service and in a dedicated folder.
+    log_file = os.path.join(log_directory, "data_service.log")
+
+    # Create a rotating file handler to prevent log files from growing too large.
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+
+    # Create a console handler for stdout
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+
+    # Define the log format
+    log_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(log_formatter)
+    console_handler.setFormatter(log_formatter)
+
+    app.logger.addHandler(file_handler)
+    app.logger.addHandler(console_handler)
+    app.logger.setLevel(log_level)
+    app.logger.propagate = False
+
+    # Find and configure the loggers from the provider and helper modules
+    # This ensures that log messages from background threads are captured correctly.
+    module_loggers = [
+        logging.getLogger('providers.yfin.yahoo_client'),
+        logging.getLogger('providers.yfin.price_provider'),
+        logging.getLogger('providers.yfin.financials_provider'),
+        logging.getLogger('helper_functions')
+    ]
+    
+    for logger_instance in module_loggers:
+        logger_instance.addHandler(file_handler)
+        logger_instance.addHandler(console_handler)
+        logger_instance.setLevel(logging.INFO)
+
+    app.logger.info("Data service logging initialized.")
+# --- End of Logging Setup ---
+setup_logging(app)
+
+# --- 4. Import Project-Specific Modules ---
 # Import provider modules
 from providers import finnhub_provider, marketaux_provider
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
 # Import the logic
 from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data
-
-app = Flask(__name__)
-PORT = int(os.environ.get('PORT', 3001))
 
 # --- Flask-Caching Setup ---
 # Configuration for Redis Cache. The URL is provided by the environment.
@@ -66,63 +122,9 @@ class ProviderNoDataError(Exception):
     """Custom exception raised when a data provider returns no data."""
     pass
 
-# --- Logging Setup ---
-def setup_logging(app):
-    """Configures comprehensive logging for the Flask app."""
-    log_directory = "/app/logs"
-    if not os.path.exists(log_directory):
-        os.makedirs(log_directory)
-
-    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
-
-    # The filename is now specific to the service and in a dedicated folder.
-    log_file = os.path.join(log_directory, "data_service.log")
-
-    # Create a rotating file handler to prevent log files from growing too large.
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.INFO)
-
-    # Create a console handler for stdout
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-
-    # Define the log format
-    log_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(log_formatter)
-    console_handler.setFormatter(log_formatter)
-
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(console_handler)
-    app.logger.setLevel(log_level)
-    app.logger.propagate = False
-
-    # Find and configure the loggers from the provider and helper modules
-    # This ensures that log messages from background threads are captured correctly.
-    module_loggers = [
-        logging.getLogger('providers.yfin.price_provider'),
-        logging.getLogger('providers.yfin.financials_provider'),
-        logging.getLogger('helper_functions')
-    ]
-    
-    for logger_instance in module_loggers:
-        logger_instance.addHandler(file_handler)
-        logger_instance.addHandler(console_handler)
-        logger_instance.setLevel(logging.INFO)
-
-    app.logger.info("Data service logging initialized.")
-# --- End of Logging Setup ---
-setup_logging(app)
-
+# --- Centralized Executor ---
 # Using a ThreadPoolExecutor for concurrent requests in batch endpoints
-executor = ThreadPoolExecutor(max_workers=10)
+executor = ThreadPoolExecutor(max_workers=20)
 
 @app.route('/financials/core/batch', methods=['POST'])
 def get_batch_core_financials_route():
@@ -162,7 +164,7 @@ def get_batch_core_financials_route():
 
     # Fetch data from provider ONLY for the cache misses
     if tickers_to_fetch:
-        fetched_data = yf_financials_provider.get_batch_core_financials(tickers_to_fetch)
+        fetched_data = yf_financials_provider.get_batch_core_financials(tickers_to_fetch, executor)
 
     failed_tickers = []
 
@@ -272,12 +274,13 @@ def get_batch_data():
             period_to_fetch = "1y"
             fetched_data = yf_price_provider.get_stock_data(
                 missed_tickers, 
+                executor,
                 start_date=None, 
                 period=period_to_fetch
             )
             if fetched_data:
                 for ticker, data in fetched_data.items():
-                    # Validate newly fetched data and fix bug (was using CoreFinancials model)
+                    # Validate newly fetched data
                     final_data = validate_and_prepare_price_data(data, ticker)
                     if final_data:
                         newly_fetched_data[ticker] = final_data
@@ -359,6 +362,7 @@ def get_data(ticker: str):
         # yfinance supports incremental fetching via the `start_date` parameter.
         data = yf_price_provider.get_stock_data(
             ticker, 
+            executor, 
             start_date=new_start_date, 
             period=period_to_fetch
         )
@@ -596,7 +600,7 @@ def calculate_market_trend():
     start_date_for_fetch = first_date_obj - timedelta(days=550)
     
     # Use the batch price fetcher for efficiency.
-    batch_price_data = yf_price_provider.get_stock_data(indices, start_date=start_date_for_fetch)
+    batch_price_data = yf_price_provider.get_stock_data(indices, executor, start_date=start_date_for_fetch)
 
     # Robust check to ensure the provider returned valid data for all indices, not just None.
     if not batch_price_data or not all(batch_price_data.get(idx) for idx in indices):

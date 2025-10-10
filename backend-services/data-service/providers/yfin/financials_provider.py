@@ -12,8 +12,6 @@ from curl_cffi import requests as cffi_requests
 #DEBUG
 import logging
 import json
-import pickle
-import threading
 
 # Proxies are now loaded from an environment variable for better configuration management.
 import os # Add os import for environment variable access
@@ -316,25 +314,24 @@ def get_core_financials(ticker_symbol: str) -> dict | None:
     logger.debug(f"Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.")
     return _fetch_financials_with_fallback(ticker_symbol, start_time)
         
-def get_batch_core_financials(tickers: list[str]) -> dict:
+def get_batch_core_financials(tickers: list[str], executor: ThreadPoolExecutor) -> dict:
     """
     Fetches core financial data for a list of tickers in parallel.
     """
     results = {}
 
-    # Limit concurrency directly to prevent rate-limiting.
-    # We will use a new ThreadPoolExecutor with a controlled number of workers.
-    with ThreadPoolExecutor(max_workers=1) as limited_executor:
-        future_to_ticker = {limited_executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
-        for future in as_completed(future_to_ticker):
-            ticker = future_to_ticker[future]
-            try:
-                data = future.result()
-                results[ticker] = data
-            except Exception as e:
-                logger.error(f"Failed to process {ticker} in batch after all retries. Error: {e}")
-                results[ticker] = None
-            # Add a random delay to avoid hammering the API
-            time.sleep(random.uniform(2, 5)) 
+    # Create a future for each ticker
+    # Each ticker is fetched individually.
+    future_to_ticker = {executor.submit(get_core_financials, ticker): ticker for ticker in tickers}
+    for future in as_completed(future_to_ticker):
+        ticker = future_to_ticker[future]
+        try:
+            data = future.result()
+            results[ticker] = data
+        except Exception as e:
+            logger.error(f"Failed to process {ticker} in batch after all retries. Error: {e}")
+            results[ticker] = None
+        # Add a random delay to avoid hammering the API
+        # time.sleep(random.uniform(2, 5)) 
 
     return results

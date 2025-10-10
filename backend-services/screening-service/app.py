@@ -6,7 +6,6 @@ import requests
 import numpy as np
 import json
 from flask.json.provider import JSONProvider
-from concurrent.futures import ThreadPoolExecutor
 from screening_logic import apply_screening_criteria
 import traceback 
 from pydantic import BaseModel, ValidationError, TypeAdapter
@@ -117,7 +116,7 @@ def _process_chunk(chunk):
     try:
         # 1. Fetch data for the entire chunk from the data-service's batch endpoint
         data_service_url = f"{DATA_SERVICE_URL}/price/batch"
-        resp = requests.post(data_service_url, json={"tickers": chunk, "source": "yfinance"}, timeout=120)
+        resp = requests.post(data_service_url, json={"tickers": chunk, "source": "yfinance"}, timeout=150)
         
         if resp.status_code != 200:
             print(f"Warning: Chunk failed with status {resp.status_code}. Details: {resp.text}")
@@ -187,12 +186,11 @@ def screen_batch_endpoint():
         # Split the incoming tickers into chunks of CHUNK_SIZE
         ticker_chunks = [incoming_tickers[i:i + CHUNK_SIZE] for i in range(0, len(incoming_tickers), CHUNK_SIZE)]
 
-        with ThreadPoolExecutor() as executor:
-            # Submit each chunk to be processed in parallel
-            future_to_chunk = {executor.submit(_process_chunk, chunk) for chunk in ticker_chunks}
-            
-            for future in future_to_chunk:
-                passing_tickers.extend(future.result())
+        for chunk in ticker_chunks:
+            # The _process_chunk function now blocks until the data-service is done.
+            # This is fine because the data-service is now highly concurrent, 
+            # screening calculation is already efficient as it's just CPU-bound
+            passing_tickers.extend(_process_chunk(chunk))
 
         return jsonify(passing_tickers), 200
 
