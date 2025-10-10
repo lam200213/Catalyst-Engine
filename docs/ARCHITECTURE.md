@@ -108,6 +108,12 @@
 | **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
 | **Testing** | Pytest, Vitest, React Testing Library |
 | **Local Orchestration** | Docker, Docker Compose |
+
+## Concurrency Burden
+
+The data-service, which is the component that actually interacts with the external world (Yahoo Finance), has full control over the concurrency. 
+The heavy lifting of parallelization is handled by the data-service, as it is the one doing the slow, external I/O-bound work.
+
 ## Communication Flow
 
 The system is designed with a microservices architecture. The `api-gateway` is the single entry point for the frontend application. It routes requests to the appropriate backend service.

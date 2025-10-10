@@ -5,6 +5,7 @@ import datetime as dt
 import os
 import sys
 from curl_cffi.requests import errors as cffi_errors
+from concurrent.futures import ThreadPoolExecutor
 
 # Add the project root to the path to allow absolute imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,6 +15,14 @@ from providers.yfin import price_provider
 class TestYFinancePriceProvider(unittest.TestCase):
     """Tests for the yfinance price data provider."""
 
+    def setUp(self):
+        """Set up a ThreadPoolExecutor for tests."""
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    def tearDown(self):
+        """Shutdown the ThreadPoolExecutor."""
+        self.executor.shutdown(wait=True)
+
     @patch('providers.yfin.price_provider._get_single_ticker_data')
     @patch('providers.yfin.price_provider.is_ticker_delisted', return_value=True)
     def test_get_stock_data_skips_single_delisted_ticker(self, mock_is_delisted, mock_fetch):
@@ -21,7 +30,7 @@ class TestYFinancePriceProvider(unittest.TestCase):
         Tests that get_stock_data (single mode) skips API calls for a delisted ticker.
         """
         # --- Act ---
-        result = price_provider.get_stock_data('DELISTED', period="1y")
+        result = price_provider.get_stock_data('DELISTED', self.executor, period="1y")
 
         # --- Assert ---
         self.assertIsNone(result)
@@ -41,7 +50,7 @@ class TestYFinancePriceProvider(unittest.TestCase):
         mock_fetch.return_value = [{"close": 100}]
 
         # --- Act ---
-        results = price_provider.get_stock_data(['GOOD1', 'BADD', 'GOOD2'], period="1y")
+        results = price_provider.get_stock_data(['GOOD1', 'BADD', 'GOOD2'], self.executor, period="1y")
 
         # --- Assert ---
         # Check that the delisted check was called for all tickers
@@ -161,7 +170,7 @@ class TestYFinancePriceProvider(unittest.TestCase):
         mock_get_single.side_effect = side_effect
 
         # --- Act ---
-        results = price_provider.get_stock_data(['AAPL', 'FAIL', 'NONE'], period="1y")
+        results = price_provider.get_stock_data(['AAPL', 'FAIL', 'NONE'], self.executor, period="1y")
 
         # --- Assert ---
         self.assertIn('AAPL', results)

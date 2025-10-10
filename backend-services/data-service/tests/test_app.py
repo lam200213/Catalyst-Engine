@@ -151,7 +151,8 @@ class TestPriceEndpoints(BaseDataServiceTest):
         self.assertEqual(response.status_code, 404)
         self.assertIn('error', response.json)
         self.assertIn(f"Could not retrieve price data for {ticker}", response.json['error'])
-        mock_get_stock_data.assert_called_once_with(ticker, start_date=None, period="1y")
+        # Add ANY for the executor argument
+        mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=None, period="1y")
         self.mock_cache.set.assert_not_called()
 
     @patch('app.yf_price_provider.get_stock_data')
@@ -171,7 +172,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, provider_data)
         # It should ignore the empty cache and perform a full fetch
-        mock_get_stock_data.assert_called_once_with(ticker, start_date=None, period="1y")
+        mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=None, period="1y")
         self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", provider_data, timeout=ANY)
 
     def test_get_price_handles_path_traversal(self):
@@ -197,7 +198,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json, provider_data)
             self.mock_cache.get.assert_called_once_with(f"price_yfinance_{ticker}")
-            mock_get_stock_data.assert_called_once_with(ticker, start_date=None, period="1y")
+            mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=None, period="1y")
             self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", provider_data, timeout=ANY)
 
     @patch('app.yf_price_provider.get_stock_data')
@@ -223,7 +224,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
         self.assertEqual(response.json, expected_combined_data)
         
         expected_start_date = last_cached_date_obj + timedelta(days=1)
-        mock_get_stock_data.assert_called_once_with(ticker, start_date=expected_start_date, period=None)
+        mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=expected_start_date, period=None)
         
         self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", expected_combined_data, timeout=ANY)
 
@@ -270,7 +271,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
         self.assertEqual(data['success']['CACHED'], valid_cached_data)
         self.assertEqual(data['success']['UNCACHED'], valid_provider_data)
         self.assertIn('FAILED', data['failed'])
-        mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'], start_date=None, period='1y')
+        mock_get_stock_data.assert_called_once_with(['UNCACHED', 'FAILED'], ANY, start_date=None, period='1y')
         self.mock_cache.set.assert_called_once_with('price_yfinance_UNCACHED', valid_provider_data, timeout=ANY)
     
     @patch('app.yf_price_provider.get_stock_data')
@@ -521,7 +522,7 @@ class TestFinancialsEndpoints(BaseDataServiceTest):
         self.assertIn("AAPL", data['success'])
         self.assertIn("MSFT", data['success'])
         self.assertIn("FAILED", data['failed'])
-        mock_get_batch_financials.assert_called_once_with(tickers)
+        mock_get_batch_financials.assert_called_once_with(tickers, ANY)
         self.assertEqual(self.mock_cache.set.call_count, 2)
 
 

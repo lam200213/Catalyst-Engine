@@ -5,14 +5,14 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-10
-Updated yfin financial provider to integrate Rotating Proxies with yfinance; Removed ProviderNoDataError if finnhub returns no Peer data; Debugged failed to call the fallback mechanism when the primary yfinance fetch fails; Ensured the rotating proxy system is used for all yfinance calls.
+Updated test cases in data-service.
 
 ## Key Features
 * **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
 - **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
-- **Leadership Screening**: Evaluates stocks against 10 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
+- **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
 * **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.

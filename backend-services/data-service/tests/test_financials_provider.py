@@ -6,6 +6,7 @@ import datetime as dt
 import os
 import sys
 from curl_cffi.requests import errors as cffi_errors
+from concurrent.futures import ThreadPoolExecutor
 
 # Add the project root to the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -14,6 +15,14 @@ from providers.yfin import financials_provider
 
 class TestYFinanceFinancialsProvider(unittest.TestCase):
     """Consolidated tests for the yfinance financials data provider."""
+
+    def setUp(self):
+        """Set up a ThreadPoolExecutor for tests."""
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    def tearDown(self):
+        """Shutdown the ThreadPoolExecutor."""
+        self.executor.shutdown(wait=True)
 
     @patch('providers.yfin.financials_provider.yf.Ticker')
     def test_primary_fetcher_handles_incomplete_info(self, mock_yfinance_ticker):
@@ -65,7 +74,7 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         tickers_to_test = ['AAPL', 'FAIL']
 
         # --- Act ---
-        results = financials_provider.get_batch_core_financials(tickers_to_test)
+        results = financials_provider.get_batch_core_financials(tickers_to_test, self.executor)
 
         # --- Assert ---
         # The mock function should have been called for each ticker in the batch
