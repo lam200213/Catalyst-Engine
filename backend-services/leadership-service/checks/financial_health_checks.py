@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Constants for market cap ranges (in USD)
 MIN_MARKET_CAP = 300_000_000      # $300M
-MAX_MARKET_CAP = 10_000_000_000    # $10B
+MAX_MARKET_CAP = 20_000_000_000    # $20B
 
 # Constants for float share classification
 LOW_FLOAT_SHARES = 10_000_000      # Under 10 million shares

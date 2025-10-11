@@ -99,10 +99,10 @@ Identifies companies with outstanding financial performance and momentum.
 ### Profile 2: The "High-Potential Setup" 💡
 Identifies companies with structural characteristics that often precede explosive price moves.
 
-#### 5. Small to Mid-Cap ($300M–$10B)
+#### 5. Small to Mid-Cap ($300M–$20B)
 **Logic**: Leadership profiles are typically found in companies with significant room for growth.
 **Function**: check_is_small_to_mid_cap
-**Implementation**: Checks if the company's marketCap is between $300 million and $10 billion.
+**Implementation**: Checks if the company's marketCap is between $300 million and $20 billion.
 
 #### 6. Early-Stage Company (≤10 Years Post-IPO)
 **Logic**: Younger, innovative companies often exhibit the most explosive growth.
