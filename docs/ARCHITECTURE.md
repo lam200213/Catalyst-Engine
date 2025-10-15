@@ -18,7 +18,7 @@
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   ├── data-service/        # Python/Flask - Facade for fetching and caching data
+│   ├── data-service/        # Python/Flask - for fetching and caching data
 │   │   ├── providers/
 │   │   │   ├── __init__.py
 │   │   │   ├── finnhub_provider.py

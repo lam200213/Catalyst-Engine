@@ -4,17 +4,17 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-10
-Change the definition of Small to Mid-Cap from ($300M–$20B) to ($300M–$20B)
+2025-10-15
+Updated documentation
 
 ## Key Features
-* **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
-- **Modular Data Acquisition and Caching**: Utilizes a **Facade Pattern** in the `data-service` to fetch data from source (yfinance), and caches financial data (price/fundamentals from sources, news from MarketAux) to minimize redundant API calls.  
+- **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
+- **Centralized Data Access & Caching**: The `data-service` acts as a data abstraction layer, fetching information from various external sources (e.g., Yahoo Finance, Finnhub). It provides a consistent internal API for other services and implements a Redis caching layer to minimize redundant API calls.  
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
-* **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
+- **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
 
 ## Architecture Overview
@@ -48,7 +48,8 @@ graph LR
             DataService -- "Responds via /price/batch" --> ScreeningService;
             AnalysisService --> DataService;
             LeadershipService --> DataService;
-            DataService <--> MongoDB[(MongoDB Cache)];
+            DataService <--> Redis[(Redis Cache)];
+            DataService <--> MongoDB[(MongoDB Persistence)];
         end
     end
 
