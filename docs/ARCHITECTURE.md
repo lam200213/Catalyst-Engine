@@ -28,11 +28,13 @@
 │   │   │       ├── yahoo_client.py
 │   │   │       ├── price_provider.py
 │   │   │       └── financials_provider.py
+│   │   │       └── market_data__provider.py
 │   │   ├── tests/
 │   │   │   ├── __init__.py
 │   │   │   ├── test_app.py
 │   │   │   ├── test_finnhub_provider.py
 │   │   │   └── test_marketaux_provider.py
+│   │   │   └── test_market_data_provider.py
 │   │   ├── app.py
 │   │   ├── helper_functions.py
 │   │   ├── Dockerfile
@@ -53,6 +55,17 @@
 │   │   ├── helper_functions.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
+│   ├── monitoring-service/
+│   │   ├── tests/
+│   │   │   ├── __init__.py
+│   │   │   ├── test_integration.py
+│   │   │   ├── test_unit.py
+│   │   │   ├── test_market_leaders_logic.py
+│   │   ├── app.py
+│   │   ├── market_health_utils.py
+│   │   ├── market_leaders.py
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
 │   │   ├── tests/
 │   │   │   └── test_screening_logic.py

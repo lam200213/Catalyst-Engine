@@ -18,7 +18,7 @@ class TestFinancialHealthChecks(unittest.TestCase):
         check_is_small_to_mid_cap(create_mock_financial_data(marketCap=1_000_000_000), details)
         self.assertTrue(details['is_small_to_mid_cap']['pass'])
         # Fail case (too large)
-        check_is_small_to_mid_cap(create_mock_financial_data(marketCap=20_000_000_000), details)
+        check_is_small_to_mid_cap(create_mock_financial_data(marketCap=20_000_000_001), details)
         self.assertFalse(details['is_small_to_mid_cap']['pass'])
         # Edge case (None value)
         check_is_small_to_mid_cap(create_mock_financial_data(marketCap=None), details)

@@ -130,7 +130,8 @@ class TestYFinancePriceProvider(unittest.TestCase):
         self.assertIsNone(data)
         mock_mark_delisted.assert_not_called()
 
-    def test_get_single_ticker_data_missing_args(self):
+    @patch('providers.yfin.price_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
+    def test_get_single_ticker_data_missing_args(self, mock_get_auth):
         """Tests that a ValueError is raised if neither start_date nor period is provided."""
         with self.assertRaises(ValueError):
             price_provider._get_single_ticker_data('AAPL', start_date=None, period=None)

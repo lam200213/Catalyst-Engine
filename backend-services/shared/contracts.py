@@ -8,7 +8,7 @@ living documentation for the data structures exchanged between microservices.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypeAlias
+from typing import Any, Dict, List, Optional, TypeAlias, Literal 
 from pydantic import BaseModel, ConfigDict, Field
 
 # --- Contract 1: TickerList ---
@@ -203,7 +203,7 @@ class ScreeningJobResult(BaseModel):
 # --- Contract 10: MarketHealth ---
 class MarketOverview(BaseModel):
     """Market health overview data."""
-    market_stage: str = Field(..., description="The current market stage, e.g., 'Confirmed Uptrend'.")
+    market_stage: Literal['Bullish', 'Bearish', 'Neutral', 'Recovery'] = Field(..., description="Market stage per UI contract.")
     market_correction_depth: float = Field(..., description="The depth of the current market correction as a percentage.")
     high_low_ratio: float = Field(..., description="Ratio of 52-week highs to 52-week lows.")
     new_highs: int = Field(..., description="Absolute count of stocks making new 52-week highs.")

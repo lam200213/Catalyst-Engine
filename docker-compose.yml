@@ -129,6 +129,7 @@ services:
 
   monitoring-service:
     build: ./backend-services/monitoring-service
+    container_name: monitoring-service
     ports:
       - "3006:3006"
     environment:

@@ -730,19 +730,6 @@ def get_day_gainers_candidates():
         logging.error(f"Failed in /market/screener/day_gainers: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route('/data/return/1m/<string:ticker>', methods=['GET'])
-def get_one_month_return(ticker):
-    """Calculates the 1-month percentage return for a given ticker."""
-    try:
-        calculator = ReturnCalculator()
-        change_pct = calculator.one_month_change(ticker)
-        if change_pct is None:
-            return jsonify({"message": f"Could not calculate 1-month return for {ticker}."}), 404
-        return jsonify({"ticker": ticker, "percent_change_1m": change_pct}), 200
-    except Exception as e:
-        logging.error(f"Failed in /data/{ticker}/return/1m: {e}")
-        return jsonify({"error": "Internal server error"}), 500
-
 @app.route('/data/return/1m/batch', methods=['POST'])
 def get_one_month_return_batch():
     """

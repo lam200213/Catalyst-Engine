@@ -1,5 +1,5 @@
 # backend-services/monitoring-service/app.py  
-
+import requests
 from flask import Flask, request, jsonify
 import os
 import logging
@@ -21,7 +21,7 @@ def setup_logging(app):
     log_level = getattr(logging, log_level_str, logging.INFO)
 
     # The filename is now specific to the service and in a dedicated folder.
-    log_file = os.path.join(log_directory, "data_service.log")
+    log_file = os.path.join(log_directory, "monitoring_service.log")
 
     # Create a rotating file handler to prevent log files from growing too large.
     file_handler = RotatingFileHandler(
@@ -51,10 +51,8 @@ def setup_logging(app):
     # Find and configure the loggers from the provider and helper modules
     # This ensures that log messages from background threads are captured correctly.
     module_loggers = [
-        logging.getLogger('providers.yfin.yahoo_client'),
-        logging.getLogger('providers.yfin.price_provider'),
-        logging.getLogger('providers.yfin.financials_provider'),
-        logging.getLogger('providers.yfin.market_leaders'),
+        logging.getLogger('market_health_utils'),
+        logging.getLogger('market_leaders'),
         logging.getLogger('helper_functions')
     ]
     
@@ -63,32 +61,64 @@ def setup_logging(app):
         logger_instance.addHandler(console_handler)
         logger_instance.setLevel(logging.DEBUG)
 
-    app.logger.info("Data service logging initialized.")
+    app.logger.info("Monitoring service logging initialized.")
 # --- End of Logging Setup ---
 setup_logging(app)
 
 # --- 3. Import Project-Specific Modules ---
 from market_health_utils import get_market_health
-from market_leaders import get_market_leaders as get_leaders_data
+from market_leaders import get_market_leaders
 
-@app.route('/market/leaders', methods=['GET'])
+@app.route('/monitor/market-health', methods=['GET'])
+def get_aggregated_market_health():
+    """
+    Orchestrates calls to internal logic functions to build the complete
+    payload for the frontend's market health page.
+    """
+    app.logger.info("Request received for aggregated /monitor/market-health")
+    try:
+        # 1. Get market overview data
+        market_overview_data = get_market_health()
+
+        # 2. Get market leaders data
+        leaders_data = get_market_leaders() # This returns a list of industries
+
+        # 3. Assemble the final response payload according to the contract
+        # The contract expects leaders_by_industry: { leading_industries: [...] }
+        response_payload = {
+            "market_overview": market_overview_data,
+            "leaders_by_industry": {
+                "leading_industries": leaders_data
+            }
+        }
+
+        return jsonify(response_payload), 200
+
+    except requests.exceptions.RequestException as re:
+        app.logger.error(f"Failed to connect to a downstream service: {re}", exc_info=True)
+        return jsonify({"error": "Failed to fetch data from a dependency service."}), 503
+    except Exception as e:
+        app.logger.error(f"An unexpected error occurred in /monitor/market-health: {e}", exc_info=True)
+        return jsonify({"error": "An internal server error occurred"}), 500
+
+@app.route('/monitor/internal/leaders', methods=['GET'])
 def market_leaders():
     """
     Provides a list of leading stocks grouped by industry.
     """
-    logging.info("Request received for /market/leaders")
+    app.logger.info("Request received for /monitor/internal/leaders")
     try:
-        data = get_leaders_data()
+        data = get_market_leaders()
         if not data:
             return jsonify({"message": "No market leader data available at the moment."}), 404
 
         # Contract: { leading_industries: string[], leading_stocks: [{ticker, percent_change_1m}] }
         return jsonify({"leading_industries": data}), 200
     except Exception as e:
-        logging.error(f"Failed to get market leaders: {e}")
+        app.logger.error(f"Failed to get market leaders: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route('/market/health', methods=['GET'])
+@app.route('/monitor/internal/health', methods=['GET'])
 def get_market_health_endpoint():
     """
     Returns a market health snapshot:
@@ -106,7 +136,7 @@ def get_market_health_endpoint():
         payload = get_market_health(universe=universe)
         return jsonify(payload), 200
     except Exception as e:
-        app.logger.error(f"Error in /market/health: {e}", exc_info=True)
+        app.logger.error(f"Error in /monitor/internal/health: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -114,6 +144,11 @@ def get_market_health_endpoint():
 def get_watchlist(user_id):
     # Existing watchlist logic
     pass
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Standard health check endpoint."""
+    return jsonify({"status": "healthy"}), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

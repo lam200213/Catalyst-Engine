@@ -59,6 +59,11 @@ Run all pytest suites with one command
    ./scripts/run_all_tests.sh
    ```
 
+Run all pytest suites in fail-fast mode
+   ```Bash  
+   ./scripts/run_all_tests.sh --fail-fast
+   ```
+
 ### **2.  Checking Inter-Service Network Connectivity**
 
 If you encounter 502 Bad Gateway or 503 Service Unavailable errors in the UI, it often indicates a networking problem between the services or that a specific service has failed to start. You can diagnose this using the network debugging script.

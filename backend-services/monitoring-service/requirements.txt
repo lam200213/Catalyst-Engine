@@ -1,0 +1,10 @@
+# backend-services/monitoring-service/requirements.txt
+flask
+requests
+pandas
+gunicorn
+pymongo
+PyMongo[srv]
+pydantic
+redis
+pytest

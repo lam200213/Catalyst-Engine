@@ -108,14 +108,17 @@ class DayGainersSource(SectorIndustrySource):
 
     def get_industry_top_tickers(self, per_industry_limit: int = 10) -> Dict[str, List[str]]:
         out: Dict[str, List[str]] = {}
-
-        proxy = yahoo_client._get_random_proxy()
-        if proxy:
-            yahoo_client.session.proxies = proxy
-
         try:
-            data = yf.screener.get_screeners('day_gainers', count=200)
-            quotes = data.get("quotes", []) if isinstance(data, dict) else []
+            url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+            params = {
+                "scrIds": "day_gainers",
+                "count": 200
+            }
+            data = yahoo_client.execute_request(url, params=params)
+            
+            # The structure is nested under finance -> result -> [0]
+            quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+            
             for q in quotes:
                 sym = q.get("symbol")
                 ind = q.get("industry")

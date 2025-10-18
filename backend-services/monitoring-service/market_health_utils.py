@@ -2,34 +2,83 @@
 
 from __future__ import annotations
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
 import requests
 
 from helper_functions import check_market_trend_context
 
-
 # Indices to evaluate posture
 INDICES = ['^GSPC', '^DJI', '^IXIC']
 
 # Base URL for calling this service's own HTTP endpoints (batch/single)
-DATA_SERVICE_BASE_URL = os.getenv("DATA_SERVICE_BASE_URL", "http://localhost:3001")
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://localhost:3001")
 
 
-def _to_df(series: List[dict]) -> pd.DataFrame:
-    df = pd.DataFrame(series or [])
+def _to_df(series: Union[List[dict], Dict]) -> pd.DataFrame:
+    """
+    Accepts either:
+    - list[dict] with keys: formatted_date, open, high, low, close, volume
+    - dict[str, list] (dict-of-lists) with the same keys
+
+    Normalizes to a DataFrame indexed by formatted_date.
+    Gracefully handles malformed inputs by returning an empty DataFrame.
+    """
+    if not series:
+        return pd.DataFrame()
+
+    try:
+        if isinstance(series, dict):
+            # Accept dict-of-lists and align lengths defensively
+            keys = ['formatted_date', 'open', 'high', 'low', 'close', 'volume']
+            arrays = {k: series.get(k, []) for k in keys}
+
+            # Determine minimal length across list-like values
+            lengths = [len(v) for v in arrays.values() if isinstance(v, list)]
+            if not lengths:
+                return pd.DataFrame()
+
+            n = min(lengths)
+            # Trim lists to n; broadcast scalars to length n
+            normalized = {}
+            for k, v in arrays.items():
+                if isinstance(v, list):
+                    normalized[k] = v[:n]
+                else:
+                    normalized[k] = [v] * n
+
+            df = pd.DataFrame(normalized)
+        else:
+            # Expected happy path: list of dicts
+            df = pd.DataFrame(series or [])
+    except ValueError:
+        # If pandas complains about inconsistent lengths, fail gracefully
+        return pd.DataFrame()
+
     if df.empty:
         return df
-    df['formatted_date'] = pd.to_datetime(df['formatted_date'])
+
+    # Coerce and index by datetime
+    df['formatted_date'] = pd.to_datetime(df.get('formatted_date'), errors='coerce')
+    df = df.dropna(subset=['formatted_date'])
+    if df.empty:
+        return df
+
     df = df.set_index('formatted_date').sort_index()
-    return df[['open', 'high', 'low', 'close', 'volume']].copy()
+
+    # Return only the canonical OHLCV columns if present
+    cols = [c for c in ['open', 'high', 'low', 'close', 'volume'] if c in df.columns]
+    if not cols:
+        return pd.DataFrame()
+
+    return df[cols].copy()
 
 
 def _fetch_prices_batch(tickers: List[str]) -> Dict[str, List[dict]]:
     """
     Use the app's batch endpoint to fetch price data for many tickers.
     """
-    url = f"{DATA_SERVICE_BASE_URL}/price/batch"
+    url = f"{DATA_SERVICE_URL}/price/batch"
     resp = requests.post(url, json={"tickers": tickers, "source": "yfinance"}, timeout=60)
     resp.raise_for_status()
     payload = resp.json() or {}
@@ -41,7 +90,7 @@ def _fetch_price_single(ticker: str) -> Optional[List[dict]]:
     """
     Fallback to the app's single endpoint to fetch one ticker's price data.
     """
-    url = f"{DATA_SERVICE_BASE_URL}/price/{ticker}?source=yfinance"
+    url = f"{DATA_SERVICE_URL}/price/{ticker}?source=yfinance"
     resp = requests.get(url, timeout=30)
     if resp.status_code != 200:
         return None
@@ -85,10 +134,10 @@ def _build_index_payload(idx_dfs: Dict[str, pd.DataFrame]) -> Dict[str, dict]:
 
 def _map_stage(trend: str) -> str:
     if trend == 'Bullish':
-        return 'Confirmed Uptrend'
+        return 'Bullish'
     if trend == 'Bearish':
-        return 'Confirmed Downtrend'
-    return 'Transition'
+        return 'Bearish'
+    return 'Neutral'
 
 
 def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
