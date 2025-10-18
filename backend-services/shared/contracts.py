@@ -198,3 +198,33 @@ class ScreeningJobResult(BaseModel):
     final_candidates_count: int
     industry_diversity: IndustryDiversity
     final_candidates: List[FinalCandidate]
+
+
+# --- Contract 10: MarketHealth ---
+class MarketOverview(BaseModel):
+    """Market health overview data."""
+    market_stage: str = Field(..., description="The current market stage, e.g., 'Confirmed Uptrend'.")
+    market_correction_depth: float = Field(..., description="The depth of the current market correction as a percentage.")
+    high_low_ratio: float = Field(..., description="Ratio of 52-week highs to 52-week lows.")
+    new_highs: int = Field(..., description="Absolute count of stocks making new 52-week highs.")
+    new_lows: int = Field(..., description="Absolute count of stocks making new 52-week lows.")
+
+class LeadingStock(BaseModel):
+    """Represents a leading stock."""
+    ticker: str
+    percent_change_1m: Optional[float] = Field(None, description="1-month percentage return")
+
+class LeadingIndustry(BaseModel):
+    """Represents a leading industry with its leading stocks, creates the nested structure"""
+    industry: str
+    stocks: List[LeadingStock]
+
+class MarketLeaders(BaseModel):
+    """List of ranked industries"""
+    leading_industries: List[LeadingIndustry]
+
+
+class MarketHealthResponse(BaseModel):
+    """The complete data payload for the /market page, served by the monitor-service."""
+    market_overview: MarketOverview
+    leaders_by_industry: MarketLeaders

@@ -127,6 +127,25 @@ services:
       # for development: Mount local directory to container's /app
       - ./backend-services/shared:/app/shared
 
+  monitoring-service:
+    build: ./backend-services/monitoring-service
+    ports:
+      - "3006:3006"
+    environment:
+      PORT: 3006
+      DATA_SERVICE_URL: http://data-service:3001
+      LOG_LEVEL: INFO
+    depends_on:
+      - mongodb
+      - analysis-service
+      - data-service
+    networks:
+      - app-network
+    volumes:
+      - ./backend-services/monitoring-service:/app
+      # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
+
   ticker-service:
     build: ./backend-services/ticker-service
     container_name: ticker-service

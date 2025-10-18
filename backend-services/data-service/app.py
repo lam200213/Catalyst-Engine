@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from flask_caching import Cache
 import pandas_market_calendars as mcal
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient, errors
@@ -61,6 +61,7 @@ def setup_logging(app):
         logging.getLogger('providers.yfin.yahoo_client'),
         logging.getLogger('providers.yfin.price_provider'),
         logging.getLogger('providers.yfin.financials_provider'),
+        logging.getLogger('providers.yfin.market_leaders'),
         logging.getLogger('helper_functions')
     ]
     
@@ -73,11 +74,12 @@ def setup_logging(app):
 # --- End of Logging Setup ---
 setup_logging(app)
 
-# --- 4. Import Project-Specific Modules ---
+# --- 3. Import Project-Specific Modules ---
 # Import provider modules
 from providers import finnhub_provider, marketaux_provider
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
+from providers.yfin.market_data_provider import SectorIndustrySource, DayGainersSource, ReturnCalculator
 # Import the logic
 from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data
 
@@ -701,6 +703,76 @@ def get_market_trends():
     except Exception as e:
         app.logger.error(f"Error in get_market_trends: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
+
+@app.route('/market/sectors/industries', methods=['GET'])
+def get_sector_industry_candidates():
+    """Provides a list of potential leader stocks sourced from yfinance sectors."""
+    try:
+        source = SectorIndustrySource()
+        data = source.get_industry_top_tickers()
+        if not data:
+            return jsonify({"message": "Could not retrieve sector/industry data."}), 404
+        return jsonify(data), 200
+    except Exception as e:
+        logging.error(f"Failed in /market/sectors/industries: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/market/screener/day_gainers', methods=['GET'])
+def get_day_gainers_candidates():
+    """Provides a list of potential leader stocks sourced from the yfinance day_gainers screener."""
+    try:
+        source = DayGainersSource()
+        data = source.get_industry_top_tickers()
+        if not data:
+            return jsonify({"message": "Could not retrieve day gainers data."}), 404
+        return jsonify(data), 200
+    except Exception as e:
+        logging.error(f"Failed in /market/screener/day_gainers: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/data/return/1m/<string:ticker>', methods=['GET'])
+def get_one_month_return(ticker):
+    """Calculates the 1-month percentage return for a given ticker."""
+    try:
+        calculator = ReturnCalculator()
+        change_pct = calculator.one_month_change(ticker)
+        if change_pct is None:
+            return jsonify({"message": f"Could not calculate 1-month return for {ticker}."}), 404
+        return jsonify({"ticker": ticker, "percent_change_1m": change_pct}), 200
+    except Exception as e:
+        logging.error(f"Failed in /data/{ticker}/return/1m: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@app.route('/data/return/1m/batch', methods=['POST'])
+def get_one_month_return_batch():
+    """
+    Calculates the 1-month percentage return for a batch of tickers.
+    Accepts a JSON payload: {"tickers": ["AAPL", "MSFT", ...]}
+    Returns a dictionary of tickers to their returns.
+    """
+    data = request.get_json()
+    tickers = data.get("tickers")
+
+    if not tickers or not isinstance(tickers, list):
+        return jsonify({"error": "Invalid or missing 'tickers' list in request body"}), 400
+
+    results = {}
+    calculator = ReturnCalculator()
+
+    # Use a ThreadPoolExecutor for concurrent requests
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        # Map each ticker to the one_month_change function
+        future_to_ticker = {executor.submit(calculator.one_month_change, ticker): ticker for ticker in tickers}
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                result = future.result()
+                results[ticker] = result
+            except Exception as e:
+                logging.error(f"Error fetching 1m return for {ticker}: {e}")
+                results[ticker] = None
+    
+    return jsonify(results), 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)
