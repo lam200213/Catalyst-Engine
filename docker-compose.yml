@@ -130,6 +130,7 @@ services:
   monitoring-service:
     build: ./backend-services/monitoring-service
     container_name: monitoring-service
+    restart: unless-stopped
     ports:
       - "3006:3006"
     environment:
@@ -174,6 +175,7 @@ services:
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
       SCHEDULER_SERVICE_URL: http://scheduler-service:3004
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
+      MONITORING_SERVICE_URL: http://monitoring-service:3006
       TICKER_SERVICE_URL: http://ticker-service:5001
       LOG_LEVEL: INFO
     depends_on:
@@ -183,6 +185,7 @@ services:
       - leadership-service
       - scheduler-service
       - ticker-service
+      - monitoring-service
       - redis
     networks:
       - app-network

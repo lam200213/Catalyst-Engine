@@ -87,12 +87,13 @@
 │   ├── src/
 │   │   ├── components/      # Reusable React components
 │   │   ├── hooks/           # Custom React hooks for state logic
-│   │   ├── services/        # API communication logic
-│   │   ├── App.jsx          # Main application orchestrator
+│   │   ├── pages/           # Top-level page components
+│   │   ├── services/        # API communication logic and mockdata
+│   │   ├── App.jsx          # Main application component with routing
 │   │   ├── App.test.jsx
 │   │   ├── main.jsx         # Application entry point
 │   │   ├── setupTests.js
-│   │   └── theme.js
+│   │   └── theme.js         # Chakra UI theme configuration
 │   ├── Dockerfile           # For production builds
 │   ├── Dockerfile.dev       # For development environment
 │   ├── nginx.conf
@@ -143,3 +144,17 @@ To optimize this process, the `screening-service` now communicates with the `dat
 *   **Response:** A JSON object containing the historical price data for all requested tickers.
 
 This batching mechanism significantly reduces the number of HTTP requests between the services, improving performance and efficiency, especially when screening a large number of tickers. The `screening-service` processes the tickers in chunks to avoid overwhelming the `data-service` with a single, massive request.
+
+### Frontend and Monitoring-Service Communication
+
+The Market Health feature introduces a key interaction flow:
+
+1. The frontend-app's /market page initiates a request to the api-gateway at GET /monitor/market-health.
+
+2. The api-gateway proxies this request to the monitoring-service.
+
+3. The monitoring-service acts as an orchestrator. It calls various endpoints on the data-service (e.g., to get market index data, find top-performing industries) to gather the necessary information.
+
+4. The data-service fetches data from external sources or its cache and returns it to the monitoring-service.
+
+5. The monitoring-service aggregates and formats the data into the MarketHealthResponse contract and sends it back up the chain to the frontend-app for rendering.
