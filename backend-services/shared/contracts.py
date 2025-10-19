@@ -204,7 +204,7 @@ class ScreeningJobResult(BaseModel):
 class MarketOverview(BaseModel):
     """Market health overview data."""
     market_stage: Literal['Bullish', 'Bearish', 'Neutral', 'Recovery'] = Field(..., description="Market stage per UI contract.")
-    market_correction_depth: float = Field(..., description="The depth of the current market correction as a percentage.")
+    correction_depth_percent: float = Field(..., description="The depth of the current market correction as a percentage.")
     high_low_ratio: float = Field(..., description="Ratio of 52-week highs to 52-week lows.")
     new_highs: int = Field(..., description="Absolute count of stocks making new 52-week highs.")
     new_lows: int = Field(..., description="Absolute count of stocks making new 52-week lows.")
@@ -225,6 +225,6 @@ class MarketLeaders(BaseModel):
 
 
 class MarketHealthResponse(BaseModel):
-    """The complete data payload for the /market page, served by the monitor-service."""
+    """The complete data payload for the /market page, served by the monitoring-service."""
     market_overview: MarketOverview
     leaders_by_industry: MarketLeaders

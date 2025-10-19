@@ -1,13 +1,21 @@
 # Use the official Node.js image for development
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy package files and install dependencies
-# This is done separately to leverage Docker's layer caching
+# Copy package files
 COPY package*.json ./
-RUN npm install
+
+# We'll run install via the entrypoint to handle volume issues.
+COPY . .
+
+# Copy and make the entrypoint executable.
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Set the entrypoint.
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 # The CMD will be provided by docker-compose, but this is a good default
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

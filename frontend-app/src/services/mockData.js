@@ -20,7 +20,7 @@
 /**
  * @typedef {object} MarketOverview
  * @property {'Bullish' | 'Bearish' | 'Neutral' | 'Recovery'} market_stage
- * @property {number} market_correction_depth - Note: Renamed from correction_depth_percent to match backend contract
+ * @property {number} correction_depth_percent 
  * @property {number} new_highs
  * @property {number} new_lows
  * @property {number} high_low_ratio
@@ -33,7 +33,7 @@
 export const mockMarketHealthResponse = {
   market_overview: {
     market_stage: 'Bullish',
-    market_correction_depth: -4.8,
+    correction_depth_percent: -4.8,
     new_highs: 210,
     new_lows: 45,
     high_low_ratio: 4.67,

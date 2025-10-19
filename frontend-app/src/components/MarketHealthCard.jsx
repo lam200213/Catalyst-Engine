@@ -6,7 +6,7 @@ import { Box, Heading, SimpleGrid, Text, Stat, StatLabel, StatNumber } from '@ch
 const MarketHealthCard = ({ marketOverview }) => {
     const {
         market_stage,
-        market_correction_depth,
+        correction_depth_percent,
         new_highs,
         new_lows,
         high_low_ratio,
@@ -26,7 +26,7 @@ const MarketHealthCard = ({ marketOverview }) => {
                 </Stat>
                 <Stat>
                     <StatLabel color="gray.400">Correction Depth</StatLabel>
-                    <StatNumber>{market_correction_depth.toFixed(1)}%</StatNumber>
+                    <StatNumber>{correction_depth_percent.toFixed(1)}%</StatNumber>
                 </Stat>
                 <Stat>
                     <StatLabel color="gray.400">Highs:Lows Ratio</StatLabel>

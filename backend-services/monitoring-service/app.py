@@ -123,7 +123,7 @@ def get_market_health_endpoint():
     """
     Returns a market health snapshot:
     - market_stage
-    - market_correction_depth (percent from 52w high on ^GSPC)
+    - correction_depth_percent (percent from 52w high on ^GSPC)
     - high_low_ratio
     - new_highs, new_lows (explicit counts)
     Optional query: ?tickers=AAPL,MSFT,... for breadth universe.

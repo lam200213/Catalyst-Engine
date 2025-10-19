@@ -169,7 +169,7 @@ def test_get_market_health_happy_path_with_fallback(mock_batch, mock_single, moc
     assert result["market_stage"] == "Bullish"
     # Compute correction depth for ^GSPC using last row close vs high_52_week
     # With close 4500 and high_52 5000, expect -10.0
-    assert result["market_correction_depth"] == -10.0
+    assert result["correction_depth_percent"] == -10.0
     # Universe highs/lows: H at high, N neutral -> highs=1, lows=0, ratio=inf
     assert result["new_highs"] == 1
     assert result["new_lows"] == 0
@@ -190,7 +190,7 @@ def test_market_overview_market_stage_literal_enforced():
     # Valid should pass
     MarketOverview(
         market_stage="Bullish",
-        market_correction_depth=0.0,
+        correction_depth_percent=0.0,
         high_low_ratio=1.0,
         new_highs=0,
         new_lows=0
@@ -199,7 +199,7 @@ def test_market_overview_market_stage_literal_enforced():
     with pytest.raises(Exception):
         MarketOverview(
             market_stage="Confirmed Uptrend",  # invalid per contract
-            market_correction_depth=0.0,
+            correction_depth_percent=0.0,
             high_low_ratio=1.0,
             new_highs=0,
             new_lows=0

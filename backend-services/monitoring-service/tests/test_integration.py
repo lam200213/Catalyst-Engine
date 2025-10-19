@@ -81,7 +81,7 @@ def test_get_monitor_market_health_dependency_mocks(mock_mhu_post, mock_mhu_get,
     assert "market_overview" in data and "leaders_by_industry" in data
     mo = data["market_overview"]
     assert mo["market_stage"] in ("Bullish", "Bearish", "Neutral", "Recovery")
-    assert isinstance(mo["market_correction_depth"], float)
+    assert isinstance(mo["correction_depth_percent"], float)
     assert isinstance(mo["high_low_ratio"], float)
     assert isinstance(mo["new_highs"], int)
     assert isinstance(mo["new_lows"], int)

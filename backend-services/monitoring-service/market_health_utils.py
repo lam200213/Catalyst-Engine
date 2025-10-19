@@ -217,7 +217,7 @@ def get_market_health(universe: Optional[List[str]] = None) -> dict:
     # 5) Payload aligned to plan naming
     return {
         "market_stage": market_stage,
-        "market_correction_depth": correction_depth,
+        "correction_depth_percent": correction_depth,
         "high_low_ratio": ratio,
         "new_highs": highs,
         "new_lows": lows
