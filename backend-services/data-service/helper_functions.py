@@ -6,6 +6,7 @@ import os
 from typing import List
 from pydantic import ValidationError, TypeAdapter
 from shared.contracts import PriceDataItem, CoreFinancials
+import pandas_market_calendars as mcal
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -214,3 +215,63 @@ def mark_ticker_as_delisted(ticker: str, reason: str):
     finally:
         if 'client' in locals() and client:
             client.close()
+
+# helper to check if cached data covers the requested period/date range
+# trading-day-aware cache coverage validation using pandas_market_calendars
+def cache_covers_request(cached_data: list, req_period: str | None, req_start: str | None) -> bool:
+    """
+    Check if cached price data covers the requested time range using NYSE trading calendar.
+    Returns True if cache has sufficient trading-day coverage for the request.
+    """
+    if not cached_data:
+        return False
+    
+    try:
+        import pandas_market_calendars as mcal
+        from datetime import datetime, date, timedelta
+        
+        # Get the earliest and latest dates from cached data
+        dates = [item.get('formatted_date') for item in cached_data if item.get('formatted_date')]
+        if not dates:
+            return False
+        
+        cache_start = min(dates)
+        cache_end = max(dates)
+        cache_start_dt = datetime.fromisoformat(cache_start).date()
+        
+        # If specific start_date requested, simple date comparison
+        if req_start:
+            req_start_dt = datetime.fromisoformat(req_start).date()
+            return cache_start_dt <= req_start_dt
+        
+        # If period requested, calculate required start using trading calendar
+        if req_period:
+            today = date.today()
+            
+            # Map period to approximate calendar days for initial range
+            period_days = {
+                "1mo": 35, "3mo": 95, "6mo": 185, "1y": 370,
+                "2y": 740, "5y": 1850, "10y": 3700
+            }.get(req_period, 370)
+            
+            # Calculate the nominal start date
+            required_start_approx = today - timedelta(days=period_days)
+            
+            # Use NYSE calendar to get valid trading days in the period
+            nyse = mcal.get_calendar('NYSE')
+            schedule = nyse.schedule(start_date=required_start_approx, end_date=today)
+            
+            if schedule.empty:
+                return True  # No trading days expected, cache is sufficient
+            
+            # Get the actual required start date (first trading day in the period)
+            valid_trading_dates = schedule.index.strftime('%Y-%m-%d')
+            required_start_trading = min(valid_trading_dates)
+            required_start_dt = datetime.fromisoformat(required_start_trading).date()
+            
+            # Check if cache starts early enough for the first required trading day
+            return cache_start_dt <= required_start_dt
+            
+        return True  # No specific requirement, cache is OK
+    except Exception:
+        return False  # On any parsing error, refetch to be safe

@@ -13,6 +13,9 @@ from typing import Dict, List, Tuple, Optional
 from curl_cffi import requests as cffi_requests
 from typing import List, Dict, Any
 from collections import defaultdict
+import os
+import re
+from typing import Iterable
 
 from . import yahoo_client # Use relative import
 
@@ -21,6 +24,12 @@ import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+# canonical sector keys from yfinance docs
+SECTOR_KEYS = [
+    "basic-materials","communication-services","consumer-cyclical","consumer-defensive",
+    "energy","financial-services","healthcare","industrials","real-estate","technology","utilities",
+]
 
 class SectorIndustrySource:
     """Abstract source of industry -> candidate tickers mapping."""
@@ -33,71 +42,148 @@ class YahooSectorIndustrySource(SectorIndustrySource):
     def __init__(self, sector_keys: Optional[List[str]] = None):
         self._sector_keys = sector_keys
         # Prefer discovering sectors dynamically; allow override via config
+        # soft limits to avoid long blocking calls
+        self._max_sectors: int = int(os.getenv("YF_MAX_SECTORS", "3"))
+        self._max_industries_per_sector: int = int(os.getenv("YF_MAX_INDUSTRIES_PER_SECTOR", "5"))
+        self._max_seconds: int = int(os.getenv("YF_MAX_SECONDS", "12"))
 
     def _discover_sector_keys(self) -> List[str]:
         # If explicit keys provided, use them
+        
         if self._sector_keys:
             return self._sector_keys
 
         # Fallback list is intentionally minimal; can be configured externally
         # Attempt to probe a small known set to avoid hardcoding all values
-        return [
-            "technology",
-            "communication-services",
-            "healthcare",
-            "financial-services",
-            "industrials",
-            "consumer-cyclical",
-            "consumer-defensive",
-            "energy",
-            "real-estate",
-            "basic-materials",
-            "utilities",
-        ]
+        # preserve ordering but enforce a soft cap
+        return SECTOR_KEYS[: self._max_sectors]
 
+    # helper to parse symbols from a DataFrame row 'name' like "Company (TICK)"
+    def _parse_symbol_from_name(self, name: str) -> Optional[str]:
+        if not name or not isinstance(name, str):
+            return None
+        m = re.search(r"\(([A-Za-z.\-]{1,6})\)", name)
+        if m:
+            return m.group(1)
+        # Fallback: if the name itself looks like a ticker
+        if re.fullmatch(r"[A-Za-z.\-]{1,6}", name):
+            return name
+        return None
+
+    # Yahoo search fallback for a company name -> symbol
+    def _search_symbol_for_name(self, name: str) -> Optional[str]:
+        try:
+            url = "https://query2.finance.yahoo.com/v1/finance/search"
+            params = {"q": name, "lang": "en-US", "region": "US", "quotesCount": 1}
+            data = yahoo_client.execute_request(url, params=params)
+            quotes = (data or {}).get("quotes") or []
+            for q in quotes:
+                sym = q.get("symbol")
+                qt = (q.get("quoteType") or "").upper()
+                if sym and qt in ("EQUITY", "ETF", "MUTUALFUND"):
+                    return sym
+        except Exception:
+            pass
+        return None
+
+    # normalize symbols from the top_performing_companies table
+    def _resolve_symbols_from_top_df(self, top_df: pd.DataFrame, limit: int) -> List[str]:
+        syms: List[str] = []
+        if not isinstance(top_df, pd.DataFrame) or top_df.empty:
+            return syms
+
+        # 1) Direct column
+        if "symbol" in top_df.columns:
+            syms = top_df["symbol"].dropna().astype(str).tolist()
+
+        # 2) Index labeled as symbol/ticker
+        if not syms:
+            idx_name = getattr(top_df.index, "name", None)
+            if idx_name in ("symbol", "ticker", "Symbol", "Ticker"):
+                syms = top_df.index.dropna().astype(str).tolist()
+
+        # 3) Parse from 'name' column patterns like "NVIDIA (NVDA)"
+        if not syms and "name" in top_df.columns:
+            for name in top_df["name"].dropna().astype(str).tolist():
+                sym = self._parse_symbol_from_name(name)
+                if sym:
+                    syms.append(sym)
+                if len(syms) >= limit:
+                    break
+
+        # 4) Yahoo search fallback for remaining rows if still short
+        if len(syms) < limit and "name" in top_df.columns:
+            for name in top_df["name"].dropna().astype(str).tolist():
+                if len(syms) >= limit:
+                    break
+                # Skip if already parsed this symbol pattern
+                maybe = self._parse_symbol_from_name(name)
+                if maybe and maybe in syms:
+                    continue
+                sym = self._search_symbol_for_name(name)
+                if sym:
+                    syms.append(sym)
+
+        # Final gate: enforce ticker-like format and limit
+        out = []
+        for s in syms:
+            if re.fullmatch(r"[A-Za-z.\-]{1,6}", s):
+                out.append(s)
+            if len(out) >= limit:
+                break
+        return out
+
+    @yahoo_client.retry_on_failure(attempts=3, delay=2, backoff=2)
     def get_industry_top_tickers(self, per_industry_limit: int = 10) -> Dict[str, List[str]]:
+        
         out: Dict[str, List[str]] = {}
+        started = time.time()
 
         # Use a random proxy for this batch
         proxy = yahoo_client._get_random_proxy()
         if proxy:
             yahoo_client.session.proxies = proxy
 
-        for skey in self._discover_sector_keys():
+        for s in self._discover_sector_keys():
+            # respect global time budget
+            if time.time() - started > self._max_seconds:
+                break
             try:
-                sector = yf.Sector(skey, session=yahoo_client.session)
-                inds_df = getattr(sector, "industries", None)
-                if not isinstance(inds_df, pd.DataFrame) or inds_df.empty:
-                    logger.debug(f"No industries for sector {skey}")
+                sec = yf.Sector(s, session=yahoo_client.session)  
+                inds_df = getattr(sec, "industries", None)  # DataFrame of industries
+                if inds_df is None or getattr(inds_df, "empty", True):
                     continue
-
-                for _, row in inds_df.iterrows():
-                    ind_key = str(row.get("key", "")).strip()
-                    ind_name = str(row.get("name", "")).strip() or ind_key
-                    if not ind_key:
-                        continue
-
+                
+                # handle index-labeled "key"
+                ind_keys = (
+                    inds_df["key"].dropna().astype(str).tolist()
+                    if "key" in getattr(inds_df, "columns", [])
+                    else inds_df.index.dropna().astype(str).tolist()
+                )
+                for ind_key in ind_keys[: self._max_industries_per_sector]:
+                    if time.time() - started > self._max_seconds:
+                        break
                     try:
-                        industry = yf.Industry(ind_key, session=yahoo_client.session)
-                        top_df = getattr(industry, "top_performing_companies", None)
-                        if isinstance(top_df, pd.DataFrame) and "symbol" in top_df.columns:
-                            syms = [str(s) for s in top_df["symbol"].dropna().astype(str).tolist()]
-                            if syms:
-                                out[ind_name] = syms[:per_industry_limit]
-                        else:
-                            # If top_performing_companies unavailable, try top_growth_companies
-                            growth_df = getattr(industry, "top_growth_companies", None)
-                            if isinstance(growth_df, pd.DataFrame) and "symbol" in growth_df.columns:
-                                syms = [str(s) for s in growth_df["symbol"].dropna().astype(str).tolist()]
-                                if syms:
-                                    out[ind_name] = syms[:per_industry_limit]
-                    except Exception as ie:
-                        logger.debug(f"Industry fetch failed for {ind_key}: {ie}")
+                        ind = yf.Industry(ind_key, session=yahoo_client.session)
+                        # combine performing and growth candidates
+                        perf_df = getattr(ind, "top_performing_companies", None)
+                        growth_df = getattr(ind, "top_growth_companies", None)
+                        candidates: List[str] = []
+                        candidates += self._resolve_symbols_from_top_df(perf_df, per_industry_limit * 2) if perf_df is not None else []
+                        candidates += self._resolve_symbols_from_top_df(growth_df, per_industry_limit * 2) if growth_df is not None else []
+                        # de-duplicate while preserving order
+                        seen = set()
+                        cleaned = []
+                        for c in candidates:
+                            if c not in seen:
+                                seen.add(c)
+                                cleaned.append(c)
+                        if cleaned:
+                            out[ind_key] = cleaned[:per_industry_limit]
+                    except Exception:
                         continue
-            except Exception as se:
-                logger.debug(f"Sector fetch failed for {skey}: {se}")
+            except Exception:
                 continue
-
         return out
 
 
@@ -121,8 +207,9 @@ class DayGainersSource(SectorIndustrySource):
             
             for q in quotes:
                 sym = q.get("symbol")
-                ind = q.get("industry")
-                if not sym or not ind:
+                # tolerate missing industry
+                ind = q.get("industry") or "Unclassified"
+                if not sym:
                     continue
                 bucket = out.setdefault(ind, [])
                 if len(bucket) < per_industry_limit:

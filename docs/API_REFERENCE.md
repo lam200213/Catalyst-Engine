@@ -10,19 +10,23 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```
 
 * **GET `/price/:ticker`**
-    * Proxies to: `data-service`
-    * Retrieves historical price data for a ticker, with caching.
-    * **Note:** The `source` parameter is handled by the `data-service` directly, not the gateway.
-    * **Data Contract:** Produces [`PriceData`](./DATA_CONTRACTS.md#2-pricedata).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/price/AAPL?source=yfinance
-    ```
+  - Proxies to: `data-service`
+  - Retrieves historical price data for a ticker, with caching.
+  - **Query Parameters**:
+        - `source` (optional): The data source, e.g., 'yfinance'. Defaults to 'yfinance'.
+        - `period` (optional): The period of data to fetch (e.g., "1y", "6mo", "max"). Overridden by `start_date`. Defaults to "1y".
+        - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
+      * **Data Contract:** Produces [`PriceData`](./DATA_CONTRACTS.md#2-pricedata).
+    - **Example Usage:**
+      ```bash
+      curl http://localhost:3000/price/AAPL?source=yfinance&period=6mo
+      curl http://localhost:3000/price/AAPL?start_date=2023-01-01
+      ```
 
 * **GET `/news/:ticker`**
-    * Proxies to: `data-service`
-    * Retrieves recent news articles for a ticker, with caching.
-    * **Data Contract:** Produces [`NewsData`](./DATA_CONTRACTS.md#4-newsdata).
+  - Proxies to: `data-service`
+  - Retrieves recent news articles for a ticker, with caching.
+  - **Data Contract:** Produces [`NewsData`](./DATA_CONTRACTS.md#4-newsdata).
   - **Example Usage:**
     ```bash
     curl http://localhost:3000/news/AAPL
@@ -31,13 +35,17 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
 - **POST `/price/batch`**
   - Proxies to: `data-service`
   - Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
-  - **Data Contract:** The `success` object contains key-value pairs where each value adheres to the [`PriceData`](./DATA_CONTRACTS.md#2-pricedata) contract.
-  - **Example Usage:**
-    ```bash
-    curl -X POST http://localhost:3000/price/batch \
-      -H "Content-Type: application/json" \
-      -d '{"tickers": ["AAPL", "GOOGL", "MSFT", "FAKETICKER"], "source": "yfinance"}'
-    ```
+  - **Request Body (JSON):**
+      - `tickers` (required): A list of stock ticker strings.
+      - `source` (required): The data source, e.g., 'yfinance'.
+      - `period` (optional): The period of data to fetch (e.g., "1y", "6mo"). Overridden by `start_date`. Defaults to "1y".
+      - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
+    - **Example Usage:**
+      ```bash
+      curl -X POST http://localhost:3000/price/batch \
+        -H "Content-Type: application/json" \
+        -d '{"tickers": ["AAPL", "GOOGL"], "source": "yfinance", "period": "6mo"}'
+      ```
   - **Response Body (JSON):**
     - Returns two lists: `success` for tickers where data was retrieved, and `failed` for tickers that could not be processed.
     ```json
@@ -391,6 +399,44 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
+- **GET `/monitor/market-health`**
+  - Proxies to: `monitoring-service`
+  - Purpose: Orchestrates calls to internal logic functions to build the complete data payload for the frontend's market health page.
+  - **Data Contract**: Produces [`MarketHealthResponse`](./DATA_CONTRACTS.md#10-markethealth).
+  - **Example Usage**:
+    ```bash
+    curl http://localhost:3000/monitor/market-health
+    ```
+  - **Example Success Response**:
+    ```json
+    {
+      "market_overview": {
+        "market_stage": "Bullish",
+        "correction_depth_percent": -5.2,
+        "high_low_ratio": 2.0,
+        "new_highs": 150,
+        "new_lows": 75
+      },
+      "leaders_by_industry": {
+        "leading_industries": [
+          {
+            "industry": "Semiconductors",
+            "stocks": [
+              { "ticker": "NVDA", "percent_change_1m": 15.5 },
+              { "ticker": "AVGO", "percent_change_1m": 11.2 }
+            ]
+          },
+          {
+            "industry": "Software - Infrastructure",
+            "stocks": [
+              { "ticker": "CRWD", "percent_change_1m": 12.1 }
+            ]
+          }
+        ]
+      }
+    }
+    ```
+
 # Internal Service Communication
 
 ## `scheduler-service` -> `analysis-service`
@@ -602,5 +648,116 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
               "total_passed": 1,
               "execution_time": 5.123
           }
+      }
+      ```
+- **GET `/market/sectors/industries`**
+  - Service: `data-service`
+  - Purpose: Provides a list of potential leader stocks, grouped by industry, sourced from Yahoo Finance sectors. This is a primary data source for the `monitoring-service`.
+  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      response = requests.get(f"{data_service_url}/market/sectors/industries")
+      industry_candidates = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "Semiconductors": ["NVDA", "AVGO", "QCOM", "AMD", "INTC"],
+        "Software - Infrastructure": ["MSFT", "CRWD", "NET", "SNOW"]
+      }
+      ```
+
+- **GET `/market/screener/day_gainers`**
+  - Service: `data-service`
+  - Purpose: Provides a fallback list of potential leader stocks, grouped by industry, sourced from the Yahoo Finance "Day Gainers" screener.
+  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      response = requests.get(f"{data_service_url}/market/screener/day_gainers")
+      gainer_candidates = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "Application Software": ["APP", "UIP"],
+        "Internet Content & Information": ["GOOGL", "META"]
+      }
+      ```
+
+- **POST `/data/return/1m/batch`**
+  - Service: `data-service`
+  - Purpose: Calculates the 1-month percentage return for a batch of tickers. Used by the `monitoring-service` to efficiently gather performance data for ranking industries.
+  - **Data Contract:** N/A (Custom Response: `Dict[str, float | None]`)
+  - **Request Body**:
+      ```json
+      {
+        "tickers": ["NVDA", "AAPL", "FAKETICKER"]
+      }
+      ```
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      payload = {"tickers": ["NVDA", "AAPL", "FAKETICKER"]}
+      response = requests.post(f"{data_service_url}/data/return/1m/batch", json=payload)
+      returns = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "NVDA": 15.5,
+        "AAPL": 8.2,
+        "FAKETICKER": null
+      }
+      ```
+- **GET `/monitor/internal/leaders`**
+  - Service: `monitoring-service`
+  - Purpose: Provides a ranked list of leading stocks grouped by industry, based on 1-month performance. This logic is consumed by the main `/monitor/market-health` endpoint.
+  - **Data Contract**: Produces [`MarketLeaders`](./DATA_CONTRACTS.md#10-markethealth).
+  - **Example Usage (from within the monitoring service)**:
+      ```python
+      # This is called internally, not a direct HTTP request from outside.
+      from market_leaders import get_market_leaders
+      leaders_data = get_market_leaders()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "leading_industries": [
+          {
+            "industry": "Semiconductors",
+            "stocks": [
+              { "ticker": "NVDA", "percent_change_1m": 15.5 },
+              { "ticker": "AVGO", "percent_change_1m": 11.2 }
+            ]
+          }
+        ]
+      }
+      ```
+
+- **GET `/monitor/internal/health`**
+  - Service: `monitoring-service`
+  - Purpose: Returns a market health snapshot including market stage, correction depth, and new high/low statistics. This logic is consumed by the main `/monitor/market-health` endpoint.
+  - **Query Parameters**:
+    - `tickers` (optional): A comma-separated string of tickers to use as the universe for breadth calculation (e.g., `?tickers=AAPL,MSFT,GOOGL`).
+  - **Data Contract**: Produces [`MarketOverview`](./DATA_CONTRACTS.md#10-markethealth).
+  - **Example Usage (from within the monitoring service)**:
+      ```python
+      # This is called internally, not a direct HTTP request from outside.
+      from market_health_utils import get_market_health
+      health_data = get_market_health(universe=["AAPL", "MSFT"])
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "market_stage": "Bullish",
+        "correction_depth_percent": -5.2,
+        "high_low_ratio": 2.0,
+        "new_highs": 150,
+        "new_lows": 75
       }
       ```

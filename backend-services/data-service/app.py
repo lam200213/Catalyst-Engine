@@ -79,9 +79,9 @@ setup_logging(app)
 from providers import finnhub_provider, marketaux_provider
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
-from providers.yfin.market_data_provider import SectorIndustrySource, DayGainersSource, ReturnCalculator
+from providers.yfin.market_data_provider import DayGainersSource, ReturnCalculator, YahooSectorIndustrySource
 # Import the logic
-from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data
+from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data, cache_covers_request
 
 # --- Flask-Caching Setup ---
 # Configuration for Redis Cache. The URL is provided by the environment.
@@ -251,13 +251,17 @@ def get_batch_data():
     cached_results = {}
     missed_tickers = []
 
+    # Extract requested period/start for coverage checks
+    req_period = (payload.get('period') or "").lower()
+    req_start = payload.get('start_date')
+
     # Find all documents where the ticker is in the requested list and source matches
     for ticker in tickers:
         cache_key = f"price_{source}_{ticker}"
         data = cache.get(cache_key)
         if data:
             validated_data = validate_and_prepare_price_data(data, ticker)
-            if validated_data:
+            if validated_data and cache_covers_request(validated_data, req_period, req_start):
                 cached_results[ticker] = validated_data
             else:
                 app.logger.warning(f"Cached price data for {ticker} is invalid, refetching.")
@@ -273,11 +277,20 @@ def get_batch_data():
 
     if missed_tickers:
         if source == 'yfinance':
-            period_to_fetch = "1y"
+            allowed_periods = {"1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
+            period_to_fetch = None
+            start_to_fetch = None
+            if isinstance(req_start, str) and req_start:
+                start_to_fetch = req_start
+            elif req_period in allowed_periods:
+                period_to_fetch = req_period
+            else:
+                period_to_fetch = "1y"
+
             fetched_data = yf_price_provider.get_stock_data(
                 missed_tickers, 
                 executor,
-                start_date=None, 
+                start_date=start_to_fetch, 
                 period=period_to_fetch
             )
             if fetched_data:
@@ -357,10 +370,26 @@ def get_data(ticker: str):
 
     data = None
     if source == 'yfinance':
+        
+        # read optional query params
+        req_period = request.args.get('period')
+        req_start = request.args.get('start_date')
+
         # If no new_start_date is given, default to a 1-year data range.
         # This is used for initial data population or full cache refreshes.
         # Otherwise, an incremental fetch is performed using start_date.
-        period_to_fetch = "1y" if not new_start_date else None
+
+        # validate and choose period/start
+        allowed_periods = {"1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
+        period_to_fetch = None
+        new_start_date = None
+        if req_start:
+            new_start_date = req_start  # expect ISO YYYY-MM-DD; downstream provider validates
+        elif req_period and req_period in allowed_periods:
+            period_to_fetch = req_period
+        else:
+            period_to_fetch = "1y" # default to 1 year
+
         # yfinance supports incremental fetching via the `start_date` parameter.
         data = yf_price_provider.get_stock_data(
             ticker, 
@@ -708,13 +737,22 @@ def get_market_trends():
 def get_sector_industry_candidates():
     """Provides a list of potential leader stocks sourced from yfinance sectors."""
     try:
-        source = SectorIndustrySource()
+        source = YahooSectorIndustrySource()
         data = source.get_industry_top_tickers()
         if not data:
+            logging.warning("sectors/industries returned no quotes; Yahoo response likely empty or blocked.")
+            # fallback to day_gainers to avoid 404 and client timeouts
+            try:
+                fallback = DayGainersSource().get_industry_top_tickers()
+                if fallback:
+                    app.logger.info("Serving fallback day_gainers map for sectors/industries request.")
+                    return jsonify(fallback), 200
+            except Exception as _e:
+                app.logger.warning(f"Day gainers fallback failed: {_e}")
             return jsonify({"message": "Could not retrieve sector/industry data."}), 404
         return jsonify(data), 200
     except Exception as e:
-        logging.error(f"Failed in /market/sectors/industries: {e}")
+        logging.error(f"Failed in /market/sectors/industries: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/market/screener/day_gainers', methods=['GET'])
@@ -724,10 +762,11 @@ def get_day_gainers_candidates():
         source = DayGainersSource()
         data = source.get_industry_top_tickers()
         if not data:
+            logging.warning("day_gainers returned no quotes; Yahoo response likely empty or blocked.")
             return jsonify({"message": "Could not retrieve day gainers data."}), 404
         return jsonify(data), 200
     except Exception as e:
-        logging.error(f"Failed in /market/screener/day_gainers: {e}")
+        logging.error(f"Failed in /market/screener/day_gainers: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/data/return/1m/batch', methods=['POST'])

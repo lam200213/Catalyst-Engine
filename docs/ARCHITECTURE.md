@@ -64,6 +64,7 @@
 │   │   ├── app.py
 │   │   ├── market_health_utils.py
 │   │   ├── market_leaders.py
+│   │   ├── helper_functions.py
 │   │   ├── Dockerfile
 │   │   ├── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria

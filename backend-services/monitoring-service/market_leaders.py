@@ -28,36 +28,40 @@ class IndustryRanker:
             top_industries: int = 5,
             top_stocks_per_industry: int = 3) -> List[Dict[str, Any]]:
 
-        ranked_industries: List[Dict[str, Any]] = []
-        industry_scores = []
+        def _to_float(val) -> Optional[float]:
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, (list, tuple)) and len(val) > 0:
+                return _to_float(val[0])
+            if isinstance(val, dict):
+                for k in ("percent_change_1m", "return_1m", "ret_1m", "one_month", "value"):
+                    if k in val:
+                        return _to_float(val[k])
+            return None
 
-        # Compute average returns per industry
-        for industry, stock_returns in industry_to_returns.items():
-            valid_returns = [r for _, r in stock_returns if r is not None]
-            if not valid_returns:
+        industry_scores: List[Tuple[str, float]] = []
+        for ind, items in industry_to_returns.items():
+            # items is List[Tuple[ticker, return_like]]
+            vals = [_to_float(r) for (_, r) in items]
+            vals = [v for v in vals if isinstance(v, (int, float))]
+            if not vals:
                 continue
-            avg_return = sum(valid_returns) / len(valid_returns)
-            industry_scores.append((industry, avg_return, stock_returns))
+            avg_return = sum(vals) / len(vals)
+            industry_scores.append((ind, avg_return))
 
-        # Sort industries by their average performance
         industry_scores.sort(key=lambda x: x[1], reverse=True)
-
-        # Build the final structure
-        for industry, _, stock_returns in industry_scores[:top_industries]:
-            # Sort stocks within this industry by performance
-            sorted_stocks = sorted([s for s in stock_returns if s[1] is not None], key=lambda x: x[1], reverse=True)
-
-            industry_payload = {
-                "industry": industry,
-                "stocks": [
-                    {"ticker": ticker, "percent_change_1m": perf}
-                    for ticker, perf in sorted_stocks[:top_stocks_per_industry]
-                ]
-            }
-            if industry_payload["stocks"]: # Only add if there are stocks
-                ranked_industries.append(industry_payload)
-
-        return ranked_industries
+        ranked: List[Dict[str, Any]] = []
+        for ind, _ in industry_scores[:top_industries]:
+            items = industry_to_returns.get(ind, [])
+            entries = [(t, _to_float(r)) for (t, r) in items]
+            entries = [(t, r) for (t, r) in entries if isinstance(r, (int, float))]
+            entries.sort(key=lambda tr: tr[1], reverse=True)
+            top = entries[:top_stocks_per_industry]
+            ranked.append({
+                "industry": ind,
+                "stocks": [{"ticker": t, "percent_change_1m": r} for (t, r) in top]
+            })
+        return ranked
 
 
 class MarketLeadersService:
@@ -69,7 +73,7 @@ class MarketLeadersService:
     def _fetch_candidates_from_source(self, url: str) -> Optional[Dict[str, List[str]]]:
         """Fetches candidate tickers from a data-service endpoint."""
         try:
-            resp = requests.get(url, timeout=45)
+            resp = requests.get(url, timeout=120)
             if resp.status_code == 200:
                 return resp.json()
             logger.warning(f"Candidate source at {url} returned status {resp.status_code}")

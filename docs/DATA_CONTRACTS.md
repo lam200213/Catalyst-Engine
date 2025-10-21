@@ -550,3 +550,126 @@ A summary document detailing the statistics and results of a completed screening
       }
     }
     ```
+---
+
+## 10. MarketHealth
+
+This is the comprehensive data payload for the frontend's Market Health page, providing a full overview of market conditions and leadership trends in a single object.
+
+-   **Producer:** `monitoring-service`
+-   **Consumer(s):** `frontend-app`
+-   **Pydantic Model:** `MarketHealthResponse`
+-   **Description:** This contract aggregates two key pieces of information: a high-level `market_overview` (including the market stage, correction depth, and breadth indicators) and a detailed breakdown of the current market `leaders_by_industry`. This structure allows the UI to build the entire Market page from a single API call.
+-   **JSON Schema:**
+    ```json
+    {
+      "title": "MarketHealthResponse",
+      "type": "object",
+      "properties": {
+        "market_overview": {
+          "$ref": "#/definitions/MarketOverview"
+        },
+        "leaders_by_industry": {
+          "$ref": "#/definitions/MarketLeaders"
+        }
+      },
+      "required": [
+        "market_overview",
+        "leaders_by_industry"
+      ],
+      "definitions": {
+        "MarketOverview": {
+          "title": "MarketOverview",
+          "type": "object",
+          "properties": {
+            "market_stage": {
+              "description": "Market stage per UI contract.",
+              "enum": [
+                "Bullish",
+                "Bearish",
+                "Neutral",
+                "Recovery"
+              ],
+              "type": "string"
+            },
+            "correction_depth_percent": {
+              "description": "The depth of the current market correction as a percentage.",
+              "type": "number"
+            },
+            "high_low_ratio": {
+              "description": "Ratio of 52-week highs to 52-week lows.",
+              "type": "number"
+            },
+            "new_highs": {
+              "description": "Absolute count of stocks making new 52-week highs.",
+              "type": "integer"
+            },
+            "new_lows": {
+              "description": "Absolute count of stocks making new 52-week lows.",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "market_stage",
+            "correction_depth_percent",
+            "high_low_ratio",
+            "new_highs",
+            "new_lows"
+          ]
+        },
+        "LeadingStock": {
+          "title": "LeadingStock",
+          "type": "object",
+          "properties": {
+            "ticker": {
+              "type": "string"
+            },
+            "percent_change_1m": {
+              "description": "1-month percentage return",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ticker"
+          ]
+        },
+        "LeadingIndustry": {
+          "title": "LeadingIndustry",
+          "type": "object",
+          "properties": {
+            "industry": {
+              "type": "string"
+            },
+            "stocks": {
+              "items": {
+                "$ref": "#/definitions/LeadingStock"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "industry",
+            "stocks"
+          ]
+        },
+        "MarketLeaders": {
+          "title": "MarketLeaders",
+          "type": "object",
+          "properties": {
+            "leading_industries": {
+              "items": {
+                "$ref": "#/definitions/LeadingIndustry"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "leading_industries"
+          ]
+        }
+      }
+    }
+    ```

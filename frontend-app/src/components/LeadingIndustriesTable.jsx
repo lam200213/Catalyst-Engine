@@ -7,41 +7,74 @@ import {
 } from '@chakra-ui/react';
 
 const LeadingIndustriesTable = ({ marketLeaders }) => {
+  // Normalize to an array of { industry, stocks }
+  const normalizeLeaders = (leaders) => {
+    if (!leaders) return [];
+    const li = leaders.leading_industries;
+    // Case 1: correct shape (Array)
+    if (Array.isArray(li)) return li;
+    // Case 2: backend returns keyed object like { "Semiconductors": ["NVDA", ...], ... }
+    if (li && typeof li === 'object') {
+      return Object.entries(li).map(([industry, stocks]) => {
+        const normalizedStocks = Array.isArray(stocks)
+          ? (typeof stocks[0] === 'string'
+              ? stocks.map((t) => ({ ticker: t, percent_change_1m: null }))
+              : stocks)
+          : [];
+        return { industry, stocks: normalizedStocks };
+      });
+    }
+    // Fallback
+    return [];
+  };
+
+  const industries = normalizeLeaders(marketLeaders);
+
+  if (!industries.length) {
     return (
-        <Box bg="gray.700" p={6} borderRadius="lg" boxShadow="xl">
-            <Heading as="h3" size="md" color="blue.300" mb={4}>
-                Leading Industries & Stocks
-            </Heading>
-            <TableContainer>
-                <Table variant="simple" size="sm">
-                    <Thead>
-                        <Tr>
-                            <Th>Industry</Th>
-                            <Th>Leading Stocks (1-Month Return)</Th>
-                        </Tr>
-                    </Thead>
-                    <Tbody>
-                        {marketLeaders.leading_industries.map(({ industry, stocks }) => (
-                            <Tr key={industry}>
-                                <Td>
-                                    <Text fontWeight="medium">{industry}</Text>
-                                </Td>
-                                <Td>
-                                    <HStack spacing={2}>
-                                        {stocks.map(({ ticker, percent_change_1m }) => (
-                                            <Tag key={ticker} colorScheme="green" variant="subtle">
-                                                {ticker}: {percent_change_1m.toFixed(1)}%
-                                            </Tag>
-                                        ))}
-                                    </HStack>
-                                </Td>
-                            </Tr>
-                        ))}
-                    </Tbody>
-                </Table>
-            </TableContainer>
-        </Box>
+      <Box>
+        <Heading size="md" mb={3}>Leading Industries & Stocks</Heading>
+        <Text color="gray.400">No leaders available.</Text>
+      </Box>
     );
+  }
+
+  return (
+    <Box>
+      <Heading size="md" mb={3}>Leading Industries & Stocks</Heading>
+      <TableContainer>
+        <Table variant="simple" size="sm">
+          <Thead>
+            <Tr>
+              <Th>Industry</Th>
+              <Th>Leading Stocks (1-Month Return)</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {industries.map(({ industry, stocks }) => (
+              <Tr key={industry}>
+                <Td>{industry}</Td>
+                <Td>
+                  <VStack align="start" spacing={1}>
+                    {(stocks || []).map(({ ticker, percent_change_1m }) => (
+                      <HStack key={ticker} spacing={2}>
+                        <Tag>{ticker}</Tag>
+                        <Text>
+                          {percent_change_1m !== null && percent_change_1m !== undefined
+                            ? `${percent_change_1m.toFixed(1)}%`
+                            : '—'}
+                        </Text>
+                      </HStack>
+                    ))}
+                  </VStack>
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
 };
 
 export default LeadingIndustriesTable;

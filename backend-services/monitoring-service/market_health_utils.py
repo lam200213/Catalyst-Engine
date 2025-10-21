@@ -79,10 +79,15 @@ def _fetch_prices_batch(tickers: List[str]) -> Dict[str, List[dict]]:
     Use the app's batch endpoint to fetch price data for many tickers.
     """
     url = f"{DATA_SERVICE_URL}/price/batch"
-    resp = requests.post(url, json={"tickers": tickers, "source": "yfinance"}, timeout=60)
+    payload = {
+        "tickers": tickers,
+        "source": "yfinance",
+        "period": "2y" 
+    }
+    resp = requests.post(url, json=payload, timeout=60)
     resp.raise_for_status()
-    payload = resp.json() or {}
-    success = payload.get("success") or {}
+    result = resp.json() or {}
+    success = result.get("success") or {}
     return success
 
 
@@ -121,7 +126,7 @@ def _build_index_payload(idx_dfs: Dict[str, pd.DataFrame]) -> Dict[str, dict]:
         if df is None or df.empty:
             payload[sym] = {}
             continue
-        last = df.iloc[-1]
+        last = df.iloc[-2]
         payload[sym] = {
             'current_price': float(last['close']) if pd.notna(last['close']) else None,
             'sma_50': float(last['sma_50']) if pd.notna(last['sma_50']) else None,

@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-19
-Develop monitoring-service Day 4
+2025-10-21
+Develop monitoring-service Day 4-5: constructed the UI; implement cache coverage validation, update price single and batch endpoints to accept query params period and start_date in data-service
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -13,6 +13,7 @@ Develop monitoring-service Day 4
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
+- **Market & Portfolio Monitoring**: Provides a high-level market health overview, tracks leading industries, and allows users to manage a personal watchlist and portfolio.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
 - **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.
@@ -40,6 +41,7 @@ graph LR
             APIGateway --> ScreeningService[Screening Service];
             APIGateway --> AnalysisService[Analysis Service];
             APIGateway --> LeadershipService[Leadership Service];
+            APIGateway --> MonitoringService[Monitoring Service];
         end
 
         subgraph Data Layer
@@ -48,6 +50,8 @@ graph LR
             DataService -- "Responds via /price/batch" --> ScreeningService;
             AnalysisService --> DataService;
             LeadershipService --> DataService;
+            MonitoringService --> DataService;
+            MonitoringService --> MongoDB;
             DataService <--> Redis[(Redis Cache)];
             DataService <--> MongoDB[(MongoDB Persistence)];
         end
