@@ -116,13 +116,13 @@ def test_build_index_dfs_length_thresholds():
     dfs_252 = mhu._build_index_dfs(idx_data_252)
 
     # Below threshold -> last high_52_week NaN, sma_200 NaN
-    last_251 = dfs_251["^GSPC"].iloc[-1]
+    last_251 = dfs_251["^GSPC"].iloc[-2]
     assert pd.isna(last_251["high_52_week"])
 # A 200-day SMA is valid with 251 data points, so it should not be NaN.
     assert pd.notna(last_251["sma_200"])
 
     # At threshold -> high_52_week not NaN (but sma_200 still depends on 200+ points and should be defined)
-    last_252 = dfs_252["^GSPC"].iloc[-1]
+    last_252 = dfs_252["^GSPC"].iloc[-2]
     assert pd.notna(last_252["high_52_week"])
     assert pd.notna(last_252["sma_200"])
 

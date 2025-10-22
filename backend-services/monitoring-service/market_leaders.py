@@ -73,7 +73,7 @@ class MarketLeadersService:
     def _fetch_candidates_from_source(self, url: str) -> Optional[Dict[str, List[str]]]:
         """Fetches candidate tickers from a data-service endpoint."""
         try:
-            resp = requests.get(url, timeout=120)
+            resp = requests.get(url, timeout=180)
             if resp.status_code == 200:
                 return resp.json()
             logger.warning(f"Candidate source at {url} returned status {resp.status_code}")

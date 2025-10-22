@@ -17,7 +17,7 @@ import os
 import re
 from typing import Iterable
 
-from . import yahoo_client # Use relative import
+from . import yahoo_client, price_provider # Use relative import
 
 #DEBUG
 import logging
@@ -43,9 +43,9 @@ class YahooSectorIndustrySource(SectorIndustrySource):
         self._sector_keys = sector_keys
         # Prefer discovering sectors dynamically; allow override via config
         # soft limits to avoid long blocking calls
-        self._max_sectors: int = int(os.getenv("YF_MAX_SECTORS", "3"))
-        self._max_industries_per_sector: int = int(os.getenv("YF_MAX_INDUSTRIES_PER_SECTOR", "5"))
-        self._max_seconds: int = int(os.getenv("YF_MAX_SECONDS", "12"))
+        self._max_sectors: int = int(os.getenv("YF_MAX_SECTORS", "11"))
+        self._max_industries_per_sector: int = int(os.getenv("YF_MAX_INDUSTRIES_PER_SECTOR", "10"))
+        self._max_seconds: int = int(os.getenv("YF_MAX_SECONDS", "180"))
 
     def _discover_sector_keys(self) -> List[str]:
         # If explicit keys provided, use them
@@ -139,15 +139,15 @@ class YahooSectorIndustrySource(SectorIndustrySource):
         out: Dict[str, List[str]] = {}
         started = time.time()
 
-        # Use a random proxy for this batch
-        proxy = yahoo_client._get_random_proxy()
-        if proxy:
-            yahoo_client.session.proxies = proxy
-
         for s in self._discover_sector_keys():
             # respect global time budget
             if time.time() - started > self._max_seconds:
                 break
+            
+            # Use a random proxy for this batch
+            proxy = yahoo_client._get_random_proxy()
+            if proxy:
+                yahoo_client.session.proxies = proxy
             try:
                 sec = yf.Sector(s, session=yahoo_client.session)  
                 inds_df = getattr(sec, "industries", None)  # DataFrame of industries
@@ -163,6 +163,10 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                 for ind_key in ind_keys[: self._max_industries_per_sector]:
                     if time.time() - started > self._max_seconds:
                         break
+                    # Use a random proxy for this try
+                    proxy = yahoo_client._get_random_proxy()
+                    if proxy:
+                        yahoo_client.session.proxies = proxy
                     try:
                         ind = yf.Industry(ind_key, session=yahoo_client.session)
                         # combine performing and growth candidates
@@ -221,26 +225,29 @@ class DayGainersSource(SectorIndustrySource):
 
 class ReturnCalculator:
     """Computes 1-month percent change for a ticker."""
-    def __init__(self, session=None):
-        yahoo_client.session = session or yahoo_client.session
+    def __init__(self, session=None, executor=None):
+        if session is not None:
+            yahoo_client.session = session
+        self.executor = executor
 
     def one_month_change(self, symbol: str) -> Optional[float]:
         try:
-            # Rotate proxy for history batch segments periodically
-            proxy = yahoo_client._get_random_proxy()
-            if proxy:
-                yahoo_client.session.proxies = proxy
-
-            hist = yf.Ticker(symbol, session=yahoo_client.session).history(period="1mo", interval="1d")
-            if hist is None or hist.empty or "Close" not in hist:
+            data = price_provider.get_stock_data(
+                symbol,
+                executor=self.executor,  # may be None; provider will handle
+                period="1mo"
+            )
+            if not data or not isinstance(data, list):
                 return None
-            closes = hist["Close"].dropna()
-            if len(closes) < 2:
+            # exclude today's partial; use last bar with date < today
+            today_str = dt.date.today().strftime("%Y-%m-%d")
+            series = [row for row in data if row.get("formatted_date") and row["formatted_date"] < today_str]
+            if len(series) < 2:
                 return None
-            start = float(closes.iloc[0])
-            end = float(closes.iloc[-1])
+            start = float(series[0]["close"])
+            end = float(series[-1]["close"])
             pct = round((end - start) / start * 100.0, 2)
             return pct
         except Exception as e:
-            logger.debug(f"history(period='1mo') failed for {symbol}: {e}")
+            logger.debug(f"1mo change via price_provider failed for {symbol}: {e}")
             return None

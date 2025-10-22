@@ -260,11 +260,15 @@ def get_batch_data():
         cache_key = f"price_{source}_{ticker}"
         data = cache.get(cache_key)
         if data:
-            validated_data = validate_and_prepare_price_data(data, ticker)
-            if validated_data and cache_covers_request(validated_data, req_period, req_start):
-                cached_results[ticker] = validated_data
+            validated = validate_and_prepare_price_data(data, ticker)
+            if validated:
+                if cache_covers_request(validated, req_period, req_start):
+                    cached_results[ticker] = validated
+                else:
+                    app.logger.info(f"Cache coverage insufficient for {ticker} (period={req_period or 'default'} start={req_start or '-'}) — refetching.")
+                    missed_tickers.append(ticker)
             else:
-                app.logger.warning(f"Cached price data for {ticker} is invalid, refetching.")
+                app.logger.warning(f"Cached price data for {ticker} failed validation, refetching.")
                 missed_tickers.append(ticker)
         else:
             missed_tickers.append(ticker)
@@ -783,10 +787,10 @@ def get_one_month_return_batch():
         return jsonify({"error": "Invalid or missing 'tickers' list in request body"}), 400
 
     results = {}
-    calculator = ReturnCalculator()
 
     # Use a ThreadPoolExecutor for concurrent requests
     with ThreadPoolExecutor(max_workers=20) as executor:
+        calculator = ReturnCalculator(executor=executor)
         # Map each ticker to the one_month_change function
         future_to_ticker = {executor.submit(calculator.one_month_change, ticker): ticker for ticker in tickers}
         for future in as_completed(future_to_ticker):

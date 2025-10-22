@@ -1,7 +1,7 @@
 # data-service/helper_functions.py
 import logging
 from pymongo import MongoClient, errors
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 import os
 from typing import List
 from pydantic import ValidationError, TypeAdapter
@@ -230,14 +230,13 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
         import pandas_market_calendars as mcal
         from datetime import datetime, date, timedelta
         
-        # Get the earliest and latest dates from cached data
-        dates = [item.get('formatted_date') for item in cached_data if item.get('formatted_date')]
+        # Extract cache bounds and size
+        dates = [d for d in (item.get("formatted_date") for item in cached_data) if d]
         if not dates:
             return False
-        
-        cache_start = min(dates)
-        cache_end = max(dates)
-        cache_start_dt = datetime.fromisoformat(cache_start).date()
+        cache_start_dt = datetime.fromisoformat(min(dates)).date()
+        cache_end_dt = datetime.fromisoformat(max(dates)).date()
+        row_count = len(dates)
         
         # If specific start_date requested, simple date comparison
         if req_start:
@@ -246,32 +245,37 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
         
         # If period requested, calculate required start using trading calendar
         if req_period:
-            today = date.today()
+            yesterday = date.today() - timedelta(days=1)
             
             # Map period to approximate calendar days for initial range
-            period_days = {
-                "1mo": 35, "3mo": 95, "6mo": 185, "1y": 370,
-                "2y": 740, "5y": 1850, "10y": 3700
-            }.get(req_period, 370)
+            approx_days = {
+                "1mo": 31, "3mo": 92, "6mo": 183, "1y": 365,
+                "2y": 730, "5y": 1826, "10y": 3652
+            }.get(req_period, 365)
             
             # Calculate the nominal start date
-            required_start_approx = today - timedelta(days=period_days)
-            
+            approx_start = yesterday - timedelta(days=approx_days)
+
             # Use NYSE calendar to get valid trading days in the period
-            nyse = mcal.get_calendar('NYSE')
-            schedule = nyse.schedule(start_date=required_start_approx, end_date=today)
+            nyse = mcal.get_calendar("NYSE")
+            schedule = nyse.schedule(start_date=approx_start, end_date=yesterday)
             
             if schedule.empty:
                 return True  # No trading days expected, cache is sufficient
             
-            # Get the actual required start date (first trading day in the period)
-            valid_trading_dates = schedule.index.strftime('%Y-%m-%d')
-            required_start_trading = min(valid_trading_dates)
-            required_start_dt = datetime.fromisoformat(required_start_trading).date()
-            
-            # Check if cache starts early enough for the first required trading day
-            return cache_start_dt <= required_start_dt
-            
-        return True  # No specific requirement, cache is OK
+            # First required trading day in the period
+            required_start_dt = datetime.fromisoformat(schedule.index[0].strftime("%Y-%m-%d")).date()
+
+            # Accept by boundary OR by bar count (daily bars)
+            min_rows = {
+                "1mo": 18, "3mo": 55, "6mo": 120, "1y": 240,
+                "2y": 480, "5y": 1200, "10y": 2400
+            }.get(req_period, 240)
+
+            return cache_start_dt <= required_start_dt or row_count >= min_rows
+
+        # No strict requirement; accept
+        return True
     except Exception:
-        return False  # On any parsing error, refetch to be safe
+        # On error, force a refetch to be safe
+        return False

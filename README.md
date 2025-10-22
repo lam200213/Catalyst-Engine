@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-21
-Develop monitoring-service Day 4-5: constructed the UI; implement cache coverage validation, update price single and batch endpoints to accept query params period and start_date in data-service
+Debugged price fetching issue for non default period; Use price_provider for 1m returns; 
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

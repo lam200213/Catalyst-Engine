@@ -11,9 +11,7 @@ from helper_functions import check_market_trend_context
 # Indices to evaluate posture
 INDICES = ['^GSPC', '^DJI', '^IXIC']
 
-# Base URL for calling this service's own HTTP endpoints (batch/single)
-DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://localhost:3001")
-
+DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 
 def _to_df(series: Union[List[dict], Dict]) -> pd.DataFrame:
     """
@@ -148,7 +146,7 @@ def _map_stage(trend: str) -> str:
 def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
     if spx_df is None or spx_df.empty:
         return 0.0
-    last = spx_df.iloc[-1]
+    last = spx_df.iloc[-2] # the last workday before
     high_52 = last.get('high_52_week')
     close = last.get('close')
     if pd.isna(high_52) or not high_52 or pd.isna(close):
@@ -166,7 +164,7 @@ def _count_new_highs_lows(universe_data: Dict[str, List[dict]]) -> Tuple[int, in
             continue
         hi = df['high'].max()
         lo = df['low'].min()
-        cp = df['close'].iloc[-1]
+        cp = df['close'].iloc[-2]
         if pd.notna(hi) and pd.notna(cp) and cp >= hi * 0.98:
             highs += 1
         if pd.notna(lo) and pd.notna(cp) and cp <= lo * 1.02:

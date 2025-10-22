@@ -47,6 +47,13 @@ session = cffi_requests.Session(impersonate=random.choice(SUPPORTED_IMPERSONATE_
 _YAHOO_CRUMB = None
 _AUTH_LOCK = threading.Lock()
 
+# explicit crumb refresh helper
+def _refresh_yahoo_auth():
+    global _YAHOO_CRUMB
+    with _AUTH_LOCK:
+        _YAHOO_CRUMB = None
+        return _get_yahoo_auth()
+
 def _get_random_user_agent() -> str:
     """Returns a random user-agent from the list."""
     return random.choice(USER_AGENTS)
