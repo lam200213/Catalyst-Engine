@@ -3,8 +3,8 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from typing import Dict, List
-
-from app import app
+import pandas as pd
+import yfinance as yf
 
 # Reuse the same base test setup patterns as existing tests
 # to maintain consistency in mocking cache and db.
@@ -14,9 +14,12 @@ from . import test_app
 # Also includes provider-level unit tests that mock raw inputs to validate parsing and thresholds.
 
 class TestSectorIndustryEndpoint(test_app.BaseDataServiceTest):
-    @patch('app.SectorIndustrySource')
+    # Correct patch path
+    @patch('app.YahooSectorIndustrySource')
     def test_sectors_industries_success_200(self, mock_source_cls):
         """GET /market/sectors/industries: success path and structure/type checks."""
+        # ensure cache is missed to prevent mock object serialization
+        self.mock_cache.get.return_value = None
         mock_source = MagicMock()
         mock_source.get_industry_top_tickers.return_value = {
             "Semiconductors": ["NVDA", "AMD"],
@@ -38,21 +41,32 @@ class TestSectorIndustryEndpoint(test_app.BaseDataServiceTest):
             for s in v:
                 self.assertIsInstance(s, str)
 
-    @patch('app.SectorIndustrySource')
-    def test_sectors_industries_empty_404(self, mock_source_cls):
-        """GET /market/sectors/industries: returns 404 when source returns empty mapping."""
-        mock_source = MagicMock()
-        mock_source.get_industry_top_tickers.return_value = {}
-        mock_source_cls.return_value = mock_source
+    # Correct patch path and add fallback test
+    @patch('app.DayGainersSource')
+    @patch('app.YahooSectorIndustrySource')
+    def test_sectors_industries_fallback_on_empty(self, mock_sector_source_cls, mock_gainer_source_cls):
+        """GET /market/sectors/industries: returns 200 with fallback data when primary source is empty."""
+        self.mock_cache.get.return_value = None
+        # Primary source returns empty
+        mock_sector_source = MagicMock()
+        mock_sector_source.get_industry_top_tickers.return_value = {}
+        mock_sector_source_cls.return_value = mock_sector_source
+        
+        # Fallback source returns data
+        fallback_data = {"From Gainers": ["GNR"]}
+        mock_gainer_source = MagicMock()
+        mock_gainer_source.get_industry_top_tickers.return_value = fallback_data
+        mock_gainer_source_cls.return_value = mock_gainer_source
 
         resp = self.client.get('/market/sectors/industries')
-        self.assertEqual(resp.status_code, 404)
-        self.assertIn("message", resp.json)
-        self.assertIn("Could not retrieve sector/industry data.", resp.json["message"])
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json, fallback_data)
 
-    @patch('app.SectorIndustrySource')
+    # Correct patch path
+    @patch('app.YahooSectorIndustrySource')
     def test_sectors_industries_exception_500(self, mock_source_cls):
         """GET /market/sectors/industries: security—generic 500 without leaking details."""
+        self.mock_cache.get.return_value = None
         mock_source = MagicMock()
         mock_source.get_industry_top_tickers.side_effect = RuntimeError("Backend failure")
         mock_source_cls.return_value = mock_source
@@ -64,9 +78,11 @@ class TestSectorIndustryEndpoint(test_app.BaseDataServiceTest):
 
 
 class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
+    # Correct patch path
     @patch('app.DayGainersSource')
     def test_day_gainers_success_200(self, mock_source_cls):
         """GET /market/screener/day_gainers: success path and structure/type checks."""
+        self.mock_cache.get.return_value = None
         mock_source = MagicMock()
         mock_source.get_industry_top_tickers.return_value = {
             "Consumer Electronics": ["AAPL"],
@@ -86,9 +102,11 @@ class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
             for s in v:
                 self.assertIsInstance(s, str)
 
+    # Correct patch path
     @patch('app.DayGainersSource')
     def test_day_gainers_empty_404(self, mock_source_cls):
         """GET /market/screener/day_gainers: returns 404 when source returns empty mapping."""
+        self.mock_cache.get.return_value = None
         mock_source = MagicMock()
         mock_source.get_industry_top_tickers.return_value = {}
         mock_source_cls.return_value = mock_source
@@ -98,9 +116,11 @@ class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
         self.assertIn("message", resp.json)
         self.assertIn("Could not retrieve day gainers data.", resp.json["message"])
 
+    # Correct patch path
     @patch('app.DayGainersSource')
     def test_day_gainers_exception_500(self, mock_source_cls):
         """GET /market/screener/day_gainers: security—generic 500 without leaking details."""
+        self.mock_cache.get.return_value = None
         mock_source = MagicMock()
         mock_source.get_industry_top_tickers.side_effect = ValueError("Bad parse")
         mock_source_cls.return_value = mock_source
@@ -109,7 +129,6 @@ class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
         self.assertEqual(resp.status_code, 500)
         self.assertIn("error", resp.json)
         self.assertEqual(resp.json["error"], "Internal server error")
-
 
 class TestReturnBatchEndpoint(test_app.BaseDataServiceTest):
     @patch('app.ReturnCalculator')
@@ -294,6 +313,87 @@ class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
         result = calc.one_month_change("NVDA")
         self.assertIsNone(result)
 
+class TestProviderLogic(test_app.BaseDataServiceTest):
+    """Unit tests for provider-level business logic, independent of Flask routes."""
+
+    @patch('providers.yfin.market_data_provider.yf.Industry')
+    @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
+    def test_yahoo_sector_source_parsing_and_dedup(self, mock_search, mock_industry_cls):
+        """YahooSectorIndustrySource: Test symbol parsing and list merging/deduplication."""
+        from providers.yfin.market_data_provider import YahooSectorIndustrySource
+
+        # Arrange
+        mock_industry_instance = MagicMock()
+        # Table with 'name' column needing parsing, no 'symbol' column
+        perf_df = pd.DataFrame({"name": ["NVIDIA (NVDA)", "AMD (AMD)", "Intel Corp"]})
+        # Table with overlapping and new symbols
+        growth_df = pd.DataFrame({"symbol": ["GOOG", "NVDA"]})
+        
+        mock_industry_instance.top_performing_companies = perf_df
+        mock_industry_instance.top_growth_companies = growth_df
+        mock_industry_cls.return_value = mock_industry_instance
+        
+        # Mock the fallback search for 'Intel Corp'
+        mock_search.return_value = {"quotes": [{"symbol": "INTC", "quoteType": "EQUITY"}]}
+
+        # Act
+        source = YahooSectorIndustrySource(sector_keys=['technology']) # Force one sector
+        # Mock the discovery part to simplify
+        source._discover_sector_keys = lambda: ['technology']
+        # Mock Sector to return a dummy industries DataFrame
+        with patch('providers.yfin.market_data_provider.yf.Sector') as mock_sector_cls:
+            mock_sector_instance = MagicMock()
+            mock_sector_instance.industries = pd.DataFrame(index=['semiconductors'])
+            mock_sector_cls.return_value = mock_sector_instance
+            
+            result = source.get_industry_top_tickers(per_industry_limit=5)
+
+        # Assert
+        self.assertIn("semiconductors", result)
+        # Expected order: perf_df symbols first, then unique growth_df symbols
+        # NVDA, AMD from perf_df
+        # INTC from search fallback on perf_df
+        # GOOG from growth_df (NVDA is a duplicate and should be ignored)
+        expected_tickers = ["NVDA", "AMD", "INTC", "GOOG"]
+        self.assertEqual(result["semiconductors"], expected_tickers)
+
+    @patch('providers.yfin.market_data_provider.price_provider.get_stock_data')
+    def test_return_calculator_logic(self, mock_get_price_data):
+        """ReturnCalculator.one_month_change: Test various data scenarios."""
+        from providers.yfin.market_data_provider import ReturnCalculator
+        from datetime import date, timedelta
+
+        today = date.today()
+        calc = ReturnCalculator()
+
+        # Case 1: len(series) < 2 -> None
+        mock_get_price_data.return_value = [
+            {'close': 100.0, 'formatted_date': (today - timedelta(days=5)).strftime('%Y-%m-%d')}
+        ]
+        self.assertIsNone(calc.one_month_change("TICK1"))
+
+        # Case 2: len(series) == 2 -> Correct calculation
+        mock_get_price_data.return_value = [
+            {'close': 100.0, 'formatted_date': (today - timedelta(days=30)).strftime('%Y-%m-%d')},
+            {'close': 110.0, 'formatted_date': (today - timedelta(days=2)).strftime('%Y-%m-%d')}
+        ]
+        self.assertEqual(calc.one_month_change("TICK2"), 10.0)
+
+        # Case 3: Empty data -> None
+        mock_get_price_data.return_value = []
+        self.assertIsNone(calc.one_month_change("TICK3"))
+
+        # Case 4: None data -> None
+        mock_get_price_data.return_value = None
+        self.assertIsNone(calc.one_month_change("TICK4"))
+
+        # Case 5: Today's partial bar is correctly excluded
+        mock_get_price_data.return_value = [
+            {'close': 100.0, 'formatted_date': (today - timedelta(days=30)).strftime('%Y-%m-%d')},
+            {'close': 110.0, 'formatted_date': (today - timedelta(days=2)).strftime('%Y-%m-%d')},
+            {'close': 999.0, 'formatted_date': today.strftime('%Y-%m-%d')} # This should be ignored
+        ]
+        self.assertEqual(calc.one_month_change("TICK5"), 10.0)
 
 if __name__ == '__main__':
     unittest.main()

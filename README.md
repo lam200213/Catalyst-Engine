@@ -4,12 +4,12 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-21
-Debugged price fetching issue for non default period; Use price_provider for 1m returns; 
+2025-10-22
+Implement feature of re-auth (refresh crumb) under the same Session after auth failures; Introduced health scoring and cooldowns per identity, Weighted random choice and Diversify signals per request to avoid the proxy pool get exhausted easily. Add caching and region control to /market/sectors/industries, /market/screener/day_gainers; Refactored the cache cleaning feature, introduced a prefix-targeted scan/delete, correctly clear the "industry" cache patterns and safer for multi-tenant Redis; Refactored the shared “incremental cache” decision-making into a small, pure helper that returns a fetch plan, then reuse it in both single and batch routes.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
-- **Centralized Data Access & Caching**: The `data-service` acts as a data abstraction layer, fetching information from various external sources (e.g., Yahoo Finance, Finnhub). It provides a consistent internal API for other services and implements a Redis caching layer to minimize redundant API calls.  
+- **Centralized Data Access & Caching**: The `data-service` acts as a data abstraction layer, fetching information from various external sources (e.g., Yahoo Finance, Finnhub). It provides a consistent internal API for other services and implements a Redis caching layer to minimize redundant API calls. It features a robust, centralized client for external Yahoo Finance requests, which implements an advanced retry and identity rotation policy (proxies, user agents, browser profiles) to ensure resilient and reliable data fetching. All data providers within the service route network I/O through this client for consistent behavior.
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.

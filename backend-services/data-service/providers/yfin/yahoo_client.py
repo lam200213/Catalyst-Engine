@@ -1,15 +1,22 @@
 # backend-services/data-service/providers/yfin/yahoo_client.py
 from curl_cffi import requests as cffi_requests
-import threading
 import logging
-import random
 from functools import wraps
-import time
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import errors as cffi_errors
+import os, time, json, random, threading
+from typing import Optional, Dict, Any, List, Tuple
 
 # Get a child logger
 logger = logging.getLogger(__name__)
+
+# Constants
+_POOL_SIZE = int(os.getenv("YF_POOL_SIZE", "12"))
+_TIMEOUT = int(os.getenv("YF_REQUEST_TIMEOUT", "12"))
+_CRUMB_TTL_SECONDS = int(os.getenv("YF_CRUMB_TTL_SECONDS", "600"))
+
+# simple health tracking and weighted pick
+_ID_HEALTH = {}  # identity_id -> {'fail': int, 'cooldown_until': ts}
 
 # A list of user-agents to rotate through
 USER_AGENTS = [
@@ -32,27 +39,20 @@ SUPPORTED_IMPERSONATE_PROFILES = [
 ]
 
 # Proxies are now loaded from an environment variable for better configuration management.
-import os # Add os import for environment variable access
 PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
 if PROXIES:
     logger.info(f"Successfully loaded {len(PROXIES)} proxies from environment.")
 else:
     logger.warning("YAHOO_FINANCE_PROXIES environment variable not set or is empty. No proxies will be used.")
 
-# A single session is created with a random profile when the service starts.
-# This session is reused for all requests to maintain authentication cookies (for the crumb).
-# User-agents and proxies are rotated on each request to avoid fingerprinting.
-session = cffi_requests.Session(impersonate=random.choice(SUPPORTED_IMPERSONATE_PROFILES))
+def _should_rotate(status_code: int, body_text: str) -> bool:
+    if status_code in (401, 403, 429):
+        return True
+    t = (body_text or "").lower()
+    return "too many requests" in t or "rate limit" in t
 
-_YAHOO_CRUMB = None
-_AUTH_LOCK = threading.Lock()
-
-# explicit crumb refresh helper
-def _refresh_yahoo_auth():
-    global _YAHOO_CRUMB
-    with _AUTH_LOCK:
-        _YAHOO_CRUMB = None
-        return _get_yahoo_auth()
+def _pick_profile() -> str:
+    return random.choice(SUPPORTED_IMPERSONATE_PROFILES)
 
 def _get_random_user_agent() -> str:
     """Returns a random user-agent from the list."""
@@ -72,87 +72,203 @@ def _get_random_proxy() -> dict | None:
     # logger.info(f"Using proxy: {chosen_proxy}")
     return {"http": chosen_proxy, "https": chosen_proxy}
 
-def _get_yahoo_auth():
-    """
-    Performs an initial request to Yahoo Finance to get the necessary
-    cookies and the API 'crumb' for authenticated requests.
-    This is thread-safe to prevent multiple requests in a concurrent environment.
-    """
-    global _YAHOO_CRUMB
-    # Use a lock to ensure only one thread tries to get the crumb at a time
-    with _AUTH_LOCK:
-        # If another thread already got the crumb while this one was waiting, just return it
-        if _YAHOO_CRUMB:
-            return _YAHOO_CRUMB
+# identity structure and pool
+class _Identity:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.session = None
+        self.crumb: Optional[str] = None
+        self.expiry: float = 0.0
+        self.profile: Optional[str] = None
+        self.proxy: Optional[Dict[str, str]] = None
+        self._bootstrap()
 
-        logger.debug("No auth crumb found. Fetching new one...")
+    def _bootstrap(self):
+        self.profile = _pick_profile()
+        self.proxy = _get_random_proxy()
+        self.session = cffi_requests.Session(impersonate=self.profile)
+
+    def ensure_crumb(self) -> Optional[str]:
+        now = time.time()
+        if self.crumb and now < self.expiry:
+            return self.crumb
+        with self.lock:
+            # re-check after acquiring lock
+            if self.crumb and time.time() < self.expiry:
+                return self.crumb
+            return self._refresh_crumb_locked()
+
+    def rotate_and_refresh(self, reason: str) -> Optional[str]:
+        with self.lock:
+            self.profile = _pick_profile()
+            self.proxy = _get_random_proxy()
+            self.session = cffi_requests.Session(impersonate=self.profile)
+            return self._refresh_crumb_locked(reason)
+
+    def _refresh_crumb_locked(self, reason: str = "initial") -> Optional[str]:
+        headers = {"User-Agent": _get_random_user_agent()}
         try:
-            # The 'getcrumb' endpoint is a reliable way to get a valid crumb
-            crumb_url = "https://query1.finance.yahoo.com/v1/test/getcrumb"
-            headers = {'User-Agent': _get_random_user_agent()}
-            proxy = _get_random_proxy()
-
-            # The session object will automatically store the required cookies
-            crumb_response = session.get(
-                crumb_url,
+            resp = self.session.get(
+                "https://query1.finance.yahoo.com/v1/test/getcrumb",
                 headers=headers,
-                proxies=proxy,
-                impersonate="chrome110",
-                timeout=10
+                proxies=self.proxy,
+                impersonate=self.profile,
+                timeout=_TIMEOUT,
             )
-            crumb_response.raise_for_status()
-            _YAHOO_CRUMB = crumb_response.text
-            logger.debug(f"Successfully fetched new crumb: {_YAHOO_CRUMB}")
-            return _YAHOO_CRUMB
-        except cffi_requests.errors.RequestsError as e:
-            logger.critical(f"Failed to get Yahoo auth crumb: {e}")
+            resp.raise_for_status()
+            self.crumb = (resp.text or "").strip()
+            self.expiry = time.time() + _CRUMB_TTL_SECONDS
+            logger.info(f"Yahoo crumb refreshed ({reason}), profile={self.profile}, proxy={'on' if self.proxy else 'off'}")
+            return self.crumb
+        except Exception as e:
+            logger.warning(f"Failed to refresh Yahoo crumb ({reason}): {e}")
+            self.crumb = None
+            self.expiry = 0.0
             return None
 
-def retry_on_failure(attempts=2, delay=5, backoff=2):
-    """Decorator for robust HTTP requests with retries and backoff."""
-    def decorator(func):
-        @wraps(func)
+_POOL_LOCK = threading.RLock()
+_ID_POOL: List[_Identity] = []
+
+# init-on-import
+def init_pool(size: int = _POOL_SIZE):
+    global _ID_POOL
+    with _POOL_LOCK:
+        if _ID_POOL:
+            return
+        _ID_POOL = [_Identity() for _ in range(max(1, size))]
+        # prime crumbs opportunistically (non-blocking is fine)
+        for ident in _ID_POOL:
+            try:
+                ident.ensure_crumb()
+            except Exception:
+                pass
+
+def _identity_weight(ident: _Identity) -> float:
+    h = _ID_HEALTH.get(id(ident), {})
+    if h and time.time() < h.get('cooldown_until', 0):
+        return 0.01
+    fail = h.get('fail', 0)
+    return 1.0 / (1 + fail)
+
+def _choose_identity() -> _Identity:
+    # Per-request random identity
+    with _POOL_LOCK:
+        if not _ID_POOL:
+            return _Identity()
+        weights = [_identity_weight(ident) for ident in _ID_POOL]
+        # normalize
+        s = sum(weights) or 1.0
+        probs = [w / s for w in weights]
+        return random.choices(_ID_POOL, weights=probs, k=1)[0]
+
+def _mark_failure(ident: _Identity):
+    rec = _ID_HEALTH.setdefault(id(ident), {'fail': 0, 'cooldown_until': 0})
+    rec['fail'] += 1
+    # cooldown grows with failures
+    rec['cooldown_until'] = time.time() + min(60, 2 ** rec['fail'])
+
+# rotate-aware retry decorator
+# the functions wrapped by it must accept or ignore _chosen_identity
+def retry_on_failure(attempts: int = 3, delay: float = 0.3, backoff: float = 2.0):
+    def deco(func):
         def wrapper(*args, **kwargs):
-            mtries, mdelay = attempts, delay
-            while mtries > 1:
+            last_exc = None
+            wait = delay
+            for i in range(max(1, attempts)):
+                ident = _choose_identity()
                 try:
-                    return func(*args, **kwargs)
+                    return func(*args, _chosen_identity=ident, **kwargs)
                 except Exception as e:
-                    # Only retry on specific, retry-able errors
-                    error_str = str(e).lower()
-                    if "rate limited" in error_str or "could not resolve host" in error_str:
-                        ticker = args[0] if args and isinstance(args[0], str) else 'N/A'
-                        msg = f"Retrying {func.__name__} for {ticker} after error: {e}. Retries left: {mtries-1}"
-                        logger.warning(msg)
-                        # Add jitter (a small random delay) to prevent thundering herd problem
-                        time.sleep(mdelay + random.uniform(0, 1))
-                        mtries -= 1
-                        mdelay *= backoff
-                    else:
-                        # Re-raise exceptions that are not transient (e.g., programming errors)
-                        raise
-            # Perform the final attempt outside the loop
-            return func(*args, **kwargs)
+                    last_exc = e
+                    # rotate identity then backoff
+                    try:
+                        ident.rotate_and_refresh(reason=f"retry_{i+1}")
+                    except Exception:
+                        pass
+                    time.sleep(wait)
+                    wait *= backoff
+            raise last_exc
         return wrapper
-    return decorator
+    return deco
 
-@retry_on_failure()
-def execute_request(url, params=None):
+# public helper for yfinance compatibility
+def get_yf_session():
     """
-    Executes a request using the shared session, automatically handling
-    authentication, headers, and proxies.
+    Returns a curl_cffi Session from a randomly chosen identity.
+    Each provider call should fetch a session fresh to maximize rotation.
     """
-    crumb = _get_yahoo_auth()
+    ident = _choose_identity()
+    # Ensure crumb readiness for first call paths that might need cookies
+    try:
+        ident.ensure_crumb()
+    except Exception:
+        pass
+    return ident.session  # yfinance can accept requests-like session
+
+def _execute_json_once(
+    url: str,
+    params: Optional[Dict[str, Any]] = None,
+    _chosen_identity: Optional[_Identity] = None,
+) -> Dict[str, Any]:
+
+    """
+    Unified JSON transport API.
+    Perform a GET to Yahoo endpoints with active rotation and return parsed JSON.
+    On 401/403/429 or phrases like 'Too Many Requests', rotates identity and retries once.
+    """
+    ident = _chosen_identity or _choose_identity()
+    crumb = ident.ensure_crumb()
     if not crumb:
-        raise cffi_errors.RequestsError("Could not execute request due to missing Yahoo crumb.")
+        # try a rotate immediately
+        crumb = ident.rotate_and_refresh("no_crumb")
+        if not crumb:
+            raise cffi_errors.RequestsError("Failed to obtain Yahoo crumb")
 
-    request_params = params.copy() if params else {}
-    request_params['crumb'] = crumb
+    merged = dict(params or {})
+    # Yahoo chart endpoints often accept crumb in params; keep consistent
+    merged["crumb"] = crumb
+
+    headers = {"User-Agent": _get_random_user_agent()}
+    try:
+        resp = ident.session.get(
+            url,
+            params=merged,
+            headers=headers,
+            proxies=ident.proxy,
+            impersonate=ident.profile,
+            timeout=_TIMEOUT,
+        )
+        body = ""
+        try:
+            body = resp.text
+        except Exception:
+            pass
+        if not (200 <= resp.status_code < 300):
+            if _should_rotate(resp.status_code, body):
+                if ident.rotate_and_refresh(f"http_{resp.status_code}"):
+                    merged["crumb"] = ident.crumb
+                    headers["User-Agent"] = _get_random_user_agent()
+                    resp = ident.session.get(
+                        url,
+                        params=merged,
+                        headers=headers,
+                        proxies=ident.proxy,
+                        impersonate=ident.profile,
+                        timeout=_TIMEOUT,
+                    )
+            resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        _mark_failure(ident)
+        logger.debug(f"execute_json failure for {url}: {e}")
+        raise
     
-    headers = {
-        "User-Agent": _get_random_user_agent()
-    }
-    
-    response = session.get(url, params=request_params, headers=headers)
-    response.raise_for_status() # Will raise an exception for 4xx/5xx status codes
-    return response.json()
+@retry_on_failure(attempts=3, delay=3, backoff=2)
+def execute_request(url: str, params: Optional[Dict[str, Any]] = None, _chosen_identity: Optional[_Identity] = None) -> Dict[str, Any]:
+    """
+    Unified JSON transport API.
+    Perform a GET to Yahoo endpoints with active rotation and return parsed JSON.
+    On 401/403/429 or phrases like 'Too Many Requests', rotates identity and retries once.
+    """
+
+    return _execute_json_once(url, params, _chosen_identity=_chosen_identity)

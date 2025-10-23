@@ -8,6 +8,7 @@ from pydantic import ValidationError, TypeAdapter
 from typing import List
 # Make sure the shared models are importable for testing
 from shared.contracts import CoreFinancials, PriceDataItem
+from helper_functions import cache_covers_request
 
 class BaseDataServiceTest(unittest.TestCase):
     """
@@ -305,6 +306,103 @@ class TestPriceEndpoints(BaseDataServiceTest):
                 response = self.client.post('/price/batch', json=payload)
                 self.assertEqual(response.status_code, 400)
                 self.assertIn('error', response.json)
+
+# =====================================================================
+# ==               PRICE CACHE COVERAGE & STAMPEDE                   ==
+# =====================================================================
+class TestPriceCacheCoverage(BaseDataServiceTest):
+
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_cache_period_honor_and_stampede_guard(self, mock_get_stock_data):
+        """
+        Tests period-aware cache coverage and request deduplication.
+        Case A: Requesting longer period triggers refetch.
+        Case B: Requesting shorter period uses cache.
+        Stampede: Duplicate tickers in one request are fetched once.
+        """
+        # --- Arrange ---
+        # 1. Setup mock data for different periods
+        one_year_data = [self._create_valid_price_data(i, 100 + i) for i in range(365)]
+        two_year_data = [self._create_valid_price_data(i, 200 + i) for i in range(730)]
+
+        # Mock the provider to return 2-year data when called
+        mock_get_stock_data.return_value = {"GSPC": two_year_data}
+
+        # --- Act & Assert: Case A (Cache miss on longer period) ---
+        # Simulate cache having 1-year data
+        self.mock_cache.get.return_value = one_year_data
+        
+        # Request 2 years of data. This should be a cache miss due to insufficient coverage.
+        resp1 = self.client.post('/price/batch', json={'tickers': ['GSPC'], 'source': 'yfinance', 'period': '2y'})
+        
+        self.assertEqual(resp1.status_code, 200)
+        # Provider should have been called once to fetch the new 2-year data
+        mock_get_stock_data.assert_called_once_with(['GSPC'], ANY, start_date=None, period='2y')
+        # Cache should have been updated with the 2-year data
+        self.mock_cache.set.assert_called_once_with('price_yfinance_GSPC', two_year_data, timeout=ANY)
+
+        # --- Act & Assert: Subsequent calls are cache hits ---
+        # Reset mocks for the next stage
+        mock_get_stock_data.reset_mock()
+        self.mock_cache.set.reset_mock()
+        
+        # Now, simulate the cache having the full 2-year data
+        self.mock_cache.get.return_value = two_year_data
+        
+        # Requesting 2 years again should now be a cache hit
+        resp2 = self.client.post('/price/batch', json={'tickers': ['GSPC'], 'source': 'yfinance', 'period': '2y'})
+        self.assertEqual(resp2.status_code, 200)
+        mock_get_stock_data.assert_not_called()
+        self.mock_cache.set.assert_not_called()
+
+        # --- Act & Assert: Case B (Cache hit on shorter period) ---
+        # Requesting 1 year when 2 years are cached should also be a cache hit
+        resp3 = self.client.post('/price/batch', json={'tickers': ['GSPC'], 'source': 'yfinance', 'period': '1y'})
+        self.assertEqual(resp3.status_code, 200)
+        mock_get_stock_data.assert_not_called()
+        self.mock_cache.set.assert_not_called()
+
+        # --- Act & Assert: Stampede Guard (Deduplication) ---
+        self.mock_cache.get.return_value = None # Ensure a cache miss for this part
+        mock_get_stock_data.reset_mock()
+        mock_get_stock_data.return_value = {"AAPL": one_year_data, "MSFT": one_year_data}
+        
+        # Send a request with duplicate tickers
+        self.client.post('/price/batch', json={'tickers': ['AAPL', 'MSFT', 'AAPL'], 'source': 'yfinance', 'period': '1y'})
+        
+        # The provider should only be called with the UNIQUE set of tickers
+        mock_get_stock_data.assert_called_once()
+        call_args = mock_get_stock_data.call_args[0][0]
+        self.assertCountEqual(call_args, ['AAPL', 'MSFT'])
+
+
+class TestCacheCoversRequestHelper(BaseDataServiceTest):
+    
+    @patch('pandas_market_calendars.get_calendar')
+    def test_trading_day_aware_coverage(self, mock_get_calendar):
+        """Unit test for the cache_covers_request helper with trading day awareness."""
+        # --- Arrange ---
+        nyse_today = pd.Timestamp.now(tz='America/New_York').normalize()
+        # Create a mock schedule of the last 300 trading days
+        mock_schedule = pd.DataFrame(index=pd.bdate_range(end=nyse_today, periods=300))
+        mock_calendar = MagicMock()
+        mock_calendar.schedule.return_value = mock_schedule
+        mock_get_calendar.return_value = mock_calendar
+
+        first_trading_day_1y_ago = mock_schedule.index[-252]
+        
+        # --- Act & Assert: Edge Cases ---
+        # Case 1: Cache starts exactly on the required first trading day -> Should PASS
+        cached_data_perfect = [{'formatted_date': (first_trading_day_1y_ago + timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(365)]
+        self.assertTrue(cache_covers_request(cached_data_perfect, "1y", None))
+
+        # Case 2: Cache starts one calendar day after the required first trading day -> Should FAIL
+        cached_data_short = [{'formatted_date': (first_trading_day_1y_ago + timedelta(days=d+1)).strftime('%Y-%m-%d')} for d in range(365)]
+        self.assertFalse(cache_covers_request(cached_data_short, "1y", None))
+
+        # Case 3: Cache is short on days but high on row count -> Should PASS by bar count
+        cached_data_bars = [{'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(250)]
+        self.assertTrue(cache_covers_request(cached_data_bars, "1y", None))
 
 # =====================================================================
 # ==                   CORE FINANCIALS ENDPOINTS                     ==
@@ -818,51 +916,53 @@ class TestMarketTrendEndpoints(BaseDataServiceTest):
 # =====================================================================
 class TestSystemEndpoints(BaseDataServiceTest):
 
-    def test_clear_cache_all_default(self):
-        """POST /cache/clear: Tests clearing all caches with an empty payload."""
-        response = self.client.post('/cache/clear', json={})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("All data service caches have been cleared.", response.json['message'])
-        self.mock_cache.clear.assert_called_once()
-        self.mock_redis_client.keys.assert_not_called()
-
-    def test_clear_cache_all_explicit(self):
-        """POST /cache/clear: Tests clearing all caches with 'type': 'all'."""
-        response = self.client.post('/cache/clear', json={'type': 'all'})
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("All data service caches have been cleared.", response.json['message'])
-        self.mock_cache.clear.assert_called_once()
-        self.mock_redis_client.keys.assert_not_called()
+    def test_clear_cache_all(self):
+        """POST /cache/clear: Tests clearing all caches with an empty payload or 'all'."""
+        for payload in [{}, {'type': 'all'}]:
+            with self.subTest(payload=payload):
+                self.mock_redis_client.scan.return_value = (0, [b'flask_cache_key1', b'flask_cache_key2'])
+                response = self.client.post('/cache/clear', json=payload)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Cleared 2 entries", response.json['message'])
+                # Assert scan is called with the service-wide prefix
+                self.mock_redis_client.scan.assert_called_with(cursor=0, match='flask_cache_*', count=1000)
+                # Assert delete is called on the keys found by scan
+                self.mock_redis_client.delete.assert_called_with(b'flask_cache_key1', b'flask_cache_key2')
+                self.mock_cache.clear.assert_not_called() # Should not use the old method
+                self.mock_redis_client.reset_mock()
 
     def test_clear_cache_specific_type_success(self):
         """POST /cache/clear: Tests clearing a specific cache type successfully."""
         cache_type_to_clear = 'industry'
-        # redis-py returns keys as bytes
-        redis_keys = [b'flask_cache_peers_NVDA', b'flask_cache_peers_AMD']
-        self.mock_redis_client.keys.return_value = redis_keys
+        # redis-py returns keys as bytes. Note the multiple patterns for 'industry'.
+        redis_keys = [b'flask_cache_peers_NVDA', b'flask_cache_day_gainers_US']
+        # Simulate scan finding keys for one of the patterns
+        self.mock_redis_client.scan.return_value = (0, redis_keys)
         
         response = self.client.post('/cache/clear', json={'type': cache_type_to_clear})
         
         self.assertEqual(response.status_code, 200)
+        # Message should reflect the total from all patterns
         self.assertIn(f"Cleared {len(redis_keys)} entries from the '{cache_type_to_clear}' cache.", response.json['message'])
         self.assertEqual(response.json['keys_deleted'], len(redis_keys))
         
-        # Check correct pattern was used (user 'industry' maps to 'peers_*')
-        self.mock_redis_client.keys.assert_called_once_with('flask_cache_peers_*')
-        self.mock_redis_client.delete.assert_called_once_with(*redis_keys)
+        # Check correct patterns were used
+        self.assertIn('flask_cache_peers_*', [call.kwargs['match'] for call in self.mock_redis_client.scan.call_args_list])
+        self.assertIn('flask_cache_day_gainers_*', [call.kwargs['match'] for call in self.mock_redis_client.scan.call_args_list])
+        self.mock_redis_client.delete.assert_called_with(*redis_keys)
         self.mock_cache.clear.assert_not_called()
 
     def test_clear_cache_specific_type_no_keys_found(self):
         """POST /cache/clear: Tests clearing a specific cache type when no keys are found."""
         cache_type_to_clear = 'news'
-        self.mock_redis_client.keys.return_value = [] # No keys found
+        self.mock_redis_client.scan.return_value = (0, []) # No keys found
         
         response = self.client.post('/cache/clear', json={'type': cache_type_to_clear})
         
         self.assertEqual(response.status_code, 200)
-        self.assertIn("No entries found", response.json['message'])
+        self.assertIn("Cleared 0 entries", response.json['message'])
         self.assertEqual(response.json['keys_deleted'], 0)
-        self.mock_redis_client.keys.assert_called_once_with('flask_cache_news_*')
+        self.mock_redis_client.scan.assert_called_with(cursor=0, match='flask_cache_news_*', count=1000)
         self.mock_redis_client.delete.assert_not_called()
 
     def test_clear_cache_invalid_type(self):

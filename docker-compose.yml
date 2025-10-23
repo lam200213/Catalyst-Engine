@@ -32,6 +32,9 @@ services:
       MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
       YAHOO_FINANCE_PROXIES: ${YAHOO_FINANCE_PROXIES}
+      YF_POOL_SIZE: ${YF_POOL_SIZE}
+      YF_REQUEST_TIMEOUT: ${YF_REQUEST_TIMEOUT}
+      YF_CRUMB_TTL_SECONDS: ${YF_CRUMB_TTL_SECONDS}
       LOG_LEVEL: INFO
     # Add a DNS configuration for network stability
     dns:

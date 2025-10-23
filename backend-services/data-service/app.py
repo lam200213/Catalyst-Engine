@@ -3,6 +3,7 @@ import os
 import pandas as pd
 from flask import Flask, request, jsonify
 from datetime import date, datetime, timedelta, timezone
+import datetime as dt
 from flask_caching import Cache
 import pandas_market_calendars as mcal
 import re
@@ -77,11 +78,12 @@ setup_logging(app)
 # --- 3. Import Project-Specific Modules ---
 # Import provider modules
 from providers import finnhub_provider, marketaux_provider
+from providers.yfin import yahoo_client as yf_client 
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
 from providers.yfin.market_data_provider import DayGainersSource, ReturnCalculator, YahooSectorIndustrySource
 # Import the logic
-from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data, cache_covers_request
+from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data, cache_covers_request, plan_incremental_price_fetch, finalize_price_response
 
 # --- Flask-Caching Setup ---
 # Configuration for Redis Cache. The URL is provided by the environment.
@@ -124,6 +126,33 @@ class ProviderNoDataError(Exception):
     """Custom exception raised when a data provider returns no data."""
     pass
 
+# --- Yahoo Finance Pool Setup ---
+# Process-wide guard (in addition to yahoo_client guards)
+_YF_POOL_READY = False
+def _init_yf_pool():
+    """
+    Initialize the Yahoo Finance identity/session pool per worker before the first request.
+    Uses idempotent, thread-safe init_pool to avoid duplicate pools under hot reloads or tests.
+    """
+    global _YF_POOL_READY
+    if _YF_POOL_READY:
+        return
+    size = int(os.getenv("YF_POOL_SIZE", "12"))
+    try:
+        yf_client.init_pool(size=size)  # idempotent + thread-safe inside yahoo_client
+        app.logger.info(f"Initialized Yahoo Finance identity pool (size={size})")
+    except Exception as e:
+        app.logger.warning(f"Yahoo Finance pool initialization failed: {e}")
+    _YF_POOL_READY = True
+
+# Prefer per-worker startup hook; fallback to once-before-request
+if hasattr(app, "before_serving"):
+    app.before_serving(_init_yf_pool)
+else:
+    @app.before_request
+    def _ensure_yf_pool_once():
+        _init_yf_pool()
+
 # --- Centralized Executor ---
 # Using a ThreadPoolExecutor for concurrent requests in batch endpoints
 executor = ThreadPoolExecutor(max_workers=20)
@@ -138,7 +167,7 @@ def get_batch_core_financials_route():
         return jsonify({"error": "Invalid request payload. 'tickers' is required."}), 400
 
     tickers = payload['tickers']
-    if not isinstance(tickers, list) or not all(isinstance(t, str) for t in tickers):
+    if not isinstance(tickers, list) or not all(isinstance(ticker, str) for ticker in tickers):
         return jsonify({"error": "'tickers' must be a list of strings."}), 400
 
     if not tickers:
@@ -227,9 +256,10 @@ def get_core_financials(ticker):
 @app.route('/price/batch', methods=['POST'])
 def get_batch_data():
     """
-    Handles fetching data for a batch of tickers.
-    - Checks the cache for each ticker.
-    - Fetches data from the provider for tickers not in the cache.
+    Handles fetching data for a batch of tickers with incremental cache logic.
+    - Checks cache for each ticker and validates coverage
+    - For stale cache, performs incremental fetch
+    - For cache miss, performs full fetch
     - Combines cached and newly fetched data.
     - Returns successful and failed tickers.
     """
@@ -240,6 +270,9 @@ def get_batch_data():
     tickers = payload['tickers']
     source = payload['source'].lower()
     
+    if source not in ('yfinance', 'finnhub'):
+        return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
+
     if not isinstance(tickers, list):
         return jsonify({"error": "'tickers' must be a list of strings."}), 400
 
@@ -248,8 +281,10 @@ def get_batch_data():
         return jsonify({"success": {}, "failed": []}), 200
 
     # --- Cache Access ---
+    plans = {}
     cached_results = {}
-    missed_tickers = []
+    missed_tickers = {}   # key: (period, start_date) -> [tickers]
+    tickers_for_incremental_fetch = {}  # list of (ticker, start_date, cached)
 
     # Extract requested period/start for coverage checks
     req_period = (payload.get('period') or "").lower()
@@ -258,79 +293,81 @@ def get_batch_data():
     # Find all documents where the ticker is in the requested list and source matches
     for ticker in tickers:
         cache_key = f"price_{source}_{ticker}"
-        data = cache.get(cache_key)
-        if data:
-            validated = validate_and_prepare_price_data(data, ticker)
-            if validated:
-                if cache_covers_request(validated, req_period, req_start):
-                    cached_results[ticker] = validated
-                else:
-                    app.logger.info(f"Cache coverage insufficient for {ticker} (period={req_period or 'default'} start={req_start or '-'}) — refetching.")
-                    missed_tickers.append(ticker)
-            else:
-                app.logger.warning(f"Cached price data for {ticker} failed validation, refetching.")
-                missed_tickers.append(ticker)
+        raw_cached = cache.get(cache_key)
+        plan = plan_incremental_price_fetch(raw_cached, req_period, req_start)
+        plans[ticker] = (cache_key, plan)
+
+        if plan['action'] == 'return_cache':
+            cached_results[ticker] = plan['cached']
+        elif plan['action'] == 'fetch_full':
+            key = (plan['period'], plan['start_date'])
+            missed_tickers.setdefault(key, []).append(ticker)
+        elif plan['action'] == 'fetch_incremental':
+            tickers_for_incremental_fetch.append((ticker, plan['start_date'], plan['cached']))
+        elif plan['action'] == 'error':
+            failed_tickers.append(ticker)
         else:
-            missed_tickers.append(ticker)
+            # Defensive fallback to avoid dropping any ticker
+            failed_tickers.append(ticker)
 
     app.logger.info(f"Batch request. Cache hits: {len(cached_results)}, Cache misses: {len(missed_tickers)}")
 
-    # --- Fetch Data for Cache Misses ---
-    newly_fetched_data = {}
+    # --- Execute full fetches for Cache Misses ---
+    results = cached_results
     failed_tickers = []
 
-    if missed_tickers:
-        if source == 'yfinance':
-            allowed_periods = {"1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
-            period_to_fetch = None
-            start_to_fetch = None
-            if isinstance(req_start, str) and req_start:
-                start_to_fetch = req_start
-            elif req_period in allowed_periods:
-                period_to_fetch = req_period
-            else:
-                period_to_fetch = "1y"
-
-            fetched_data = yf_price_provider.get_stock_data(
-                missed_tickers, 
-                executor,
-                start_date=start_to_fetch, 
-                period=period_to_fetch
-            )
-            if fetched_data:
-                for ticker, data in fetched_data.items():
-                    # Validate newly fetched data
-                    final_data = validate_and_prepare_price_data(data, ticker)
-                    if final_data:
-                        newly_fetched_data[ticker] = final_data
-                        cache.set(f"price_{source}_{ticker}", final_data, timeout=PRICE_CACHE_TTL)
-                        app.logger.info(f"CACHE INSERT for price: {ticker}")
-                    else:
-                        failed_tickers.append(ticker)
-            else: 
-                failed_tickers.extend(missed_tickers)
-        else:
-            # For other sources, fetch one by one (or implement batch in their providers)
-            for ticker in missed_tickers:
-                data = None
-                if source == 'finnhub':
-                    data = finnhub_provider.get_stock_data(ticker)
-                
-                if data:
-                    newly_fetched_data[ticker] = data
+    if source == 'yfinance':
+        for (period, start), group in missed_tickers.items():
+            fetched = yf_price_provider.get_stock_data(group, executor, start_date=start, period=period)
+            for ticker in group:
+                cache_key, plan = plans[ticker]
+                data = fetched.get(ticker) if isinstance(fetched, dict) else None
+                error_cotext = {
+                    "ticker": ticker,
+                    "message_500": f"Could not retrieve valid price data for {ticker}.",
+                    "message_404": f"Could not retrieve price data for {ticker} from {source}.",
+                }
+                final_json, status = finalize_price_response(cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_cotext)
+                if status == 200:
+                    results[ticker] = final_json
                 else:
                     failed_tickers.append(ticker)
 
-    # --- Combine Results and Return ---
-    successful_data = {**cached_results, **newly_fetched_data}
-    
-    # The data is nested inside a list for each ticker, so we need to flatten it
-    # flat_successful_data = [item for sublist in successful_data for item in sublist]
-
-    return jsonify({
-        "success": successful_data,
-        "failed": failed_tickers
-    }), 200
+        # Execute incremental fetches per ticker and merge
+        for ticker, start, _cached in tickers_for_incremental_fetch:
+            cache_key, plan = plans[ticker]
+            data = yf_price_provider.get_stock_data(ticker, executor, start_date=start, period=None)
+            error_cotext = {
+                "ticker": ticker,
+                "message_500": f"Could not retrieve valid price data for {ticker}.",
+                "message_404": f"Could not retrieve price data for {ticker} from {source}.",
+            }
+            final_json, status = finalize_price_response(cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_cotext)
+            if status == 200:
+                results[ticker] = final_json
+            else:
+                failed_tickers.append(ticker)
+    else:
+    # finnhub: per-ticker fetch path (no batch API)
+        for t in set(list(missed_tickers.get((None, None), [])) + [x[0] for x in tickers_for_incremental_fetch] + list(results.keys())):
+            # Only fetch for tickers not already satisfied by cache
+            if t in results:
+                continue
+            cache_key, plan = plans[t]
+            data = finnhub_provider.get_stock_data(t)
+            error_ctx = {
+                "ticker": t,
+                "message_500": f"Could not retrieve valid price data for {t}.",
+                "message_404": f"Could not retrieve price data for {t} from {source}.",
+            }
+            final_json, status = finalize_price_response(
+                cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_ctx
+            )
+            if status == 200:
+                results[t] = final_json
+            else:
+                failed_tickers.append(t)
+    return jsonify({"success": results, "failed": failed_tickers}), 200
 
 @app.route('/price/<path:ticker>', methods=['GET'])
 def get_data(ticker: str):
@@ -338,104 +375,49 @@ def get_data(ticker: str):
         return jsonify({"error": "Invalid ticker format"}), 400
 
     source = request.args.get('source', 'yfinance').lower()
+    if source not in ('yfinance', 'finnhub'):
+    # Restore original error text (single route)
+        return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
+
     app.logger.info(f"Request received for price data. Ticker: {ticker}, Source: {source}")
 
     # --- Incremental Cache Logic ---
     # This logic determines whether to perform a full data fetch or an incremental one.
     # It checks for existing cached data and its freshness.
     cache_key = f"price_{source}_{ticker}"
-    cached_data = cache.get(cache_key)
-    new_start_date = None # This will be set if an incremental fetch is needed.
 
-    if cached_data:
-        # Validate the cached data first
-        validated_cached_data = validate_and_prepare_price_data(cached_data, ticker)
-        if validated_cached_data:
-            # If the cache is valid, check how recent the data is.
-            last_date_str = validated_cached_data[-1]['formatted_date']
-            last_date = date.fromisoformat(last_date_str)
-            # If the last data point is from yesterday or today, it's current enough.
-            if last_date >= (date.today() - timedelta(days=1)):
-                app.logger.info(f"Cache HIT and data is current for price: {ticker}")
-                return jsonify(validated_cached_data)
-            # If data is old, set the start date for an incremental fetch.
-            new_start_date = last_date + timedelta(days=1)
-            cached_data = validated_cached_data # Use the validated version for appending later, resetting the TTL
-        else:
-            app.logger.warning(f"Cached data for {ticker} failed validation. Performing full fetch.")
-            cached_data = None # Invalidate broken cache data
+    raw_cached = cache.get(cache_key)
+    plan = plan_incremental_price_fetch(
+        raw_cached,
+        request.args.get('period'),
+        request.args.get('start_date'),
+    )
 
-    # --- Data Fetching ---
-    # Based on the cache check, decide whether to fetch full or incremental data.
-    if new_start_date:
-        app.logger.info(f"Incremental Cache MISS for price: {ticker}. Fetching from {new_start_date}.")
-    else:
-        app.logger.info(f"Full Cache MISS for price: {ticker} from {source}")
+    if plan['action'] == 'return_cache':
+        return jsonify(plan['cached']), 200
 
-    data = None
+    # Map plan to provider call
     if source == 'yfinance':
-        
-        # read optional query params
-        req_period = request.args.get('period')
-        req_start = request.args.get('start_date')
-
-        # If no new_start_date is given, default to a 1-year data range.
-        # This is used for initial data population or full cache refreshes.
-        # Otherwise, an incremental fetch is performed using start_date.
-
-        # validate and choose period/start
-        allowed_periods = {"1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
-        period_to_fetch = None
-        new_start_date = None
-        if req_start:
-            new_start_date = req_start  # expect ISO YYYY-MM-DD; downstream provider validates
-        elif req_period and req_period in allowed_periods:
-            period_to_fetch = req_period
-        else:
-            period_to_fetch = "1y" # default to 1 year
-
-        # yfinance supports incremental fetching via the `start_date` parameter.
         data = yf_price_provider.get_stock_data(
-            ticker, 
-            executor, 
-            start_date=new_start_date, 
-            period=period_to_fetch
+            ticker, executor,
+            start_date=plan['start_date'],
+            period=plan['period']
         )
     elif source == 'finnhub':
-        # Finnhub provider currently only supports full fetches.
         data = finnhub_provider.get_stock_data(ticker)
     else:
-        return jsonify({"error": "Invalid data source. Use 'finnhub' or 'yfinance'."}), 400
+        return jsonify({"error": "Invalid data source"}), 400
 
-    # --- Cache and Response Handling ---
-    if data:
-        # Validate new data from provider
-        validated_data = validate_and_prepare_price_data(data, ticker)
-        if not validated_data:
-            # If validation fails, return error or stale cache
-            if cached_data:
-                app.logger.warning(f"Returning stale but valid cache for {ticker} due to provider failure.")
-                return jsonify(cached_data)
-            return jsonify({"error": f"Could not retrieve valid price data for {ticker}."}), 500
+    error_context = {
+        "ticker": ticker,
+        "message_500": f"Could not retrieve valid price data for {ticker}.",
+        "message_404": f"Could not retrieve price data for {ticker} from {source}.",
+    }
 
-        if new_start_date and cached_data:
-            # If it was an incremental fetch, append the new data to the existing cache.
-            full_data = cached_data + data
-            cache.set(cache_key, full_data, timeout=PRICE_CACHE_TTL)
-            app.logger.info(f"CACHE INCREMENTAL UPDATE for price: {ticker}")
-            return jsonify(full_data)
-        else:
-            # If it was a full fetch, replace the old cache entry or insert a new one.
-            cache.set(cache_key, data, timeout=PRICE_CACHE_TTL)
-            app.logger.info(f"CACHE FULL REPLACE/INSERT for price: {ticker}")
-            return jsonify(data)
-    elif cached_data:
-        # If the provider returned no new data but we have old data, return the old data.
-        app.logger.info(f"No new price data for {ticker}. Returning existing cached data.")
-        return jsonify(cached_data)
-    else:
-        # If there's no data from the provider and no cache, return an error.
-        return jsonify({"error": f"Could not retrieve price data for {ticker} from {source}."}), 404
+    final_json, status = finalize_price_response(
+        cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_context
+    )
+    return jsonify(final_json), status
 
 # Helper function for caching news data as a dict.
 @cache.cached(timeout=NEWS_CACHE_TTL, key_prefix='news_%s', unless=lambda result: result is None)
@@ -477,43 +459,58 @@ def clear_cache():
     cache_type = payload.get('type')
 
     try:
+        # Use the configured prefix; default should match your app config
+        prefix = app.config.get("CACHE_KEY_PREFIX", "datasvc:")
+
+        # Use the underlying redis client (Flask-Caching Redis backend)
+        redis_client = cache.cache._write_client  # type: ignore[attr-defined]
+
+        # When 'all', only delete keys with this service's prefix (safer than flushdb)
         if not cache_type or cache_type == 'all':
-            cache.clear()
-            message = "All data service caches have been cleared."
+            total_deleted = 0
+            # SCAN to avoid blocking
+            cursor = 0
+            while True:
+                cursor, keys = redis_client.scan(cursor=cursor, match=f"{prefix}*",
+                                                 count=1000)  # tune COUNT as needed
+                if keys:
+                    total_deleted += len(keys)
+                    redis_client.delete(*keys)
+                if cursor == 0:
+                    break
+            message = f"Cleared {total_deleted} entries for prefix '{prefix}'"
+            app.logger.info(message)
             # The market_trends collection is persistent storage, not a cache, so it is managed separately.
             # It can be cleared if needed using direct DB access, but is excluded from the general cache clear.
-            app.logger.info(message)
-            return jsonify({"message": message}), 200
+            return jsonify({"message": message, "keys_deleted": total_deleted}), 200
 
         valid_types = {
             'price': 'price_*',
             'news': 'news_*',
             'financials': 'financials_*',
-            'industry': 'peers_*'  # User 'industry' maps to internal 'peers_' prefix
+            'industry': ['peers_*', 'industry_candidates_*', 'day_gainers_*'] # User 'industry' maps to internal 'peers_' prefix
         }
 
         if cache_type not in valid_types:
             return jsonify({
                 "error": f"Invalid cache type '{cache_type}'. Valid types are: {list(valid_types.keys())} or 'all'."
             }), 400
-        
-        # Get config from the Flask app object, not the cache object.
-        prefix = app.config.get("CACHE_KEY_PREFIX", "flask_cache_")
-        pattern = f"{prefix}{valid_types[cache_type]}"
 
-        # Use the underlying redis client
-        redis_client = cache.cache._write_client
-        keys_to_delete = redis_client.keys(pattern)
+        total_deleted = 0
+        for suffix in valid_types[cache_type]:
+            pattern = f"{prefix}{suffix}"
+            cursor = 0
+            while True:
+                cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=1000)
+                if keys:
+                    total_deleted += len(keys)
+                    redis_client.delete(*keys)
+                if cursor == 0:
+                    break
 
-        if keys_to_delete:
-            redis_client.delete(*keys_to_delete)
-            message = f"Cleared {len(keys_to_delete)} entries from the '{cache_type}' cache."
-            app.logger.info(message)
-            return jsonify({"message": message, "keys_deleted": len(keys_to_delete)}), 200
-        else:
-            message = f"No entries found in the '{cache_type}' cache to clear."
-            app.logger.info(message)
-            return jsonify({"message": message, "keys_deleted": 0}), 200
+        message = f"Cleared {total_deleted} entries from the '{cache_type}' cache."
+        app.logger.info(message)
+        return jsonify({"message": message, "keys_deleted": total_deleted}), 200
 
     except Exception as e:
         app.logger.error(f"Error clearing cache: {e}", exc_info=True)
@@ -741,8 +738,16 @@ def get_market_trends():
 def get_sector_industry_candidates():
     """Provides a list of potential leader stocks sourced from yfinance sectors."""
     try:
+        region = (request.args.get("region") or "US").upper()
+        cache_key = f"industry_candidates_{region}"
+        cached = cache.get(cache_key)
+        if cached:
+            return jsonify(cached), 200
         source = YahooSectorIndustrySource()
-        data = source.get_industry_top_tickers()
+        data = source.get_industry_top_tickers(region=region)
+        if data:
+            cache.set(cache_key, data, timeout=INDUSTRY_CACHE_TTL)
+            return jsonify(data), 200
         if not data:
             logging.warning("sectors/industries returned no quotes; Yahoo response likely empty or blocked.")
             # fallback to day_gainers to avoid 404 and client timeouts
@@ -763,8 +768,16 @@ def get_sector_industry_candidates():
 def get_day_gainers_candidates():
     """Provides a list of potential leader stocks sourced from the yfinance day_gainers screener."""
     try:
+        region = (request.args.get("region") or "US").upper()
+        cache_key = f"day_gainers_{region}"
+        cached = cache.get(cache_key)
+        if cached:
+            return jsonify(cached), 200
         source = DayGainersSource()
-        data = source.get_industry_top_tickers()
+        data = source.get_industry_top_tickers(region=region)
+        if data:
+            cache.set(cache_key, data, timeout=INDUSTRY_CACHE_TTL)
+            return jsonify(data), 200
         if not data:
             logging.warning("day_gainers returned no quotes; Yahoo response likely empty or blocked.")
             return jsonify({"message": "Could not retrieve day gainers data."}), 404

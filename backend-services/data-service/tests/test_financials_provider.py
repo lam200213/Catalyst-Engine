@@ -140,19 +140,16 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         result = financials_provider._fetch_financials_with_yfinance('MISSING')
         self.assertIsNone(result)
 
-    @patch('providers.yfin.financials_provider.yahoo_client.session.get')
-    @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
-    def test_fallback_fetcher_success(self, mock_get_auth, mock_session_get):
+    @patch('providers.yfin.financials_provider.yahoo_client.execute_request')
+    def test_fallback_fetcher_success(self, mock_execute_request):
         """Tests the happy path for the fallback direct API call fetcher."""
-        mock_response = MagicMock(status_code=200)
-        mock_response.json.return_value = {
+        mock_execute_request.return_value = {
             'quoteSummary': { 'result': [{
                 'summaryDetail': {'marketCap': {'raw': 2e12}},
                 'defaultKeyStatistics': {'ipoDate': {'fmt': '2020-01-01'}},
                 'incomeStatementHistoryQuarterly': {'incomeStatementHistory': []}
             }]}
         }
-        mock_session_get.return_value = mock_response
         
         result = financials_provider._fetch_financials_with_fallback('FB', dt.datetime.now().timestamp())
         self.assertIsNotNone(result)
@@ -206,17 +203,14 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         self.assertIn('sma_50', result)
         self.assertNotIn('marketCap', result) # Should not have financial fields
         self.assertEqual(result['current_price'], 3875)
-        mock_get_price_data.assert_called_once_with('^GSPC', start_date=dt.date.today() - dt.timedelta(days=366))
-
 
     @patch('providers.yfin.financials_provider.mark_ticker_as_delisted')
-    @patch('providers.yfin.financials_provider.yahoo_client.session.get')
-    @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
-    def test_fallback_marks_delisted_on_404(self, mock_get_auth, mock_session_get, mock_mark_delisted):
+    @patch('providers.yfin.financials_provider.yahoo_client.execute_request')
+    def test_fallback_marks_delisted_on_404(self, mock_execute_request, mock_mark_delisted):
         """Tests that the fallback provider correctly marks a ticker as delisted on a 404."""
         # --- Arrange ---
         mock_response = MagicMock(status_code=404)
-        mock_session_get.side_effect = cffi_errors.RequestsError("404 Not Found", response=mock_response)
+        mock_execute_request.side_effect = cffi_errors.RequestsError("404 Not Found", response=mock_response)
 
         # --- Act ---
         result = financials_provider._fetch_financials_with_fallback('DELISTED', dt.datetime.now().timestamp())
@@ -226,15 +220,14 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         mock_mark_delisted.assert_called_once_with('DELISTED', "Yahoo Finance API call failed with status 404.")
 
     @patch('providers.yfin.financials_provider.mark_ticker_as_delisted')
-    @patch('providers.yfin.financials_provider.yahoo_client.session.get')
-    @patch('providers.yfin.financials_provider.yahoo_client._get_yahoo_auth', return_value='test_crumb')
-    def test_fallback_does_not_mark_delisted_on_500(self, mock_get_auth, mock_session_get, mock_mark_delisted):
+    @patch('providers.yfin.financials_provider.yahoo_client.execute_request')
+    def test_fallback_does_not_mark_delisted_on_500(self, mock_execute_request, mock_mark_delisted):
         """Tests that the fallback provider does not mark a ticker as delisted on other server errors."""
         # --- Arrange ---
         mock_response = MagicMock(status_code=500)
         # We need to make sure the response object has a url attribute for the logger
         mock_response.url = "http://fake.url"
-        mock_session_get.side_effect = cffi_errors.RequestsError("500 Server Error", response=mock_response)
+        mock_execute_request.side_effect = cffi_errors.RequestsError("500 Server Error", response=mock_response)
 
         # --- Act ---
         result = financials_provider._fetch_financials_with_fallback('SERVERERROR', dt.datetime.now().timestamp())

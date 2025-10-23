@@ -279,3 +279,223 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
     except Exception:
         # On error, force a refetch to be safe
         return False
+
+# Allowed yfinance periods (kept consistent with original route logic)
+ALLOWED_YF_PERIODS = {"1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"}
+
+# Trading calendar cache
+_TRADING_CAL = None
+
+# Get (and cache) NYSE calendar
+def get_trading_calendar():
+    global _TRADING_CAL
+    if _TRADING_CAL is None:
+        # NYSE symbol stays consistent with existing codebase imports
+        _TRADING_CAL = mcal.get_calendar('NYSE')
+    return _TRADING_CAL
+
+# Compute next trading day after d (skip weekends/holidays)
+def next_trading_day(d: date) -> date:
+    cal = get_trading_calendar()
+    # Search a small forward window for the next session
+    start = d + timedelta(days=1)
+    end = d + timedelta(days=10)
+    sched = cal.schedule(start_date=start, end_date=end)
+    if not sched.empty:
+        # The first index is the next trading session date (tz-naive date from Timestamp)
+        return sched.index[0].date()
+    # Fallback: if calendar returns nothing, move 1 day forward
+    return d + timedelta(days=1)
+
+def plan_incremental_price_fetch(
+    cached_data: list | None,
+    req_period: str | None,
+    req_start: str | None,
+    *,
+    today: date | None = None,
+    validate_fn=validate_and_prepare_price_data,
+    covers_fn=cache_covers_request,
+):
+    """
+    Returns a plan dict describing how to satisfy the request:
+    {
+      'action': 'return_cache' | 'fetch_full' | 'fetch_incremental',
+      'start_date': date | None,       # for incremental/full-by-start
+      'period': str | None,            # for full-by-period
+      'cached': list | None,           # validated cache (if any)
+      'reason': str                    # for logging/diagnostics
+      'status': int | None,      # when action == 'error'
+      'message': str | None      # when action == 'error'
+    }
+    """
+    today = today or date.today()
+
+    # 1) Validate cache
+    validated = validate_fn(cached_data, "<batch-or-single>") if cached_data else None
+
+    # 2) Respect explicit request constraints first
+    if req_start:
+        # Explicit start overrides incremental choice
+        return {
+            'action': 'fetch_full',
+            'start_date': date.fromisoformat(req_start),
+            'period': None,
+            'cached': validated,
+            'reason': 'explicit_start',
+            'status': None,
+            'message': None,
+        }
+
+    # If req_period is provided but not in allowed set, ignore it and fallback later.
+    normalized_period = req_period if (req_period and req_period in ALLOWED_YF_PERIODS) else None
+
+    if normalized_period:
+        # If cache fully covers the requested period, we might still decide to return cache
+        if validated and covers_fn(validated, normalized_period, None):
+            # Also ensure recency; if recent, return cache, else incremental from last+1
+            last_date = date.fromisoformat(validated[-1]['formatted_date'])
+            if last_date >= (today - timedelta(days=1)):
+                return {
+                    'action': 'return_cache',
+                    'start_date': None,
+                    'period': None,
+                    'cached': validated,
+                    'reason': 'cache_covers_and_recent',
+                    'status': None,
+                    'message': None,
+                }
+            # Use next trading day for incremental start
+            return {
+                'action': 'fetch_incremental',
+                'start_date': last_date + timedelta(days=1),
+                'period': None,
+                'cached': validated,
+                'reason': 'cache_covers_but_stale',
+                'status': None,
+                'message': None,
+            }
+        # Otherwise, fetch full for requested period
+        return {
+            'action': 'fetch_full',
+            'start_date': None,
+            'period': normalized_period,
+            'cached': validated,
+            'reason': 'explicit_period_refetch',
+            'status': None,
+            'message': None,
+        }
+
+    # 3) No explicit constraints: decide by recency (or invalid period was ignored)
+    if validated:
+        last_date = date.fromisoformat(validated[-1]['formatted_date'])
+        if last_date >= (today - timedelta(days=1)):
+            return {
+                'action': 'return_cache',
+                'start_date': None,
+                'period': None,
+                'cached': validated,
+                'reason': 'no_constraints_cache_recent',
+                'status': None,
+                'message': None,
+            }
+        return {
+            'action': 'fetch_incremental',
+            'start_date': last_date + timedelta(days=1),
+            'period': None,
+            'cached': validated,
+            'reason': 'no_constraints_cache_stale',
+            'status': None,
+            'message': None,
+        }
+
+    # 4) Cache miss: choose simple default full period, "1y"
+    return {
+        'action': 'fetch_full',
+        'start_date': None,
+        'period': '1y',
+        'cached': None,
+        'reason': 'cache_miss_default_period',
+        'status': None,
+        'message': None,
+    }
+
+# De-duplicate by date when merging incremental data
+def _dedup_merge_by_date(old_list: list, new_list: list) -> list:
+    # Prefer 'formatted_date' key if present, else fallback to 'date'
+    by_key = {}
+    if old_list:
+        for item in old_list:
+            k = item.get('formatted_date') or item.get('date')
+            if k is not None:
+                by_key[k] = item
+    if new_list:
+        for item in new_list:
+            k = item.get('formatted_date') or item.get('date')
+            if k is not None:
+                # New data replaces old for same date key
+                by_key[k] = item
+    # Return sorted by date key if possible
+    def _key(x):
+        k = x.get('formatted_date') or x.get('date')
+        return k or ''
+    return sorted(by_key.values(), key=_key)
+
+# shared merger + cache writer
+def finalize_price_response(
+    cache_key: str,
+    plan: dict,
+    provider_data: list | dict | None,
+    *,
+    validate_fn=validate_and_prepare_price_data,
+    cache=None,
+    ttl_seconds: int = 0,
+    # Route-level context to restore original error messages/status
+    error_context: dict | None = None,
+):
+    """
+    Returns (json_data, http_status).
+    Applies validation, merges with cache if incremental, and writes back to cache.
+    On provider/validation failure: falls back to cache if present; otherwise
+    returns route-specific error per error_context (message_404, message_500).
+    """
+    cached = plan.get('cached')
+
+    # Early error passthrough from planner (kept for extensibility)
+    if plan.get('action') == 'error':
+        return {'error': plan.get('message')}, plan.get('status', 400)
+
+    # If provider returned nothing but cache exists, return cache gracefully
+    if provider_data is None:
+        if cached:
+            if cache:
+                cache.set(cache_key, cached, timeout=ttl_seconds)
+            return cached, 200
+        # No cached either → original 404 wording if available
+        if error_context and error_context.get('message_404'):
+            return {'error': error_context['message_404']}, 404
+        return {'error': 'Could not retrieve price data.'}, 404
+
+    validated_new = validate_fn(provider_data, error_context.get('ticker') if error_context else "<batch-or-single>")
+    if not validated_new:
+        # Validation failure → fallback to cached if exists
+        if cached:
+            if cache:
+                cache.set(cache_key, cached, timeout=ttl_seconds)
+            return cached, 200
+        # No cache → original 500 wording if available
+        if error_context and error_context.get('message_500'):
+            return {'error': error_context['message_500']}, 500
+        return {'error': 'Provider returned invalid price data.'}, 500
+
+    # Merge or replace
+    if plan['action'] == 'fetch_incremental' and cached:
+        merged = _dedup_merge_by_date(cached, validated_new)
+        if cache:
+            cache.set(cache_key, merged, timeout=ttl_seconds)
+        return merged, 200
+
+    # Full replace or fresh insert
+    if cache:
+        cache.set(cache_key, validated_new, timeout=ttl_seconds)
+    return validated_new, 200
+

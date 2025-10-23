@@ -31,6 +31,14 @@ SECTOR_KEYS = [
     "energy","financial-services","healthcare","industrials","real-estate","technology","utilities",
 ]
 
+# helpers
+_US_BLOCK_SUFFIX = {".TO",".V",".CN",".L",".F",".SW",".PA",".DE",".MI",".AS",".AX",".HK",".SI",".KS",".KQ",".NZ",".MC",".OL",".ST",".IR"}
+_DEFAULT_REGION = (os.getenv("YF_REGION_DEFAULT") or "US").upper()
+
+def _is_us_symbol(sym: str) -> bool:
+    # US listings on Yahoo typically lack a dot suffix (e.g., BRK-B not BRK.B)
+    return bool(sym) and "." not in sym and not sym.endswith("-USD")
+
 class SectorIndustrySource:
     """Abstract source of industry -> candidate tickers mapping."""
     def get_industry_top_tickers(self, per_industry_limit: int = 10) -> Dict[str, List[str]]:
@@ -133,8 +141,7 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                 break
         return out
 
-    @yahoo_client.retry_on_failure(attempts=3, delay=2, backoff=2)
-    def get_industry_top_tickers(self, per_industry_limit: int = 10) -> Dict[str, List[str]]:
+    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: str = "US") -> Dict[str, List[str]]:
         
         out: Dict[str, List[str]] = {}
         started = time.time()
@@ -144,12 +151,9 @@ class YahooSectorIndustrySource(SectorIndustrySource):
             if time.time() - started > self._max_seconds:
                 break
             
-            # Use a random proxy for this batch
-            proxy = yahoo_client._get_random_proxy()
-            if proxy:
-                yahoo_client.session.proxies = proxy
             try:
-                sec = yf.Sector(s, session=yahoo_client.session)  
+                session = yahoo_client.get_yf_session()
+                sec = yf.Sector(s, session=session)  
                 inds_df = getattr(sec, "industries", None)  # DataFrame of industries
                 if inds_df is None or getattr(inds_df, "empty", True):
                     continue
@@ -163,12 +167,9 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                 for ind_key in ind_keys[: self._max_industries_per_sector]:
                     if time.time() - started > self._max_seconds:
                         break
-                    # Use a random proxy for this try
-                    proxy = yahoo_client._get_random_proxy()
-                    if proxy:
-                        yahoo_client.session.proxies = proxy
                     try:
-                        ind = yf.Industry(ind_key, session=yahoo_client.session)
+                        session = yahoo_client.get_yf_session()
+                        ind = yf.Industry(ind_key, session=session)
                         # combine performing and growth candidates
                         perf_df = getattr(ind, "top_performing_companies", None)
                         growth_df = getattr(ind, "top_growth_companies", None)
@@ -183,6 +184,8 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                                 seen.add(c)
                                 cleaned.append(c)
                         if cleaned:
+                            if region.upper() == "US":
+                                cleaned = [c for c in cleaned if _is_us_symbol(c)]
                             out[ind_key] = cleaned[:per_industry_limit]
                     except Exception:
                         continue
@@ -196,13 +199,15 @@ class DayGainersSource(SectorIndustrySource):
     def __init__(self):
         pass 
 
-    def get_industry_top_tickers(self, per_industry_limit: int = 10) -> Dict[str, List[str]]:
+    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: str = "US") -> Dict[str, List[str]]:
         out: Dict[str, List[str]] = {}
         try:
             url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
             params = {
                 "scrIds": "day_gainers",
-                "count": 200
+                "count": 200,
+                "lang": "en-US",
+                "region": region.upper()
             }
             data = yahoo_client.execute_request(url, params=params)
             
@@ -212,9 +217,11 @@ class DayGainersSource(SectorIndustrySource):
             for q in quotes:
                 sym = q.get("symbol")
                 # tolerate missing industry
-                ind = q.get("industry") or "Unclassified"
                 if not sym:
                     continue
+                if region.upper() == "US" and not _is_us_symbol(sym):  # enforce US by default
+                    continue
+                ind = q.get("industry") or "Unclassified"
                 bucket = out.setdefault(ind, [])
                 if len(bucket) < per_industry_limit:
                     bucket.append(sym)
@@ -225,9 +232,7 @@ class DayGainersSource(SectorIndustrySource):
 
 class ReturnCalculator:
     """Computes 1-month percent change for a ticker."""
-    def __init__(self, session=None, executor=None):
-        if session is not None:
-            yahoo_client.session = session
+    def __init__(self, executor=None):
         self.executor = executor
 
     def one_month_change(self, symbol: str) -> Optional[float]:

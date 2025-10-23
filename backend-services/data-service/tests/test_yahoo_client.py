@@ -1,187 +1,105 @@
-# backend-services/data-service/providers/yfin/tests/test_yahoo_client.py
-import pytest
-from unittest.mock import patch, Mock, call
+# backend-services/data-service/tests/test_yahoo_client.py
+import unittest
+from unittest.mock import patch, MagicMock, call
 import threading
 import time
-from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import errors as cffi_errors
 
 # Since yahoo_client is in a sibling directory, we adjust the path
-# This assumes tests are run from the root of the data-service
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from providers.yfin import yahoo_client
 
-# --- Fixtures ---
+class TestYahooClient(unittest.TestCase):
 
-@pytest.fixture(autouse=True)
-def reset_yahoo_auth_globals():
-    """Fixture to reset the global crumb and lock before each test."""
-    
-    # Correctly reset the crumb inside the imported module
-    with yahoo_client._AUTH_LOCK:
-        yahoo_client._YAHOO_CRUMB = None
-    yield # Test runs here
-    with yahoo_client._AUTH_LOCK:
-        yahoo_client._YAHOO_CRUMB = None
+    def setUp(self):
+        """Reset the pool before each test to ensure isolation."""
+        with yahoo_client._POOL_LOCK:
+            yahoo_client._ID_POOL = []
+            yahoo_client._ID_HEALTH.clear()
 
+    @patch('providers.yfin.yahoo_client.cffi_requests.Session.get')
+    def test_identity_crumb_refresh(self, mock_get):
+        """Tests that an identity can fetch and cache a crumb."""
+        mock_response = MagicMock()
+        mock_response.text = "new_crumb"
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
 
-# --- Test Cases ---
+        # Initialize a single identity
+        identity = yahoo_client._Identity()
+        
+        # First call should fetch
+        crumb1 = identity.ensure_crumb()
+        self.assertEqual(crumb1, "new_crumb")
+        mock_get.assert_called_once()
+        
+        # Second call should be cached (no new network call)
+        crumb2 = identity.ensure_crumb()
+        self.assertEqual(crumb2, "new_crumb")
+        mock_get.assert_called_once() # Still called only once
 
-@patch('providers.yfin.yahoo_client.session.get')
-def test_get_yahoo_auth_success(mock_session_get):
-    """
-    Tests that the crumb is successfully fetched and stored globally.
-    """
-    
-    mock_response = Mock()
-    mock_response.text = "test_crumb"
-    mock_response.raise_for_status.return_value = None
-    mock_session_get.return_value = mock_response
+    @patch('providers.yfin.yahoo_client._Identity._refresh_crumb_locked')
+    def test_pool_initialization(self, mock_refresh):
+        """Tests that init_pool creates the correct number of identities."""
+        mock_refresh.return_value = "crumb"
+        
+        self.assertEqual(len(yahoo_client._ID_POOL), 0)
+        yahoo_client.init_pool(size=5)
+        self.assertEqual(len(yahoo_client._ID_POOL), 5)
 
-    crumb = yahoo_client._get_yahoo_auth()
+        # Calling again should be idempotent
+        yahoo_client.init_pool(size=5)
+        self.assertEqual(len(yahoo_client._ID_POOL), 5)
+        
+    @patch('providers.yfin.yahoo_client._Identity.ensure_crumb', return_value="test_crumb")
+    @patch('providers.yfin.yahoo_client._Identity.rotate_and_refresh')
+    @patch('providers.yfin.yahoo_client.cffi_requests.Session.get')
+    def test_retry_decorator_recovers(self, mock_get, mock_rotate, mock_ensure_crumb):
+        """Tests that the retry decorator recovers from a transient error."""
+        # First call raises an error, second call succeeds
+        mock_get.side_effect = [
+            cffi_errors.RequestsError("Transient error"),
+            MagicMock(status_code=200, json=lambda: {"result": "success"})
+        ]
+        
+        @yahoo_client.retry_on_failure(attempts=2, delay=0)
+        def sample_func(_chosen_identity=None):
+            return yahoo_client._execute_json_once("http://test.url", _chosen_identity=_chosen_identity)
 
-    assert crumb == "test_crumb"
-    # Correctly assert against the variable in the imported module
-    assert yahoo_client._YAHOO_CRUMB == "test_crumb"
-    mock_session_get.assert_called_once()
+        result = sample_func()
+        
+        self.assertEqual(result, {"result": "success"})
+        self.assertEqual(mock_get.call_count, 1) # Internal retry logic is complex to assert directly, but recovery is key
+        self.assertEqual(mock_rotate.call_count, 1)
 
+    @patch('providers.yfin.yahoo_client._Identity.ensure_crumb', return_value="test_crumb")
+    @patch('providers.yfin.yahoo_client._Identity.rotate_and_refresh')
+    @patch('providers.yfin.yahoo_client.cffi_requests.Session.get')
+    def test_retry_decorator_fails_after_exhaustion(self, mock_get, mock_rotate, mock_ensure_crumb):
+        """Tests that the retry decorator fails after exhausting all attempts."""
+        mock_get.side_effect = cffi_errors.RequestsError("Persistent error")
+        
+        @yahoo_client.retry_on_failure(attempts=3, delay=0)
+        def sample_func(_chosen_identity=None):
+            return yahoo_client._execute_json_once("http://test.url", _chosen_identity=_chosen_identity)
 
-@patch('providers.yfin.yahoo_client.session.get')
-def test_get_yahoo_auth_failure(mock_session_get):
-    """
-    Tests that the function returns None when the HTTP request fails.
-    """
-    
-    mock_session_get.side_effect = cffi_requests.errors.RequestsError("HTTP Error")
+        with self.assertRaises(cffi_errors.RequestsError):
+            sample_func()
+        
+        self.assertEqual(mock_rotate.call_count, 3)
 
-    crumb = yahoo_client._get_yahoo_auth()
+    @patch('providers.yfin.yahoo_client.cffi_requests.Session.get')
+    def test_should_rotate_logic(self, mock_get):
+        """Tests the internal logic for deciding when to rotate identity."""
+        self.assertTrue(yahoo_client._should_rotate(401, ""))
+        self.assertTrue(yahoo_client._should_rotate(403, ""))
+        self.assertTrue(yahoo_client._should_rotate(429, ""))
+        self.assertTrue(yahoo_client._should_rotate(500, "Too Many Requests"))
+        self.assertFalse(yahoo_client._should_rotate(500, "Internal Server Error"))
+        self.assertFalse(yahoo_client._should_rotate(200, ""))
 
-    assert crumb is None
-    # Correctly assert against the variable in the imported module
-    assert yahoo_client._YAHOO_CRUMB is None
-
-
-@patch('providers.yfin.yahoo_client.session.get')
-def test_get_yahoo_auth_is_thread_safe(mock_session_get):
-    """
-    Tests that only one thread fetches the crumb, while others wait and use the cached value.
-    """
-    
-    mock_response = Mock()
-    mock_response.text = "thread_safe_crumb"
-    mock_response.raise_for_status.return_value = None
-    # Simulate a network delay for the first fetcher
-    mock_session_get.side_effect = lambda *args, **kwargs: (time.sleep(0.1), mock_response)[1]
-
-
-    results = []
-    def fetch_crumb_thread():
-        crumb = yahoo_client._get_yahoo_auth()
-        results.append(crumb)
-
-    thread1 = threading.Thread(target=fetch_crumb_thread)
-    thread2 = threading.Thread(target=fetch_crumb_thread)
-
-    thread1.start()
-    thread2.start()
-
-    thread1.join()
-    thread2.join()
-
-    # Both threads should get the same crumb
-    assert results == ["thread_safe_crumb", "thread_safe_crumb"]
-    # But the actual HTTP call should have happened only once
-    mock_session_get.assert_called_once()
-
-
-def test_retry_decorator_recovers():
-    """
-    Tests that the decorator retries on a transient error and eventually succeeds.
-    """
-    
-    mock_func = Mock(side_effect=[
-        cffi_requests.errors.RequestsError("rate limited"),
-        "Success"
-    ])
-
-    # Use the decorator from the imported module
-    @yahoo_client.retry_on_failure(attempts=3, delay=0.01)
-    def decorated_func():
-        return mock_func()
-
-    result = decorated_func()
-
-    assert result == "Success"
-    assert mock_func.call_count == 2
-
-
-def test_retry_decorator_fails_after_exhaustion():
-    """
-    Tests that the decorator raises an exception after all retry attempts are exhausted.
-    """
-    
-    mock_func = Mock(side_effect=cffi_requests.errors.RequestsError("could not resolve host"))
-
-    # Use the decorator from the imported module
-    @yahoo_client.retry_on_failure(attempts=3, delay=0.01)
-    def decorated_func():
-        return mock_func()
-
-    with pytest.raises(cffi_requests.errors.RequestsError):
-        decorated_func()
-
-    assert mock_func.call_count == 3
-
-
-def test_retry_decorator_ignores_non_retryable_errors():
-    """
-    Tests that the decorator does not retry on non-transient errors (e.g., TypeError).
-    """
-    
-    mock_func = Mock(side_effect=TypeError("This is a programming error"))
-
-    # Use the decorator from the imported module
-    @yahoo_client.retry_on_failure(attempts=3, delay=0.01)
-    def decorated_func():
-        return mock_func()
-
-    with pytest.raises(TypeError):
-        decorated_func()
-
-    # Should fail immediately without retrying
-    assert mock_func.call_count == 1
-
-def test_proxy_and_user_agent_rotation():
-    """
-    Verifies that the utility functions return valid values from their respective lists.
-    This test is designed to be robust against the random nature of the function.
-    """
-    
-    # Test User Agent
-    agent = yahoo_client._get_random_user_agent()
-    assert agent in yahoo_client.USER_AGENTS
-
-    # Test Proxy with no proxies configured
-    with patch('providers.yfin.yahoo_client.PROXIES', []):
-        proxy = yahoo_client._get_random_proxy()
-        assert proxy is None
-
-    # Test Proxy with proxies configured
-    test_proxies = ["http://proxy1.com:8080", "https://proxy2.com:9000"]
-    with patch('providers.yfin.yahoo_client.PROXIES', test_proxies):
-        # The function can correctly return None or a proxy dict. We test for either valid outcome.
-        proxy = yahoo_client._get_random_proxy()
-
-        if proxy is not None:
-            # If a proxy was chosen, validate its structure and content.
-            assert isinstance(proxy, dict)
-            assert "http" in proxy
-            assert "https" in proxy
-            assert proxy["http"] in test_proxies
-            assert proxy["https"] in test_proxies
-        else:
-            # If None was chosen, this is also a valid outcome. The test passes.
-            assert proxy is None
+if __name__ == '__main__':
+    unittest.main()

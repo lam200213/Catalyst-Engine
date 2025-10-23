@@ -3,7 +3,7 @@ import yfinance as yf
 import datetime as dt
 import pandas as pd
 import time
-import random
+from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client, price_provider # Use relative import
 from helper_functions import is_ticker_delisted, mark_ticker_as_delisted
@@ -51,20 +51,15 @@ def _transform_income_statements(statements, shares_outstanding):
         })
     return transformed
 
-@yahoo_client.retry_on_failure(attempts=3, delay=3, backoff=2)
 def _fetch_financials_with_yfinance(ticker):
     """
     Fetches financials for a ticker using the yfinance library.
     IMPORTANT: This function DOES NOT handle its own exceptions.
     It allows them to propagate up to be handled by a decorator (e.g., retry logic), now with integrated rotating proxy support.
     """
-    try:
-        # Use a random proxy from the list, if available
-        proxy = yahoo_client._get_random_proxy()
-        if proxy: 
-            yahoo_client.session.proxies = proxy
-            
-        stock = yf.Ticker(ticker, session=yahoo_client.session)
+    try:    
+        session=yahoo_client.get_yf_session()
+        stock = yf.Ticker(ticker, session=session)
         info = stock.info
 
         # The 'info' dictionary must exist and contain essential data to be useful.
@@ -207,23 +202,17 @@ def _fetch_financials_with_yfinance(ticker):
         logger.error(f"Failed to fetch financials for {ticker}: {e}")
         return None
     
-@yahoo_client.retry_on_failure(attempts=3, delay=3, backoff=2)
 def _fetch_financials_with_fallback(ticker_symbol, start_time):
     """Fallback method: Scrapes financials directly if yfinance fails."""
     logger.debug(f"Primary yfinance fetch failed for {ticker_symbol} (likely delisted or no summary data). Falling back to direct API.")
     try:
-        crumb = yahoo_client._get_yahoo_auth()
-        if not crumb:
-            return None
-        
-        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}?modules=summaryDetail,assetProfile,financialData,defaultKeyStatistics,incomeStatementHistory,incomeStatementHistoryQuarterly,balanceSheetHistory,cashflowStatementHistory&crumb={crumb}"
-        headers = {'User-Agent': yahoo_client._get_random_user_agent()}
-        proxy = yahoo_client._get_random_proxy()
+        modules = "summaryDetail,assetProfile,financialData,defaultKeyStatistics,incomeStatementHistory,incomeStatementHistoryQuarterly,balanceSheetHistory,cashflowStatementHistory"
+        url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker_symbol}"
+        params = {"modules": modules}
+        response = yahoo_client.execute_request(url, params=params)
 
-        response = yahoo_client.session.get(url, headers=headers, proxies=proxy, timeout=15)
-        response.raise_for_status()
-        
-        result = response.json().get('quoteSummary', {}).get('result')
+        qs = (response or {}).get("quoteSummary") or {}
+        result = qs.get("result") or []
         if not result:
             logger.debug("Yahoo API fallback response has no 'result' field.")
             return None
