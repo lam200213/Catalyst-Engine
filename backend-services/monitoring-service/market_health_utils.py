@@ -154,24 +154,55 @@ def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
     return round((float(close) - float(high_52)) / float(high_52) * 100.0, 2)
 
 
-def _count_new_highs_lows(universe_data: Dict[str, List[dict]]) -> Tuple[int, int, float]:
-    highs = lows = 0
-    for t, series in universe_data.items():
-        if not series:
-            continue
-        df = _to_df(series)
-        if df.empty:
-            continue
-        hi = df['high'].max()
-        lo = df['low'].min()
-        cp = df['close'].iloc[-2]
-        if pd.notna(hi) and pd.notna(cp) and cp >= hi * 0.98:
-            highs += 1
-        if pd.notna(lo) and pd.notna(cp) and cp <= lo * 1.02:
-            lows += 1
-    ratio = float('inf') if lows == 0 and highs > 0 else (round(highs / lows, 2) if lows > 0 else 0.0)
-    return highs, lows, ratio
+def _fetch_breadth() -> dict | None:
+    """
+    Calls data-service /market/breadth to retrieve {new_highs, new_lows, high_low_ratio}.
+    """
+    url = f"{DATA_SERVICE_URL}/market/breadth"
+    try:
+        resp = requests.get(url, timeout=20)
+        if resp.status_code == 200:
+            return resp.json()
+        return None
+    except requests.RequestException:
+        return None
 
+def get_market_health(universe: Optional[List[str]] = None) -> dict:
+    """
+    Orchestrates market health snapshot.
+    Now obtains breadth from data-service aggregate endpoint (universe no longer required).
+    """
+    # 1) Indices via batch endpoint (unchanged)
+    idx_raw = _fetch_prices_batch(INDICES)
+    for sym in INDICES:
+        if not idx_raw.get(sym):
+            single = _fetch_price_single(sym)
+            if single:
+                idx_raw[sym] = single
+    if not all(idx_raw.get(sym) for sym in INDICES):
+        raise RuntimeError("Failed to fetch required index data")
+
+    idx_dfs = _build_index_dfs(idx_raw)
+
+    # 2) Posture
+    details: Dict[str, dict] = {}
+    check_market_trend_context(_build_index_payload(idx_dfs), details)
+    trend_obj = details.get('market_trend_context') or {}
+    market_stage = _map_stage(trend_obj.get('trend') or 'Unknown')
+
+    # 3) Correction depth (^GSPC)
+    correction_depth = _compute_correction_depth(idx_dfs.get('^GSPC'))
+
+    # 4) Breadth (aggregate)
+    breadth = _fetch_breadth() or {"new_highs": 0, "new_lows": 0, "high_low_ratio": 0.0}
+
+    return {
+        "market_stage": market_stage,
+        "correction_depth_percent": correction_depth,
+        "high_low_ratio": breadth.get("high_low_ratio", 0.0),
+        "new_highs": breadth.get("new_highs", 0),
+        "new_lows": breadth.get("new_lows", 0),
+    }
 
 def get_market_health(universe: Optional[List[str]] = None) -> dict:
     """

@@ -35,6 +35,7 @@ services:
       YF_POOL_SIZE: ${YF_POOL_SIZE}
       YF_REQUEST_TIMEOUT: ${YF_REQUEST_TIMEOUT}
       YF_CRUMB_TTL_SECONDS: ${YF_CRUMB_TTL_SECONDS}
+      YF_SCREENER_PAGE_SIZE: ${YF_SCREENER_PAGE_SIZE}
       LOG_LEVEL: INFO
     # Add a DNS configuration for network stability
     dns:

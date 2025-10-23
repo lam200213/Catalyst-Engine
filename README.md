@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-22
-Implement feature of re-auth (refresh crumb) under the same Session after auth failures; Introduced health scoring and cooldowns per identity, Weighted random choice and Diversify signals per request to avoid the proxy pool get exhausted easily. Add caching and region control to /market/sectors/industries, /market/screener/day_gainers; Refactored the cache cleaning feature, introduced a prefix-targeted scan/delete, correctly clear the "industry" cache patterns and safer for multi-tenant Redis; Refactored the shared “incremental cache” decision-making into a small, pure helper that returns a fetch plan, then reuse it in both single and batch routes.
+2025-10-23
+Updated/debugged test cases in data-service; Refactored the Leading industries logic with 52‑week highsl Updated documentation.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

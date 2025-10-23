@@ -124,8 +124,51 @@ class MarketLeadersService:
         # 4. Rank the results
         return self.ranker.rank(industry_to_returns, top_industries=5, top_stocks_per_industry=3)
 
+# def get_market_leaders() -> List[Dict[str, Any]]:
+#     """Facade used by Flask route; orchestrates the process."""
+#     ranker = IndustryRanker()
+#     svc = MarketLeadersService(ranker)
+#     return svc.get_market_leaders()
+
+def _industry_counts_from_quotes(quotes: List[dict]) -> List[Dict[str, Any]]:
+    """
+    Collapses quotes into industry counts and returns top 5 industries by breadth.
+    """
+    from collections import Counter, defaultdict
+    # Normalize industry
+    def norm_ind(q):
+        ind = (q.get("industry") or "").strip()
+        return ind if ind else "Unclassified"
+
+    counts = Counter(norm_ind(q) for q in (quotes or []))
+    top_inds = [ind for ind, _ in counts.most_common(5)]
+
+    return [{"industry": ind, "breadth_count": counts[ind]} for ind in top_inds]
+
+class MarketLeadersService52w:
+    """
+    Alternative leaders strategy using 52-week highs clustering.
+    """
+    def __init__(self):
+        pass
+
+    def get_industry_leaders_by_new_highs(self) -> List[Dict[str, Any]]:
+        url = f"{DATA_SERVICE_URL}/market/screener/52w_highs"
+        quotes = self._fetch_candidates_from_source(url)  # reuse existing fetch method signature
+        if not isinstance(quotes, list):
+            logger.warning("52w highs screener returned no data or wrong shape.")
+            return []
+        return _industry_counts_from_quotes(quotes)
+
 def get_market_leaders() -> List[Dict[str, Any]]:
-    """Facade used by Flask route; orchestrates the process."""
+    """
+    Now defaults to 52-week highs breadth leaders for early bull market clustering.
+    """
+    svc = MarketLeadersService52w()
+    leaders = svc.get_industry_leaders_by_new_highs()
+    if leaders:
+        return leaders
+    # Fallback to previous 1-month return ranking if screener fails
     ranker = IndustryRanker()
-    svc = MarketLeadersService(ranker)
-    return svc.get_market_leaders()
+    svc_legacy = MarketLeadersService(ranker)
+    return svc_legacy.get_market_leaders()

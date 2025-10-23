@@ -72,7 +72,8 @@ class TestYahooClient(unittest.TestCase):
         result = sample_func()
         
         self.assertEqual(result, {"result": "success"})
-        self.assertEqual(mock_get.call_count, 1) # Internal retry logic is complex to assert directly, but recovery is key
+        # The first call fails, the second (retry) call succeeds. Total calls = 2.
+        self.assertEqual(mock_get.call_count, 2)
         self.assertEqual(mock_rotate.call_count, 1)
 
     @patch('providers.yfin.yahoo_client._Identity.ensure_crumb', return_value="test_crumb")

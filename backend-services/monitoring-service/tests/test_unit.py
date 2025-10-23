@@ -48,47 +48,12 @@ def _series_from_points(points):
         for i, p in enumerate(points)
     ]
 
-
-def test_count_new_highs_lows_basic_and_ratio():
-    # ticker_high: last close at its max high -> counts as new high
-    t_high = _series_from_points(
-        [
-            {"open": 10, "high": 10, "low": 9, "close": 9.5},
-            {"open": 11, "high": 12, "low": 10.5, "close": 12.0},  # cp == hi
-        ]
-    )
-    # ticker_low: last close at its min low -> counts as new low
-    t_low = _series_from_points(
-        [
-            {"open": 10, "high": 10, "low": 9, "close": 9.5},
-            {"open": 9.1, "high": 9.5, "low": 9.0, "close": 9.0},  # cp == lo
-        ]
-    )
-    # neutral: does not meet thresholds
-    t_neutral = _series_from_points(
-        [
-            {"open": 10, "high": 10, "low": 9, "close": 9.5},
-            {"open": 10, "high": 11, "low": 9.2, "close": 10.1},
-        ]
-    )
-    highs, lows, ratio = mhu._count_new_highs_lows(
-        {"H": t_high, "L": t_low, "N": t_neutral}
-    )
-    assert highs == 1
-    assert lows == 1
-    assert ratio == 1.0  # 1 / 1 rounded to 2 decimals
-
-    # Only highs, no lows -> ratio = inf
-    highs2, lows2, ratio2 = mhu._count_new_highs_lows({"H": t_high})
-    assert highs2 == 1 and lows2 == 0 and ratio2 == float("inf")
-
-    # No data -> 0,0,0.0
-    h0, l0, r0 = mhu._count_new_highs_lows({})
-    assert h0 == 0 and l0 == 0 and r0 == 0.0
-
-
 def test_build_index_dfs_length_thresholds():
-    # Build 251 days (just below 252) and 252 days (at threshold) for ^GSPC
+    """
+    Build 251 days (just below 252) and 252 days (at threshold) for ^GSPC
+    Below threshold -> last high_52_week NaN; 200-day SMA is defined with 251 points
+    At threshold -> high_52_week not NaN; 200-day SMA remains defined
+    """
     base = datetime(2024, 1, 1)
     def day(i): return (base + timedelta(days=i)).date().isoformat()
 
@@ -128,11 +93,11 @@ def test_build_index_dfs_length_thresholds():
 
 
 # ---------- market_health_utils: orchestrator with HTTP mocking ----------
-
+@patch("market_health_utils._fetch_breadth")
 @patch("market_health_utils.check_market_trend_context")
 @patch("market_health_utils._fetch_price_single")
 @patch("market_health_utils._fetch_prices_batch")
-def test_get_market_health_happy_path_with_fallback(mock_batch, mock_single, mock_trend_ctx):
+def test_get_market_health_happy_path_with_fallback_and_breadth(mock_batch, mock_single, mock_trend_ctx, mock_breadth):
     # Batch returns missing ^IXIC -> single fallback supplies it
     def mk_idx_series(close=100, hi=110, lo=90):
         return _series_from_points(
@@ -147,34 +112,27 @@ def test_get_market_health_happy_path_with_fallback(mock_batch, mock_single, moc
             "^DJI": mk_idx_series(35000, 36500, 32000),
             # "^IXIC" intentionally missing to trigger fallback
         },
-        # Second call for universe
-        {
-            "H": _series_from_points(
-                [{"open": 10, "high": 12, "low": 9, "close": 12}]
-            ),
-            "N": _series_from_points(
-                [{"open": 10, "high": 11, "low": 9, "close": 10}]
-            ),
-        },
     ]
     mock_single.return_value = mk_idx_series(15000, 16000, 14000)
     def trend_ctx(payload, details):
         # Force a bullish posture
         details["market_trend_context"] = {"trend": "Bullish"}
     mock_trend_ctx.side_effect = trend_ctx
+    
+    # Mock the new breadth fetcher
+    mock_breadth.return_value = {"new_highs": 150, "new_lows": 75, "high_low_ratio": 2.0}
 
-    result = mhu.get_market_health(universe=["H", "N"])
+    result = mhu.get_market_health()
 
     # Verify mapping to stage
     assert result["market_stage"] == "Bullish"
     # Compute correction depth for ^GSPC using last row close vs high_52_week
     # With close 4500 and high_52 5000, expect -10.0
     assert result["correction_depth_percent"] == -10.0
-    # Universe highs/lows: H at high, N neutral -> highs=1, lows=0, ratio=inf
-    assert result["new_highs"] == 1
-    assert result["new_lows"] == 0
-    assert result["high_low_ratio"] == float("inf")
-
+    # Assertions for breadth data from mocked endpoint
+    assert result["new_highs"] == 150
+    assert result["new_lows"] == 75
+    assert result["high_low_ratio"] == 2.0
 
 @patch("market_health_utils._fetch_price_single")
 @patch("market_health_utils._fetch_prices_batch")
@@ -204,3 +162,45 @@ def test_market_overview_market_stage_literal_enforced():
             new_highs=0,
             new_lows=0
         )
+
+# --- Unit-test MarketBreadthFetcher behavior via its consumer ---
+
+@patch("market_health_utils.check_market_trend_context")
+@patch("market_health_utils._fetch_price_single")
+@patch("market_health_utils._fetch_prices_batch")
+@patch("market_health_utils._fetch_breadth")
+def test_get_market_health_handles_breadth_edge_cases(mock_breadth, mock_batch, mock_single, mock_trend_ctx):
+    """
+    Simulates various highs/lows screener responses to verify totals and ratio edge cases.
+    """
+    # Setup mocks for index data and trend context (can be minimal)
+    def mk_idx_series():
+        return _series_from_points(
+            [{"open": 100, "high": 101, "low": 99, "close": 100}] * 252
+        )
+    mock_batch.return_value = {"^GSPC": mk_idx_series(), "^DJI": mk_idx_series(), "^IXIC": mk_idx_series()}
+    mock_single.return_value = None # No fallback needed
+    def trend_ctx(payload, details):
+        details["market_trend_context"] = {"trend": "Neutral"}
+    mock_trend_ctx.side_effect = trend_ctx
+
+    # Case 1: Lows = 0, which should result in a very high or infinite ratio from data-service
+    mock_breadth.return_value = {"new_highs": 100, "new_lows": 0, "high_low_ratio": float('inf')}
+    result1 = mhu.get_market_health()
+    assert result1["new_highs"] == 100
+    assert result1["new_lows"] == 0
+    assert result1["high_low_ratio"] == float('inf')
+
+    # Case 2: Highs = 0
+    mock_breadth.return_value = {"new_highs": 0, "new_lows": 50, "high_low_ratio": 0.0}
+    result2 = mhu.get_market_health()
+    assert result2["new_highs"] == 0
+    assert result2["new_lows"] == 50
+    assert result2["high_low_ratio"] == 0.0
+
+    # Case 3: Breadth fetch fails (returns None), should default to 0s
+    mock_breadth.return_value = None
+    result3 = mhu.get_market_health()
+    assert result3["new_highs"] == 0
+    assert result3["new_lows"] == 0
+    assert result3["high_low_ratio"] == 0.0

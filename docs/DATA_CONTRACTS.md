@@ -673,3 +673,72 @@ This is the comprehensive data payload for the frontend's Market Health page, pr
       }
     }
     ```
+
+---
+
+## 11. MarketBreadth
+
+Provides the essential market breadth statistics, specifically the number of stocks making new 52-week highs versus new 52-week lows.
+
+-   **Producer:** `data-service`
+-   **Consumer(s):** `monitoring-service`
+-   **Pydantic Model:** `MarketBreadthResponse`
+-   **Description:** This is a lean data object called by the `monitoring-service` to serve as a key component of its overall market health assessment. It centralizes the potentially expensive calculation of scanning all tickers for new highs/lows.
+-   **JSON Schema:**
+    ```json
+    {
+      "title": "MarketBreadthResponse",
+      "type": "object",
+      "properties": {
+        "new_highs": {
+          "title": "New Highs",
+          "type": "integer"
+        },
+        "new_lows": {
+          "title": "New Lows",
+          "type": "integer"
+        },
+        "high_low_ratio": {
+          "title": "High Low Ratio",
+          "type": "number"
+        }
+      },
+      "required": [
+        "new_highs",
+        "new_lows",
+        "high_low_ratio"
+      ]
+    }
+    ```
+
+---
+
+## 12. IndustryBreadth
+
+Represents the leadership breadth within a specific industry by providing a count of stocks contributing to the industry's strength (e.g., number of stocks at new highs).
+
+-   **Producer:** `data-service`
+-   **Consumer(s):** `monitoring-service`
+-   **Pydantic Model:** `IndustryBreadthItem`
+-   **Description:** Used by the `monitoring-service` to rank industries based on the quantity of leading stocks, providing an alternative to ranking by average percentage return. This helps identify broad, durable industry-wide trends.
+-   **JSON Schema:**
+    ```json
+    {
+        "title": "IndustryBreadthItem",
+        "type": "object",
+        "properties": {
+            "industry": {
+                "title": "Industry",
+                "type": "string"
+            },
+            "breadth_count": {
+                "title": "Breadth Count",
+                "type": "integer"
+            }
+        },
+        "required": [
+            "industry",
+            "breadth_count"
+        ]
+    }
+    ```

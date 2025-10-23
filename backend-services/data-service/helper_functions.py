@@ -225,59 +225,85 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
     """
     if not cached_data:
         return False
-    
+
     try:
         import pandas_market_calendars as mcal
         from datetime import datetime, date, timedelta
-        
-        # Extract cache bounds and size
+
+        # Extract cache bounds from valid date entries only
         dates = [d for d in (item.get("formatted_date") for item in cached_data) if d]
         if not dates:
             return False
+
         cache_start_dt = datetime.fromisoformat(min(dates)).date()
         cache_end_dt = datetime.fromisoformat(max(dates)).date()
-        row_count = len(dates)
-        
-        # If specific start_date requested, simple date comparison
+
+        # Latest Add: log the extracted bounds and request shape
+        logger.info(f"coverage: bounds start={cache_start_dt}, end={cache_end_dt}, req_period={req_period}, req_start={req_start}")
+
         if req_start:
             req_start_dt = datetime.fromisoformat(req_start).date()
-            return cache_start_dt <= req_start_dt
-        
-        # If period requested, calculate required start using trading calendar
+            decision = (cache_start_dt <= req_start_dt)
+            logger.info(f"coverage:req_start check: req_start_dt={req_start_dt}, decision={decision}")
+            return decision
+
         if req_period:
+            trading_days_by_period = {
+                "1mo": 21, "3mo": 63, "6mo": 126, "1y": 252,
+                "2y": 504, "5y": 1260, "10y": 2520
+            }
+            count = trading_days_by_period.get(req_period, 252)
+
+            # Latest Add: row-count fast path
+            if len(dates) >= count:
+                logger.info(f"coverage:row_count path: row_count={len(dates)}, needed={count}, decision=True")
+                return True
+
+            # Keep anchor vars for completeness (they may be helpful if you want to revert to a stricter mode later)
             yesterday = date.today() - timedelta(days=1)
-            
-            # Map period to approximate calendar days for initial range
-            approx_days = {
-                "1mo": 31, "3mo": 92, "6mo": 183, "1y": 365,
-                "2y": 730, "5y": 1826, "10y": 3652
-            }.get(req_period, 365)
-            
-            # Calculate the nominal start date
-            approx_start = yesterday - timedelta(days=approx_days)
+            anchor_end = min(yesterday, cache_end_dt)
 
-            # Use NYSE calendar to get valid trading days in the period
             nyse = mcal.get_calendar("NYSE")
-            schedule = nyse.schedule(start_date=approx_start, end_date=yesterday)
-            
-            if schedule.empty:
-                return True  # No trading days expected, cache is sufficient
-            
-            # First required trading day in the period
-            required_start_dt = datetime.fromisoformat(schedule.index[0].strftime("%Y-%m-%d")).date()
+            approx_back = max(365, int(count * 3))
+            approx_start = anchor_end - timedelta(days=approx_back)
 
-            # Accept by boundary OR by bar count (daily bars)
-            min_rows = {
-                "1mo": 18, "3mo": 55, "6mo": 120, "1y": 240,
-                "2y": 480, "5y": 1200, "10y": 2400
-            }.get(req_period, 240)
+            # Build schedule
+            schedule = nyse.schedule(start_date=approx_start, end_date=anchor_end)
+            logger.info(
+                f"coverage:calendar schedule: len={len(schedule.index)}, "
+                f"first={(schedule.index[0].date() if not schedule.empty else None)}, "
+                f"last={(schedule.index[-1].date() if not schedule.empty else None)}"
+            )
+            # Latest Add: treat a DataFrame with only an index as valid if the index has length
+            idx = getattr(schedule, "index", None)
+            idx_len = (len(idx) if idx is not None else 0)
+            logger.info(
+                f"coverage:calendar schedule: len={idx_len}, "
+                f"first={(idx[0].date() if idx_len > 0 else None)}, "
+                f"last={(idx[-1].date() if idx_len > 0 else None)}"
+            )
 
-            return cache_start_dt <= required_start_dt or row_count >= min_rows
+            if idx is None or idx_len == 0:
+                logger.info("coverage:calendar index empty → decision=False")
+                return False
 
-        # No strict requirement; accept
+            # Latest Add: compute required_start directly from the last `count` sessions
+            if idx_len >= count:
+                required_start_dt = idx[-count].date()
+                logger.info(f"coverage:required_start(length-based)={required_start_dt} (count={count})")
+            else:
+                required_start_dt = idx[0].date()
+                logger.info(f"coverage:required_start(fallback first)={required_start_dt} (len<{count})")
+
+            decision = (cache_start_dt <= required_start_dt)
+            logger.info(f"coverage:decision start={cache_start_dt} required_start={required_start_dt} -> {decision}")
+            return decision
+        # No constraints
+        logger.info("coverage:no constraints → decision=True")
         return True
+
     except Exception:
-        # On error, force a refetch to be safe
+        # Be safe: force refetch on errors
         return False
 
 # Allowed yfinance periods (kept consistent with original route logic)
@@ -353,7 +379,8 @@ def plan_incremental_price_fetch(
         # If cache fully covers the requested period, we might still decide to return cache
         if validated and covers_fn(validated, normalized_period, None):
             # Also ensure recency; if recent, return cache, else incremental from last+1
-            last_date = date.fromisoformat(validated[-1]['formatted_date'])
+            # Do not assume cached data is sorted. Find the actual maximum date
+            last_date = date.fromisoformat(max(item['formatted_date'] for item in validated if item.get('formatted_date')))
             if last_date >= (today - timedelta(days=1)):
                 return {
                     'action': 'return_cache',
@@ -387,7 +414,7 @@ def plan_incremental_price_fetch(
 
     # 3) No explicit constraints: decide by recency (or invalid period was ignored)
     if validated:
-        last_date = date.fromisoformat(validated[-1]['formatted_date'])
+        last_date = date.fromisoformat(max(item['formatted_date'] for item in validated if item.get('formatted_date')))
         if last_date >= (today - timedelta(days=1)):
             return {
                 'action': 'return_cache',

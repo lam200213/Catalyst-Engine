@@ -145,51 +145,58 @@ class YahooSectorIndustrySource(SectorIndustrySource):
         
         out: Dict[str, List[str]] = {}
         started = time.time()
-
         for s in self._discover_sector_keys():
-            # respect global time budget
             if time.time() - started > self._max_seconds:
                 break
-            
             try:
                 session = yahoo_client.get_yf_session()
-                sec = yf.Sector(s, session=session)  
-                inds_df = getattr(sec, "industries", None)  # DataFrame of industries
-                if inds_df is None or getattr(inds_df, "empty", True):
+                sec = yf.Sector(s, session=session)
+                inds_df = getattr(sec, "industries", None)
+                if inds_df is None:
                     continue
-                
-                # handle index-labeled "key"
-                ind_keys = (
-                    inds_df["key"].dropna().astype(str).tolist()
-                    if "key" in getattr(inds_df, "columns", [])
-                    else inds_df.index.dropna().astype(str).tolist()
-                )
+
+                # Derive industry keys from column 'key' when available, else from index
+                if hasattr(inds_df, "columns") and "key" in getattr(inds_df, "columns", []):
+                    ind_keys = inds_df["key"].dropna().astype(str).tolist()
+                else:
+                    idx = getattr(inds_df, "index", None)
+                    ind_keys = idx.dropna().astype(str).tolist() if idx is not None else []
+
+                if not ind_keys:
+                    continue
+
                 for ind_key in ind_keys[: self._max_industries_per_sector]:
                     if time.time() - started > self._max_seconds:
                         break
                     try:
                         session = yahoo_client.get_yf_session()
                         ind = yf.Industry(ind_key, session=session)
-                        # combine performing and growth candidates
+
                         perf_df = getattr(ind, "top_performing_companies", None)
                         growth_df = getattr(ind, "top_growth_companies", None)
+
                         candidates: List[str] = []
                         candidates += self._resolve_symbols_from_top_df(perf_df, per_industry_limit * 2) if perf_df is not None else []
                         candidates += self._resolve_symbols_from_top_df(growth_df, per_industry_limit * 2) if growth_df is not None else []
-                        # de-duplicate while preserving order
+
                         seen = set()
                         cleaned = []
                         for c in candidates:
                             if c not in seen:
                                 seen.add(c)
                                 cleaned.append(c)
+
                         if cleaned:
                             if region.upper() == "US":
                                 cleaned = [c for c in cleaned if _is_us_symbol(c)]
                             out[ind_key] = cleaned[:per_industry_limit]
-                    except Exception:
+
+                    except Exception as e:
+                        logger.warning(f"Failed to process industry '{ind_key}' for sector '{s}': {e}", exc_info=True)
                         continue
-            except Exception:
+
+            except Exception as e:
+                logger.warning(f"Failed to process sector '{s}': {e}", exc_info=True)
                 continue
         return out
 
@@ -242,17 +249,120 @@ class ReturnCalculator:
                 executor=self.executor,  # may be None; provider will handle
                 period="1mo"
             )
-            if not data or not isinstance(data, list):
-                return None
-            # exclude today's partial; use last bar with date < today
-            today_str = dt.date.today().strftime("%Y-%m-%d")
-            series = [row for row in data if row.get("formatted_date") and row["formatted_date"] < today_str]
-            if len(series) < 2:
-                return None
-            start = float(series[0]["close"])
-            end = float(series[-1]["close"])
-            pct = round((end - start) / start * 100.0, 2)
-            return pct
+            # Path A - list-of-dicts shape
+            if isinstance(data, list):
+                today_str = dt.date.today().strftime("%Y-%m-%d")
+                series = [
+                    row for row in data
+                    if row.get("formatted_date") and row.get("close") is not None
+                    and row["formatted_date"] < today_str
+                ]
+                if len(series) < 2:
+                    return None
+                series.sort(key=lambda r: r["formatted_date"])
+                start = float(series[0]["close"])
+                end = float(series[-1]["close"])
+                if start == 0:
+                    return None
+                return round((end - start) / start * 100.0, 2)
+
+            # Path B - legacy Ticker-like with .history()
+            if hasattr(data, "history"):
+                df = data.history(period="1mo")
+                if not isinstance(df, pd.DataFrame) or "Close" not in df.columns:
+                    return None
+                closes = [float(x) for x in df["Close"].dropna().tolist()]
+                if len(closes) < 2:
+                    return None
+                start = closes[0]
+                end = closes[-1]
+                if start == 0:
+                    return None
+                return round((end - start) / start * 100.0, 2)
+
+            # Unknown shape
+            return None
+
         except Exception as e:
             logger.debug(f"1mo change via price_provider failed for {symbol}: {e}")
             return None
+
+        
+# --- 52-week highs / lows screener and market breadth helpers ---
+
+class NewHighsScreenerSource(SectorIndustrySource):
+    """
+    Fetches the full list of current 52-week highs from Yahoo predefined screener.
+    Mirrors DayGainersSource shape but uses scrIds='new_52_week_high'.
+    """
+    def __init__(self, region: str = "US"):
+        self.region = (region or "US").upper()
+        self._page_size: int = int(os.getenv("YF_SCREENER_PAGE_SIZE", "250"))
+
+    def _fetch_page(self, offset: int, size: int) -> dict | None:
+        url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+        params = {
+            "scrIds": "new_52_week_high",
+            "count": size,
+            "offset": offset,
+            "lang": "en-US",
+            "region": self.region,
+        }
+        try:
+            return yahoo_client.execute_request(url, params=params)
+        except Exception as e:
+            logger.debug(f"52w highs screener page failed: {e}")
+            return None
+
+    def get_all_quotes(self, max_pages: int = 40) -> list[dict]:
+        """
+        Returns the full quotes list for the 52w highs set, paginating until all are fetched
+        or until max_pages is reached.
+        """
+        quotes: list[dict] = []
+        size = self._page_size
+        offset = 0
+        total = None
+        pages = 0
+        while pages < max_pages:
+            data = self._fetch_page(offset, size)
+            if not data:
+                break
+            node = (data.get("finance") or {}).get("result", [{}])[0]
+            total = node.get("total", total)
+            batch = node.get("quotes") or []
+            if not batch:
+                break
+            # Enforce US symbols if region=US (consistent with existing helpers)
+            if self.region == "US":
+                batch = [q for q in batch if _is_us_symbol(q.get("symbol", ""))]
+            quotes.extend(batch)
+            offset += len(batch)
+            pages += 1
+            if total is not None and len(quotes) >= int(total):
+                break
+        return quotes
+
+class MarketBreadthFetcher:
+    """
+    Reads totals from predefined screeners for 52w highs and 52w lows and returns aggregate breadth.
+    """
+    def __init__(self, region: str = "US"):
+        self.region = (region or "US").upper()
+
+    def _get_total(self, scr_id: str) -> int:
+        url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+        params = {"scrIds": scr_id, "count": 1, "offset": 0, "lang": "en-US", "region": self.region}
+        try:
+            data = yahoo_client.execute_request(url, params=params)
+            node = (data.get("finance") or {}).get("result", [{}])[0]
+            return int(node.get("total") or 0)
+        except Exception as e:
+            logger.debug(f"Screener total fetch failed for {scr_id}: {e}")
+            return 0
+
+    def get_breadth(self) -> dict:
+        highs = self._get_total("new_52_week_high")
+        lows = self._get_total("new_52_week_low")
+        ratio = float("inf") if lows == 0 and highs > 0 else (round(highs / lows, 2) if lows > 0 else 0.0)
+        return {"new_highs": highs, "new_lows": lows, "high_low_ratio": ratio}

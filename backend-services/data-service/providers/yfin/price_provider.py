@@ -1,5 +1,6 @@
 # backend-services/data-service/providers/yfin/price_provider.py
 from curl_cffi import requests as cffi_requests
+from curl_cffi.requests import errors as cffi_errors
 import datetime as dt
 import pandas as pd
 import time # for throttling
@@ -112,7 +113,20 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
 
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sanitized_ticker}"
     params = _build_chart_params(period, start_date, interval=interval)
-    resp_json = yahoo_client.execute_request(url, params=params)
+    try:
+        resp_json = yahoo_client.execute_request(url, params=params)
+    except cffi_errors.RequestsError as e:
+        # Check if it's a 404 (delisted ticker)
+        if hasattr(e, 'response') and e.response and e.response.status_code == 404:
+            logger.warning(f"Ticker {sanitized_ticker} returned 404, marking as delisted.")
+            mark_ticker_as_delisted(sanitized_ticker, "Yahoo Finance API call failed with status 404 for chart data.")
+            return None
+        # For other HTTP errors (5xx, etc.), just return None without marking delisted
+        logger.error(f"HTTP error fetching {sanitized_ticker}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error fetching {sanitized_ticker}: {e}")
+        return None
     transformed_data = _transform_yahoo_response(resp_json, sanitized_ticker)
 
     # if transformed_data:

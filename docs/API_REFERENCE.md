@@ -400,8 +400,8 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     ```
 
 - **GET `/monitor/market-health`**
-  - Proxies to: `monitoring-service`
-  - Purpose: Orchestrates calls to internal logic functions to build the complete data payload for the frontend's market health page.
+- Proxies to: `monitoring-service`
+  - Purpose: Orchestrates calls to internal services to build the complete data payload for the frontend's market health page. It calls the `data-service` to get market breadth (new highs/lows) and identify leading industries.
   - **Data Contract**: Produces [`MarketHealthResponse`](./DATA_CONTRACTS.md#10-markethealth).
   - **Example Usage**:
     ```bash
@@ -714,9 +714,49 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
         "FAKETICKER": null
       }
       ```
+
+- **GET `/market/breadth`**
+  - Service: `data-service`
+  - Purpose: Retrieves aggregate market breadth data, specifically the total number of new 52-week highs and lows for a major exchange. This is the primary source for the `monitoring-service`'s market health overview.
+  - **Data Contract:** Produces [`MarketBreadthResponse`](./DATA_CONTRACTS.md#11-marketbreadth).
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      response = requests.get(f"{data_service_url}/market/breadth")
+      breadth_data = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "new_highs": 150,
+        "new_lows": 75,
+        "high_low_ratio": 2.0
+      }
+      ```
+
+- **GET `/market/screener/52w_highs`**
+  - Service: `data-service`
+  - Purpose: Provides a list of stocks making new 52-week highs, grouped by industry. This is used by the `monitoring-service` to identify currently leading industries and stocks.
+  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      response = requests.get(f"{data_service_url}/market/screener/52w_highs")
+      leading_candidates = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "Semiconductors": ["NVDA", "AVGO"],
+        "Software - Infrastructure": ["MSFT", "CRWD", "NET"]
+      }
+      ```
+
 - **GET `/monitor/internal/leaders`**
   - Service: `monitoring-service`
-  - Purpose: Provides a ranked list of leading stocks grouped by industry, based on 1-month performance. This logic is consumed by the main `/monitor/market-health` endpoint.
+  - Purpose: Provides a ranked list of leading stocks grouped by industry, 52-week highs breadth; falls back to avg 1M returns if screener unavailable. This logic is consumed by the main `/monitor/market-health` endpoint.
   - **Data Contract**: Produces [`MarketLeaders`](./DATA_CONTRACTS.md#10-markethealth).
   - **Example Usage (from within the monitoring service)**:
       ```python
@@ -741,15 +781,14 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 
 - **GET `/monitor/internal/health`**
   - Service: `monitoring-service`
-  - Purpose: Returns a market health snapshot including market stage, correction depth, and new high/low statistics. This logic is consumed by the main `/monitor/market-health` endpoint.
-  - **Query Parameters**:
-    - `tickers` (optional): A comma-separated string of tickers to use as the universe for breadth calculation (e.g., `?tickers=AAPL,MSFT,GOOGL`).
+  - Purpose: Returns a market health snapshot including market stage and correction depth. It retrieves breadth statistics (new highs/lows) by calling the `data-service`'s `/market/breadth` endpoint. This logic is consumed by the main `/monitor/market-health` endpoint.
+  - **Query Parameters**: None. The `tickers` parameter is no longer used as the calculation is centralized in the data-service.
   - **Data Contract**: Produces [`MarketOverview`](./DATA_CONTRACTS.md#10-markethealth).
   - **Example Usage (from within the monitoring service)**:
       ```python
       # This is called internally, not a direct HTTP request from outside.
       from market_health_utils import get_market_health
-      health_data = get_market_health(universe=["AAPL", "MSFT"])
+      health_data = get_market_health()
       ```
   - **Example Success Response**:
       ```json

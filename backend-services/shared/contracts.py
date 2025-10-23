@@ -228,3 +228,15 @@ class MarketHealthResponse(BaseModel):
     """The complete data payload for the /market page, served by the monitoring-service."""
     market_overview: MarketOverview
     leaders_by_industry: MarketLeaders
+
+# --- Contract 11: MarketBreadth ---
+class MarketBreadthResponse(BaseModel):
+    """The data payload for market breadth, served by the data-service."""
+    new_highs: int
+    new_lows: int
+    high_low_ratio: float
+
+# --- Contract 12: IndustryBreadth ---
+class IndustryBreadthItem(BaseModel):
+    industry: str
+    breadth_count: int

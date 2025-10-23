@@ -45,93 +45,121 @@ def test_health_ok():
     assert resp.status_code == 200
     assert resp.get_json() == {"status": "healthy"}
 
-
-@patch("market_leaders.requests.post")
 @patch("market_leaders.requests.get")
 @patch("market_health_utils.requests.get")
 @patch("market_health_utils.requests.post")
-def test_get_monitor_market_health_dependency_mocks(mock_mhu_post, mock_mhu_get, mock_ml_get, mock_ml_post):
+def test_get_monitor_market_health_dependency_mocks(mock_mhu_post, mock_mhu_get, mock_ml_get):
     client = flask_app.test_client()
 
-    # 1) Indices batch for market health
-    idx_payload = {
-        "success": {
-            "^GSPC": _series(), "^DJI": _series(base=200), "^IXIC": _series(base=300)
-        }
-    }
-    mock_mhu_post.side_effect = [
-        _ok_response(idx_payload),  # first POST: indices
-    ]
-    mock_mhu_get.return_value = _ok_response({})  # not used (no fallback needed)
+    # 1) Mock for market_health_utils dependencies
+    # POST for indices batch remains
+    idx_payload = {"success": {"^GSPC": _series(), "^DJI": _series(base=200), "^IXIC": _series(base=300)}}
+    mock_mhu_post.return_value = _ok_response(idx_payload)
+    # GET for market breadth
+    breadth_payload = {"new_highs": 120, "new_lows": 40, "high_low_ratio": 3.0}
+    mock_mhu_get.return_value = _ok_response(breadth_payload)
 
-    # 2) Market leaders: primary candidates + 1m returns batch
-    mock_ml_get.return_value = _ok_response({
-        "Tech": ["AAPL", "MSFT", "NVDA"],
-        "Retail": ["AMZN", "COST"]
-    })
-    mock_ml_post.return_value = _ok_response({
-        "AAPL": 0.10, "MSFT": 0.05, "NVDA": None, "AMZN": 0.07, "COST": 0.02
-    })
+    # 2) Mock for market_leaders (52w highs screener)
+    leaders_quotes = [{"industry": "Tech", "ticker": "A"}, {"industry": "Tech", "ticker": "B"}]
+    mock_ml_get.return_value = _ok_response(leaders_quotes)
 
     resp = client.get("/monitor/market-health")
     assert resp.status_code == 200
     data = resp.get_json()
 
-    # Assert structure and allowed stage
+    # Assert structure and data from mocks
     assert "market_overview" in data and "leaders_by_industry" in data
     mo = data["market_overview"]
-    assert mo["market_stage"] in ("Bullish", "Bearish", "Neutral", "Recovery")
-    assert isinstance(mo["correction_depth_percent"], float)
-    assert isinstance(mo["high_low_ratio"], float)
-    assert isinstance(mo["new_highs"], int)
-    assert isinstance(mo["new_lows"], int)
+    assert mo["market_stage"] in ("Bullish", "Bearish", "Neutral")
+    assert mo["new_highs"] == 120
+    assert mo["new_lows"] == 40
+    assert mo["high_low_ratio"] == 3.0
 
     leaders = data["leaders_by_industry"]["leading_industries"]
     assert isinstance(leaders, list)
-    # Tech expected to include AAPL and MSFT in descending return
-    tech = next(block for block in leaders if block["industry"] == "Tech")
-    assert [s["ticker"] for s in tech["stocks"]] == ["AAPL", "MSFT"]
-
-
-@patch("market_health_utils.requests.get")
-@patch("market_health_utils.requests.post")
-def test_get_internal_health_uses_uppercased_universe_and_dependency(mock_mhu_post, mock_mhu_get):
-    client = flask_app.test_client()
-
-    # Side effects: first POST for indices, second POST for universe
-    idx_payload = {"success": {"^GSPC": _series(), "^DJI": _series(base=200), "^IXIC": _series(base=300)}}
-    uni_payload = {"success": {
-        "AAPL": _series(days=2, base=10), "MSFT": _series(days=2, base=20), "TSLA": _series(days=2, base=30)
-    }}
-    mock_mhu_post.side_effect = [
-        _ok_response(idx_payload),
-        _ok_response(uni_payload),
-    ]
-    mock_mhu_get.return_value = _ok_response({})  # not used
-
-    resp = client.get("/monitor/internal/health?tickers=aapl, msft , Tsla")
-    assert resp.status_code == 200
-    payload = resp.get_json()
-    assert payload["market_stage"] in ("Bullish", "Bearish", "Neutral", "Recovery")
-
-    # Verify the second POST (universe) used uppercased tickers
-    assert len(mock_mhu_post.call_args_list) >= 2
-    second_post_kwargs = mock_mhu_post.call_args_list[1].kwargs
-    assert sorted(second_post_kwargs["json"]["tickers"]) == ["AAPL", "MSFT", "TSLA"]
-
-
+    assert len(leaders) == 1
+    assert leaders[0]["industry"] == "Tech"
+    assert leaders[0]["breadth_count"] == 2
 @patch("market_leaders.requests.post")
 @patch("market_leaders.requests.get")
 def test_get_internal_leaders_handles_failures(mock_ml_get, mock_ml_post):
     client = flask_app.test_client()
 
-    # Both candidate sources fail => returns {}
+    # Mock 52w screener to fail (returns non-list), then fallback sources also fail
     mock_ml_get.side_effect = [
-        _ok_response({}),  # simulate empty/invalid primary
-        _ok_response({}),  # simulate empty/invalid fallback
+        MagicMock(status_code=500), # 52w highs screener
+        MagicMock(status_code=500), # Primary fallback
+        MagicMock(status_code=500), # Secondary fallback
     ]
-    mock_ml_post.return_value = _ok_response({})
+    mock_ml_post.return_value = MagicMock(status_code=500)
 
     resp = client.get("/monitor/internal/leaders")
-    # Route returns 404 when no data
     assert resp.status_code == 404
+    assert "No market leader data available" in resp.get_json()["message"]
+
+@patch("market_health_utils.requests.post")
+@patch("market_health_utils.requests.get")
+def test_integration_internal_health_no_universe(mock_mhu_get, mock_mhu_post):
+    """
+    Integration-test /monitor/internal/health: verify outputs stable without universe
+    and consistent ratio against mocked data-service response.
+    """
+    client = flask_app.test_client()
+
+    # Mock dependencies for get_market_health
+    idx_payload = {"success": {"^GSPC": _series(), "^DJI": _series(), "^IXIC": _series()}}
+    mock_mhu_post.return_value = _ok_response(idx_payload)
+
+    breadth_payload = {"new_highs": 100, "new_lows": 25, "high_low_ratio": 4.0}
+    mock_mhu_get.return_value = _ok_response(breadth_payload)
+
+    # Make request without any universe parameter
+    resp = client.get("/monitor/internal/health")
+    assert resp.status_code == 200
+    data = resp.get_json()
+
+    # Verify output is stable and reflects mocked breadth data
+    assert data["new_highs"] == 100
+    assert data["new_lows"] == 25
+    assert data["high_low_ratio"] == 4.0
+    assert "market_stage" in data
+
+
+@patch("market_leaders.requests.get")
+def test_integration_internal_leaders_top_5_selection(mock_ml_get):
+    """
+    Integration-test /monitor/internal/leaders: verify top 5 industries selection
+    by quote industry counts with ties and “Unclassified” handling.
+    """
+    client = flask_app.test_client()
+
+    mock_quotes = [
+        {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}, # 4
+        {"industry": "Finance"}, {"industry": "Finance"}, {"industry": "Finance"},             # 3
+        {"industry": "Retail"}, {"industry": "Retail"},                                       # 2
+        {"industry": "Health"}, {"industry": "Health"},                                       # 2 (tie)
+        {"industry": None}, # Unclassified                                                    # 1
+        {"industry": "Energy"},                                                               # 1 (tie)
+        {"industry": "Industrial"},                                                           # 1 (tie)
+    ]
+    mock_ml_get.return_value = _ok_response(mock_quotes)
+
+    resp = client.get("/monitor/internal/leaders")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    
+    # The contract is {"leading_industries": [...]}
+    industries = data["leading_industries"]
+    assert len(industries) == 5
+
+    # Verify the top 5 industries are correct, respecting counts
+    counts = {item['industry']: item['breadth_count'] for item in industries}
+    assert counts["Tech"] == 4
+    assert counts["Finance"] == 3
+    assert counts["Retail"] == 2
+    assert counts["Health"] == 2
+    
+    # The last spot is a tie between Unclassified, Energy, Industrial. One of them should be there.
+    last_industry = industries[4]['industry']
+    assert last_industry in ["Unclassified", "Energy", "Industrial"]
+    assert counts[last_industry] == 1

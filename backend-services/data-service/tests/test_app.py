@@ -38,10 +38,11 @@ class BaseDataServiceTest(unittest.TestCase):
         self.db_patcher.stop()
         self.cache_patcher.stop()
     # Helper method to create valid mock price data  
-    def _create_valid_price_data(self, custom_data={}):
+    def _create_valid_price_data(self, overrides=None, day_offset=0):
         """Creates a single, valid PriceDataItem dictionary."""
+        target_date = (date.today() - timedelta(days=day_offset)).strftime('%Y-%m-%d')
         default_data = {
-            "formatted_date": "2025-09-24",
+            "formatted_date": target_date,
             "open": 150.0,
             "high": 152.0,
             "low": 149.5,
@@ -49,7 +50,10 @@ class BaseDataServiceTest(unittest.TestCase):
             "volume": 1000000,
             "adjclose": 151.75
         }
-        default_data.update(custom_data)
+        if overrides:
+            # Ensure overrides is a dictionary before updating
+            if isinstance(overrides, dict):
+                default_data.update(overrides)
         return default_data
 
     # Helper method to create valid mock financials data
@@ -251,7 +255,7 @@ class TestPriceEndpoints(BaseDataServiceTest):
     def test_batch_price_success_with_cache_mix(self, mock_get_stock_data):
         """POST /price/batch: Tests a mix of cached and uncached tickers."""
         # --- Arrange ---
-        valid_cached_data = [self._create_valid_price_data({"close": 100.0})]
+        valid_cached_data = [self._create_valid_price_data({"close": 100.0}, day_offset=1)]
         valid_provider_data = [self._create_valid_price_data({"close": 200.0})]
         
         def cache_side_effect(key):
@@ -260,8 +264,13 @@ class TestPriceEndpoints(BaseDataServiceTest):
             return None
         self.mock_cache.get.side_effect = cache_side_effect
         
-        provider_data = {"UNCACHED": valid_provider_data, "FAILED": None}
-        mock_get_stock_data.return_value = provider_data
+        # mock_get_stock_data must handle single and batch calls.
+        # It now returns a dictionary mapping ticker to data.
+        def provider_side_effect(tickers, executor, start_date=None, period=None):
+            if tickers == ['UNCACHED', 'FAILED']:
+                 return {"UNCACHED": valid_provider_data, "FAILED": None}
+            return {} # Default empty response
+        mock_get_stock_data.side_effect = provider_side_effect
 
         # --- Act ---
         response = self.client.post('/price/batch', json={'tickers': ['CACHED', 'UNCACHED', 'FAILED'], 'source': 'yfinance'})
@@ -308,6 +317,93 @@ class TestPriceEndpoints(BaseDataServiceTest):
                 self.assertIn('error', response.json)
 
 # =====================================================================
+# ==                BATCH PRICE LOGIC & EDGE CASES                   ==
+# =====================================================================
+class TestBatchPriceLogic(BaseDataServiceTest):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_price_explicit_start_date_precedence(self, mock_get_stock_data):
+        """POST /price/batch: Tests that `start_date` overrides any existing cache."""
+        # --- Arrange ---
+        ticker = "AAPL"
+        # Simulate a rich cache with 20 days of data
+        cached_data = [self._create_valid_price_data(day_offset=i) for i in range(20)]
+        self.mock_cache.get.return_value = cached_data
+
+        # The provider will return only 5 days of data
+        start_date_str = (date.today() - timedelta(days=4)).strftime('%Y-%m-%d')
+        start_date_obj = date.fromisoformat(start_date_str)
+        provider_data = {"AAPL": [self._create_valid_price_data(day_offset=i) for i in range(5)]}
+        mock_get_stock_data.return_value = provider_data
+
+        # --- Act ---
+        # Request data with an explicit start_date, which should ignore the cache.
+        response = self.client.post('/price/batch', json={
+            'tickers': [ticker],
+            'source': 'yfinance',
+            'start_date': start_date_str
+        })
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        # The provider should be called with the explicit start date
+        mock_get_stock_data.assert_called_once_with([ticker], ANY, start_date=start_date_obj, period=None)
+        # The response should contain exactly the 5 days from the provider, not the 20 from cache
+        self.assertEqual(len(response.json['success'][ticker]), 5)
+        # The cache should be updated with the newly fetched data
+        self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", provider_data[ticker], timeout=ANY)
+
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_price_incremental_merge_on_stale_cache(self, mock_get_stock_data):
+        """POST /price/batch: Tests correct incremental fetch and merge for a stale cache."""
+        # --- Arrange ---
+        ticker = "MSFT"
+        # Simulate a cache that is stale by 5 days
+        cached_data = [self._create_valid_price_data(day_offset=i + 5) for i in range(10)]
+        self.mock_cache.get.return_value = cached_data
+        last_cached_date = date.fromisoformat(sorted(cached_data, key=lambda x: x['formatted_date'])[-1]['formatted_date'])
+
+        # Provider will return the 5 days of "new" data
+        new_data = [self._create_valid_price_data(day_offset=i) for i in range(5)]
+        mock_get_stock_data.return_value = new_data
+        
+        # --- Act ---
+        # Make a request with no period or start_date, relying on incremental logic
+        response = self.client.post('/price/batch', json={'tickers': [ticker], 'source': 'yfinance'})
+
+        # --- Assert ---
+        self.assertEqual(response.status_code, 200)
+        # Provider should be called starting from the day after the last cached date
+        expected_start_date = last_cached_date + timedelta(days=1)
+        mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=expected_start_date, period=None)
+        
+        # Response should contain the merged and de-duplicated data
+        response_data = response.json['success'][ticker]
+        self.assertEqual(len(response_data), 15) # 10 from cache + 5 new
+        
+        # Verify no duplicate dates
+        response_dates = [item['formatted_date'] for item in response_data]
+        self.assertEqual(len(response_dates), len(set(response_dates)))
+        
+        # Verify cache is updated with the full, merged list
+        self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", response_data, timeout=ANY)
+
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_price_handles_invalid_source(self, mock_get_stock_data):
+        """POST /price/batch: Tests that an unknown 'source' is rejected and makes no network calls."""
+        # --- Act ---
+        response = self.client.post('/price/batch', json={
+            'tickers': ['AAPL'],
+            'source': 'invalid_source' # This source is not 'yfinance' or 'finnhub'
+        })
+        
+        # --- Assert ---
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json)
+        self.assertIn("Invalid data source", response.json['error'])
+        # Crucially, assert that no attempt was made to fetch data from any provider
+        mock_get_stock_data.assert_not_called()
+
+# =====================================================================
 # ==               PRICE CACHE COVERAGE & STAMPEDE                   ==
 # =====================================================================
 class TestPriceCacheCoverage(BaseDataServiceTest):
@@ -322,8 +418,8 @@ class TestPriceCacheCoverage(BaseDataServiceTest):
         """
         # --- Arrange ---
         # 1. Setup mock data for different periods
-        one_year_data = [self._create_valid_price_data(i, 100 + i) for i in range(365)]
-        two_year_data = [self._create_valid_price_data(i, 200 + i) for i in range(730)]
+        one_year_data = [self._create_valid_price_data(overrides={"close": 100 + i}, day_offset=365 - i) for i in range(365)]
+        two_year_data = [self._create_valid_price_data(overrides={"close": 200 + i}, day_offset=730 - i) for i in range(730)]
 
         # Mock the provider to return 2-year data when called
         mock_get_stock_data.return_value = {"GSPC": two_year_data}
@@ -393,16 +489,69 @@ class TestCacheCoversRequestHelper(BaseDataServiceTest):
         
         # --- Act & Assert: Edge Cases ---
         # Case 1: Cache starts exactly on the required first trading day -> Should PASS
-        cached_data_perfect = [{'formatted_date': (first_trading_day_1y_ago + timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(365)]
+        cached_data_perfect = [{'formatted_date': first_trading_day_1y_ago.strftime('%Y-%m-%d')}]
         self.assertTrue(cache_covers_request(cached_data_perfect, "1y", None))
 
-        # Case 2: Cache starts one calendar day after the required first trading day -> Should FAIL
-        cached_data_short = [{'formatted_date': (first_trading_day_1y_ago + timedelta(days=d+1)).strftime('%Y-%m-%d')} for d in range(365)]
+        # Case 2: Cache starts one BUSINESS day after the required first trading day -> Should FAIL
+        next_trading_day = (first_trading_day_1y_ago + pd.tseries.offsets.BDay(1)).strftime('%Y-%m-%d')
+        cached_data_short = [{'formatted_date': next_trading_day}]
         self.assertFalse(cache_covers_request(cached_data_short, "1y", None))
 
-        # Case 3: Cache is short on days but high on row count -> Should PASS by bar count
-        cached_data_bars = [{'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(250)]
-        self.assertTrue(cache_covers_request(cached_data_bars, "1y", None))
+        # Case 3a: Cache has just under the required bar count -> Should FAIL
+        cached_data_bars_fail = [{'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(251)]
+        self.assertFalse(cache_covers_request(cached_data_bars_fail, "1y", None), "Should fail with 251 bars for a 1y period.")
+
+        # Case 3b: Cache has exactly the required bar count -> Should PASS by bar count
+        cached_data_bars_pass = [{'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')} for d in range(252)]
+        self.assertTrue(cache_covers_request(cached_data_bars_pass, "1y", None), "Should pass with 252 bars for a 1y period.")
+
+        # Case 3c: Over-threshold row-count should PASS (e.g., 253 bars for 1y)
+        cached_data_over = [
+            {'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')}
+            for d in range(253)
+        ]
+        self.assertTrue(cache_covers_request(cached_data_over, "1y", None))
+
+        # Case 3d: Order invariance with exactly threshold bars (252) should PASS
+        cached_data_exact = [
+            {'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')}
+            for d in range(252)
+        ]
+        # Shuffle to ensure order does not affect coverage
+        from random import shuffle
+        shuffle(cached_data_exact)
+        self.assertTrue(cache_covers_request(cached_data_exact, "1y", None))
+
+        # Case 3e: Duplicates: 251 unique + 1 duplicate.
+        # Current implementation counts total rows (including duplicates), so this will PASS.
+        # If the intended behavior is to ignore duplicates, change the expectation to False
+        # and update cache_covers_request to de-duplicate by date before counting.
+        unique_251 = [
+            {'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')}
+            for d in range(1, 252)
+        ]  # 251 unique dates (skip 0 so we can duplicate it below)
+        duplicate_one = {'formatted_date': (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')}
+        cached_data_dupe = unique_251 + [duplicate_one]  # total len = 252, but with one duplicate date
+        self.assertTrue(cache_covers_request(cached_data_dupe, "1y", None))
+
+        # Case 3f: Malformed entry resilience: one malformed among otherwise valid bars.
+        # With current logic (invalid entries ignored; row-count with small grace), this should PASS.
+        cached_data_malformed = [
+            {'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')}
+            for d in range(253)
+        ]
+        cached_data_malformed[125] = {'formatted_date': None}  # inject one malformed row
+        self.assertTrue(cache_covers_request(cached_data_malformed, "1y", None))
+
+        # Case 3g: req_start precedence: even with many bars, start-only bound should be enforced.
+        # Set req_start to one day BEFORE the cache's first date → Should FAIL.
+        many_bars = [
+            {'formatted_date': (date.today() - timedelta(days=d)).strftime('%Y-%m-%d')}
+            for d in range(300)
+        ]
+        first_cache_date = date.fromisoformat(many_bars[-1]['formatted_date'])
+        req_start_prior = (first_cache_date - timedelta(days=1)).strftime('%Y-%m-%d')
+        self.assertFalse(cache_covers_request(many_bars, "1y", req_start_prior))
 
 # =====================================================================
 # ==                   CORE FINANCIALS ENDPOINTS                     ==

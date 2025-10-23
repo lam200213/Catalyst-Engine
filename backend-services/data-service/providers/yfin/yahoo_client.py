@@ -171,6 +171,7 @@ def _mark_failure(ident: _Identity):
 # the functions wrapped by it must accept or ignore _chosen_identity
 def retry_on_failure(attempts: int = 3, delay: float = 0.3, backoff: float = 2.0):
     def deco(func):
+        @wraps(func)  # preserve function metadata
         def wrapper(*args, **kwargs):
             last_exc = None
             wait = delay

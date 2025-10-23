@@ -81,7 +81,7 @@ from providers import finnhub_provider, marketaux_provider
 from providers.yfin import yahoo_client as yf_client 
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
-from providers.yfin.market_data_provider import DayGainersSource, ReturnCalculator, YahooSectorIndustrySource
+from providers.yfin.market_data_provider import DayGainersSource, ReturnCalculator, YahooSectorIndustrySource, NewHighsScreenerSource, MarketBreadthFetcher
 # Import the logic
 from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data, cache_covers_request, plan_incremental_price_fetch, finalize_price_response
 
@@ -284,7 +284,8 @@ def get_batch_data():
     plans = {}
     cached_results = {}
     missed_tickers = {}   # key: (period, start_date) -> [tickers]
-    tickers_for_incremental_fetch = {}  # list of (ticker, start_date, cached)
+    tickers_for_incremental_fetch = []  # list of (ticker, start_date, cached)
+    failed_tickers = set() # avoid duplicates
 
     # Extract requested period/start for coverage checks
     req_period = (payload.get('period') or "").lower()
@@ -318,7 +319,10 @@ def get_batch_data():
 
     if source == 'yfinance':
         for (period, start), group in missed_tickers.items():
-            fetched = yf_price_provider.get_stock_data(group, executor, start_date=start, period=period)
+            # ensure deduplication before provider call (keep as-is if already present)
+            unique_group = list(dict.fromkeys(group))
+            fetched = yf_price_provider.get_stock_data(unique_group, executor, start_date=start, period=period)
+
             for ticker in group:
                 cache_key, plan = plans[ticker]
                 data = fetched.get(ticker) if isinstance(fetched, dict) else None
@@ -327,7 +331,9 @@ def get_batch_data():
                     "message_500": f"Could not retrieve valid price data for {ticker}.",
                     "message_404": f"Could not retrieve price data for {ticker} from {source}.",
                 }
-                final_json, status = finalize_price_response(cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_cotext)
+                final_json, status = finalize_price_response(
+                    cache_key, plan, data, cache=cache, ttl_seconds=PRICE_CACHE_TTL, error_context=error_cotext
+                )
                 if status == 200:
                     results[ticker] = final_json
                 else:
@@ -348,10 +354,10 @@ def get_batch_data():
             else:
                 failed_tickers.append(ticker)
     else:
-    # finnhub: per-ticker fetch path (no batch API)
-        for t in set(list(missed_tickers.get((None, None), [])) + [x[0] for x in tickers_for_incremental_fetch] + list(results.keys())):
-            # Only fetch for tickers not already satisfied by cache
-            if t in results:
+        # finnhub: per-ticker fetch path (no batch API)
+        all_to_fetch = [ticker for group in missed_tickers.values() for ticker in group]
+        for t in all_to_fetch:
+            if t in results: # Should not happen with new logic, but safe to keep
                 continue
             cache_key, plan = plans[t]
             data = finnhub_provider.get_stock_data(t)
@@ -367,7 +373,7 @@ def get_batch_data():
                 results[t] = final_json
             else:
                 failed_tickers.append(t)
-    return jsonify({"success": results, "failed": failed_tickers}), 200
+    return jsonify({"success": results, "failed": sorted(list(failed_tickers))}), 200
 
 @app.route('/price/<path:ticker>', methods=['GET'])
 def get_data(ticker: str):
@@ -485,11 +491,14 @@ def clear_cache():
             return jsonify({"message": message, "keys_deleted": total_deleted}), 200
 
         valid_types = {
-            'price': 'price_*',
-            'news': 'news_*',
-            'financials': 'financials_*',
-            'industry': ['peers_*', 'industry_candidates_*', 'day_gainers_*'] # User 'industry' maps to internal 'peers_' prefix
+            'price': ['price_*'],
+            'news': ['news_*'],
+            'financials': ['financials_*'],
+            'industry': ['peers_*', 'industry_candidates_*', 'day_gainers_*']
         }
+
+        all_keys = []  # preserve order
+        seen_keys = set()
 
         if cache_type not in valid_types:
             return jsonify({
@@ -497,16 +506,27 @@ def clear_cache():
             }), 400
 
         total_deleted = 0
-        for suffix in valid_types[cache_type]:
+        suffixes = valid_types[cache_type]
+
+        for suffix in suffixes:
             pattern = f"{prefix}{suffix}"
             cursor = 0
             while True:
                 cursor, keys = redis_client.scan(cursor=cursor, match=pattern, count=1000)
                 if keys:
-                    total_deleted += len(keys)
-                    redis_client.delete(*keys)
+                    # append in order but dedupe
+                    for k in keys:
+                        if k not in seen_keys:
+                            all_keys.append(k)
+                            seen_keys.add(k)
                 if cursor == 0:
                     break
+
+        total_deleted = len(all_keys)
+
+        if total_deleted:
+            # delete in discovered order
+            redis_client.delete(*all_keys)
 
         message = f"Cleared {total_deleted} entries from the '{cache_type}' cache."
         app.logger.info(message)
@@ -816,6 +836,39 @@ def get_one_month_return_batch():
                 results[ticker] = None
     
     return jsonify(results), 200
+
+@app.route('/market/screener/52w_highs', methods=['GET'])
+def get_52w_highs_quotes():
+    """
+    Returns the full quotes list for current 52-week highs (US region by default).
+    Query params: region=US|... (optional)
+    Response: list of screener quotes (each contains symbol, industry if available, etc.)
+    """
+    region = (request.args.get('region') or 'US').upper()
+    try:
+        src = YahooSectorIndustrySource()  # keep imported for consistency
+        highs_src = NewHighsScreenerSource(region=region)
+        quotes = highs_src.get_all_quotes()
+        return jsonify(quotes), 200
+    except Exception as e:
+        app.logger.error(f"/market/screener/52w_highs failed: {e}", exc_info=True)
+        return jsonify({"error": "Failed to fetch 52w highs"}), 500
+
+@app.route('/market/breadth', methods=['GET'])
+def get_market_breadth():
+    """
+    Returns aggregate breadth for US markets:
+    { new_highs, new_lows, high_low_ratio }
+    Query params: region=US|... (optional)
+    """
+    region = (request.args.get('region') or 'US').upper()
+    try:
+        mbf = MarketBreadthFetcher(region=region)
+        out = mbf.get_breadth()
+        return jsonify(out), 200
+    except Exception as e:
+        app.logger.error(f"/market/breadth failed: {e}", exc_info=True)
+        return jsonify({"error": "Failed to fetch market breadth"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

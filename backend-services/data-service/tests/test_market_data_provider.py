@@ -250,7 +250,7 @@ class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
             for s in v:
                 self.assertIsInstance(s, str)
 
-    @patch('providers.yfin.market_data_provider.yf.Ticker')
+    @patch('providers.yfin.market_data_provider.price_provider.get_stock_data')
     def test_return_calculator_threshold_below_two_returns_none(self, mock_ticker_cls):
         """ReturnCalculator.one_month_change: len(closes) < 2 fails gracefully."""
         import pandas as pd
@@ -266,7 +266,7 @@ class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
         result = calc.one_month_change("AAPL")
         self.assertIsNone(result)
 
-    @patch('providers.yfin.market_data_provider.yf.Ticker')
+    @patch('providers.yfin.market_data_provider.price_provider.get_stock_data')
     def test_return_calculator_threshold_exact_two_passes(self, mock_ticker_cls):
         """ReturnCalculator.one_month_change: len(closes) == 2 computes percentage."""
         import pandas as pd
@@ -283,31 +283,28 @@ class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
         self.assertIsInstance(result, float)
         self.assertEqual(result, 10.0)
 
-    @patch('providers.yfin.market_data_provider.yf.Ticker')
-    def test_return_calculator_missing_close_column(self, mock_ticker_cls):
+    @patch('providers.yfin.market_data_provider.price_provider.get_stock_data')
+    def test_return_calculator_missing_close_column(self, mock_get_stock_data):
         """ReturnCalculator.one_month_change: missing 'Close' column returns None."""
         import pandas as pd
         from providers.yfin.market_data_provider import ReturnCalculator
 
-        df = pd.DataFrame({"Open": [1.0, 2.0]})
-        mock_ticker = MagicMock()
-        mock_ticker.history.return_value = df
-        mock_ticker_cls.return_value = mock_ticker
+        mock_get_stock_data.return_value = [
+            {'open': 1.0, 'formatted_date': '2025-01-01'}, 
+            {'open': 2.0, 'formatted_date': '2025-01-02'}
+        ]
 
         calc = ReturnCalculator()
         result = calc.one_month_change("MSFT")
         self.assertIsNone(result)
 
-    @patch('providers.yfin.market_data_provider.yf.Ticker')
-    def test_return_calculator_history_returns_empty(self, mock_ticker_cls):
+    @patch('providers.yfin.market_data_provider.price_provider.get_stock_data')
+    def test_return_calculator_history_returns_empty(self, mock_get_stock_data):
         """ReturnCalculator.one_month_change: empty history returns None."""
         import pandas as pd
         from providers.yfin.market_data_provider import ReturnCalculator
 
-        df = pd.DataFrame({"Close": []})
-        mock_ticker = MagicMock()
-        mock_ticker.history.return_value = df
-        mock_ticker_cls.return_value = mock_ticker
+        mock_get_stock_data.return_value = []
 
         calc = ReturnCalculator()
         result = calc.one_month_change("NVDA")
