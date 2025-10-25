@@ -96,7 +96,8 @@ class _Identity:
             # re-check after acquiring lock
             if self.crumb and time.time() < self.expiry:
                 return self.crumb
-            return self._refresh_crumb_locked()
+            reason = "expired" if self.crumb else "missing"
+            return self._refresh_crumb_locked(reason)
 
     def rotate_and_refresh(self, reason: str) -> Optional[str]:
         with self.lock:
@@ -118,7 +119,7 @@ class _Identity:
             resp.raise_for_status()
             self.crumb = (resp.text or "").strip()
             self.expiry = time.time() + _CRUMB_TTL_SECONDS
-            logger.info(f"Yahoo crumb refreshed ({reason}), profile={self.profile}, proxy={'on' if self.proxy else 'off'}")
+            logger.debug(f"Yahoo crumb refreshed ({reason}), profile={self.profile}, proxy={'on' if self.proxy else 'off'}")
             return self.crumb
         except Exception as e:
             logger.warning(f"Failed to refresh Yahoo crumb ({reason}): {e}")
@@ -129,19 +130,31 @@ class _Identity:
 _POOL_LOCK = threading.RLock()
 _ID_POOL: List[_Identity] = []
 
-# init-on-import
+_POOL_READY = False  # readiness reflects a successfully built pool
+def is_pool_ready() -> bool:
+    return _POOL_READY and bool(_ID_POOL)
+
+# init-on-import, mark ready only when pool successfully builds
 def init_pool(size: int = _POOL_SIZE):
-    global _ID_POOL
+    global _ID_POOL, _POOL_READY
     with _POOL_LOCK:
-        if _ID_POOL:
+        if _POOL_READY and _ID_POOL:
             return
-        _ID_POOL = [_Identity() for _ in range(max(1, size))]
-        # prime crumbs opportunistically (non-blocking is fine)
-        for ident in _ID_POOL:
-            try:
-                ident.ensure_crumb()
-            except Exception:
-                pass
+        try:
+            # build a fresh local pool first
+            local_pool = [_Identity() for _ in range(max(1, size))]
+            # opportunistic crumb prime; failures are tolerated
+            for ident in local_pool:
+                try:
+                    ident.ensure_crumb()
+                except Exception:
+                    pass
+            # publish pool only after success
+            _ID_POOL = local_pool
+            _POOL_READY = True  # Latest Add: success path only
+            logger.info(f"Yahoo client pool initialized size={len(_ID_POOL)}")
+        except Exception as e:
+            logger.warning(f"Yahoo client pool init failed: {e}")
 
 def _identity_weight(ident: _Identity) -> float:
     h = _ID_HEALTH.get(id(ident), {})
@@ -206,12 +219,8 @@ def get_yf_session():
         pass
     return ident.session  # yfinance can accept requests-like session
 
-def _execute_json_once(
-    url: str,
-    params: Optional[Dict[str, Any]] = None,
-    _chosen_identity: Optional[_Identity] = None,
-) -> Dict[str, Any]:
-
+def _execute_json_once(url: str, *, method: str = "GET", params: dict | None = None,
+                 json_payload: dict | None = None, _chosen_identity: _Identity | None = None) -> dict:
     """
     Unified JSON transport API.
     Perform a GET to Yahoo endpoints with active rotation and return parsed JSON.
@@ -230,33 +239,20 @@ def _execute_json_once(
     merged["crumb"] = crumb
 
     headers = {"User-Agent": _get_random_user_agent()}
+    func = ident.session.post if method.upper() == "POST" else ident.session.get
     try:
-        resp = ident.session.get(
+        resp = func(
             url,
             params=merged,
+            json=json_payload if method.upper() == "POST" else None,
             headers=headers,
             proxies=ident.proxy,
             impersonate=ident.profile,
             timeout=_TIMEOUT,
         )
-        body = ""
-        try:
-            body = resp.text
-        except Exception:
-            pass
+        body_preview = (resp.text or "")[:256]
         if not (200 <= resp.status_code < 300):
-            if _should_rotate(resp.status_code, body):
-                if ident.rotate_and_refresh(f"http_{resp.status_code}"):
-                    merged["crumb"] = ident.crumb
-                    headers["User-Agent"] = _get_random_user_agent()
-                    resp = ident.session.get(
-                        url,
-                        params=merged,
-                        headers=headers,
-                        proxies=ident.proxy,
-                        impersonate=ident.profile,
-                        timeout=_TIMEOUT,
-                    )
+            logger.warning(f"[yf] {resp.status_code} url={url} host={resp.url.split('//')[1].split('/')[0]} params={params} body[:256]={body_preview}")
             resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -265,11 +261,11 @@ def _execute_json_once(
         raise
     
 @retry_on_failure(attempts=3, delay=3, backoff=2)
-def execute_request(url: str, params: Optional[Dict[str, Any]] = None, _chosen_identity: Optional[_Identity] = None) -> Dict[str, Any]:
+def execute_request(url: str, *, method: str = "GET", params: dict | None = None,
+                 json_payload: dict | None = None, _chosen_identity: _Identity | None = None) -> dict:
     """
     Unified JSON transport API.
     Perform a GET to Yahoo endpoints with active rotation and return parsed JSON.
     On 401/403/429 or phrases like 'Too Many Requests', rotates identity and retries once.
     """
-
-    return _execute_json_once(url, params, _chosen_identity=_chosen_identity)
+    return _execute_json_once(url, method=method, params=params, json_payload=json_payload, _chosen_identity=_chosen_identity)

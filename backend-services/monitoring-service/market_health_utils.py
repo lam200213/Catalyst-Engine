@@ -6,6 +6,9 @@ from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
 import requests
 
+import logging
+logger = logging.getLogger(__name__)
+
 from helper_functions import check_market_trend_context
 
 # Indices to evaluate posture
@@ -86,6 +89,13 @@ def _fetch_prices_batch(tickers: List[str]) -> Dict[str, List[dict]]:
     resp.raise_for_status()
     result = resp.json() or {}
     success = result.get("success") or {}
+
+    for sym in tickers:
+        series = success.get(sym) or []
+        logger.info(f"_fetch_prices_batch: {sym} raw_len={len(series)}")
+
+    # totals
+    logger.info(f"_fetch_prices_batch: keys={list(success.keys())}")
     return success
 
 
@@ -97,22 +107,30 @@ def _fetch_price_single(ticker: str) -> Optional[List[dict]]:
     resp = requests.get(url, timeout=30)
     if resp.status_code != 200:
         return None
-    return resp.json()
+    
+    data = resp.json()
+    logger.info(f"_fetch_price_single: {ticker} raw_len={len(data) if isinstance(data, list) else 'na'} type={type(data).__name__}")
+    return data
 
 
 def _build_index_dfs(idx_data: Dict[str, List[dict]]) -> Dict[str, pd.DataFrame]:
     idx_dfs: Dict[str, pd.DataFrame] = {}
     for sym in INDICES:
         series = idx_data.get(sym) or []
+        logger.info(f"_build_index_dfs: {sym} incoming_raw_len={len(series)} type={type(series).__name__}")
+
         df = _to_df(series)
+        logger.info(f"_build_index_dfs: {sym} df_shape={df.shape}")
+
         if df.empty:
             idx_dfs[sym] = df
             continue
         # 1-year history from the endpoint is sufficient for 200-day SMA and 52-week metrics
-        df['sma_50'] = df['close'].rolling(window=50).mean()
-        df['sma_200'] = df['close'].rolling(window=200).mean()
-        df['high_52_week'] = df['high'].rolling(window=252).max()
-        df['low_52_week'] = df['low'].rolling(window=252).min()
+        df['sma_50'] = df['close'].rolling(window=50, min_periods=50).mean()
+        df['sma_200'] = df['close'].rolling(window=200, min_periods=200).mean()
+        # Use min_periods=251 so high_52_week is defined on the previous workday (iloc[-2]) once total length reaches 252
+        df['high_52_week'] = df['high'].rolling(window=252, min_periods=251).max()
+        df['low_52_week'] = df['low'].rolling(window=252, min_periods=251).min()
         idx_dfs[sym] = df
     return idx_dfs
 
@@ -124,7 +142,8 @@ def _build_index_payload(idx_dfs: Dict[str, pd.DataFrame]) -> Dict[str, dict]:
         if df is None or df.empty:
             payload[sym] = {}
             continue
-        last = df.iloc[-2]
+        idx = -2 if len(df) >= 2 else -1
+        last = df.iloc[idx]
         payload[sym] = {
             'current_price': float(last['close']) if pd.notna(last['close']) else None,
             'sma_50': float(last['sma_50']) if pd.notna(last['sma_50']) else None,
@@ -132,6 +151,10 @@ def _build_index_payload(idx_dfs: Dict[str, pd.DataFrame]) -> Dict[str, dict]:
             'high_52_week': float(last['high_52_week']) if pd.notna(last['high_52_week']) else None,
             'low_52_week': float(last['low_52_week']) if pd.notna(last['low_52_week']) else None,
         }
+        logger.info(f"_build_index_payload: {sym} iloc_idx={idx} "
+                                f"vals={{'close': payload[sym]['current_price'], "
+                                f"'sma_50': payload[sym]['sma_50'], 'sma_200': payload[sym]['sma_200'], "
+                                f"'high_52_week': payload[sym]['high_52_week'], 'low_52_week': payload[sym]['low_52_week']}}")
     return payload
 
 
@@ -146,10 +169,14 @@ def _map_stage(trend: str) -> str:
 def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
     if spx_df is None or spx_df.empty:
         return 0.0
-    last = spx_df.iloc[-2] # the last workday before
+    idx = -2 if len(spx_df) >= 2 else -1
+    try:
+        last = spx_df.iloc[-1]
+    except Exception:
+        return 0.0
     high_52 = last.get('high_52_week')
     close = last.get('close')
-    if pd.isna(high_52) or not high_52 or pd.isna(close):
+    if pd.isna(high_52) or high_52 in (None, 0) or pd.isna(close) or close is None:
         return 0.0
     return round((float(close) - float(high_52)) / float(high_52) * 100.0, 2)
 
@@ -162,15 +189,31 @@ def _fetch_breadth() -> dict | None:
     try:
         resp = requests.get(url, timeout=20)
         if resp.status_code == 200:
-            return resp.json()
+            data = resp.json()
+            t = type(data).__name__
+            keys = list(data.keys()) if isinstance(data, dict) else None
+            logger.info(f"_fetch_breadth: type={t} keys={keys}")
+            # olerate list responses by extracting first dict-like element
+            if isinstance(data, dict):
+                return data
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and any(k in item for k in ("new_highs", "new_lows", "high_low_ratio")):
+                        return item
+                return None
+            return None
         return None
     except requests.RequestException:
         return None
 
 def get_market_health(universe: Optional[List[str]] = None) -> dict:
     """
-    Orchestrates market health snapshot.
-    Now obtains breadth from data-service aggregate endpoint (universe no longer required).
+    Orchestrate the market health snapshot using the app's own HTTP endpoints:
+    - Fetch index data via POST /price/batch
+    - Posture via check_market_trend_context
+    - ^GSPC correction depth
+    - 52-week highs/lows counts and ratio via data-service aggregate endpoint
+    Returns a dict aligned with the plan for /market/health.
     """
     # 1) Indices via batch endpoint (unchanged)
     idx_raw = _fetch_prices_batch(INDICES)
@@ -194,7 +237,9 @@ def get_market_health(universe: Optional[List[str]] = None) -> dict:
     correction_depth = _compute_correction_depth(idx_dfs.get('^GSPC'))
 
     # 4) Breadth (aggregate)
-    breadth = _fetch_breadth() or {"new_highs": 0, "new_lows": 0, "high_low_ratio": 0.0}
+    breadth = _fetch_breadth()
+    if not isinstance(breadth, dict):
+        breadth = {"new_highs": 0, "new_lows": 0, "high_low_ratio": 0.0}
 
     return {
         "market_stage": market_stage,
@@ -202,57 +247,4 @@ def get_market_health(universe: Optional[List[str]] = None) -> dict:
         "high_low_ratio": breadth.get("high_low_ratio", 0.0),
         "new_highs": breadth.get("new_highs", 0),
         "new_lows": breadth.get("new_lows", 0),
-    }
-
-def get_market_health(universe: Optional[List[str]] = None) -> dict:
-    """
-    Orchestrate the market health snapshot using the app's own HTTP endpoints:
-    - Fetch index data via POST /price/batch
-    - Posture via check_market_trend_context
-    - ^GSPC correction depth
-    - 52-week highs/lows counts and ratio via POST /price/batch on a universe
-    Returns a dict aligned with the plan for /market/health.
-    """
-    # 1) Indices via batch endpoint (cached and standardized)
-    idx_raw = _fetch_prices_batch(INDICES)
-    # Fallback to single for any missing index
-    for sym in INDICES:
-        if not idx_raw.get(sym):
-            single = _fetch_price_single(sym)
-            if single:
-                idx_raw[sym] = single
-    if not all(idx_raw.get(sym) for sym in INDICES):
-        raise RuntimeError("Failed to fetch required index data")
-
-    idx_dfs = _build_index_dfs(idx_raw)
-
-    # 2) Market posture
-    details: Dict[str, dict] = {}
-    check_market_trend_context(_build_index_payload(idx_dfs), details)
-    trend_obj = details.get('market_trend_context') or {}
-    market_stage = _map_stage(trend_obj.get('trend') or 'Unknown')
-
-    # 3) Correction depth (^GSPC)
-    correction_depth = _compute_correction_depth(idx_dfs.get('^GSPC'))
-
-    # 4) Breadth (optional universe)
-    highs = lows = 0
-    ratio = 0.0
-    if universe:
-        uni_raw = _fetch_prices_batch(universe)
-        # Attempt single fallback for any miss
-        for t in universe:
-            if not uni_raw.get(t):
-                one = _fetch_price_single(t)
-                if one:
-                    uni_raw[t] = one
-        highs, lows, ratio = _count_new_highs_lows(uni_raw)
-
-    # 5) Payload aligned to plan naming
-    return {
-        "market_stage": market_stage,
-        "correction_depth_percent": correction_depth,
-        "high_low_ratio": ratio,
-        "new_highs": highs,
-        "new_lows": lows
     }

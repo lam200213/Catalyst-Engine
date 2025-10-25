@@ -1,14 +1,14 @@
 // frontend-app/src/pages/MarketPage.jsx
 
 import React from 'react';
-import { Box, Heading, VStack, SimpleGrid, Button, Alert, AlertIcon } from '@chakra-ui/react';
+import { Box, Heading, VStack, SimpleGrid, Button, Alert, AlertIcon, Spinner } from '@chakra-ui/react';
 import MarketHealthCard from '../components/MarketHealthCard';
 import LeadingIndustriesTable from '../components/LeadingIndustriesTable';
 import { useMonitoringApi } from '../hooks/useMonitoringApi';
 import { getMarketHealth } from '../services/monitoringApi';
 
 const MarketPage = () => {
-  const { data, loading, error, retry } = useMonitoringApi(getMarketHealth);
+  const { data, loading, error, retry } = useMonitoringApi(getMarketHealth, true, 1);
 
   // Enhanced error handling with retry option
   if (error) {
@@ -37,27 +37,21 @@ const MarketPage = () => {
   }
 
   return (
-    <Box p={6}>
-    <VStack spacing={6} align="stretch">
-        <Heading size="xl" color="whiteAlpha.900">
-        Market Health
-        </Heading>
-        
-        <SimpleGrid columns={{ base: 1, lg: 1 }} spacing={6}>
-        <MarketHealthCard 
-            marketOverview={data?.market_overview} 
-            loading={loading} 
-        />
-        
-        {data?.leaders_by_industry && (
-            <LeadingIndustriesTable 
-            marketLeaders={data.leaders_by_industry}
-            loading={loading}
-            />
-        )}
-        </SimpleGrid>
+    <VStack align="stretch" spacing={4} p={4}>
+      <Heading size="lg">Market Health</Heading>
+
+      {loading ? (
+        <Box p={6} bg="gray.700" borderRadius="md">
+          <Spinner />
+        </Box>
+      ) : (
+        <MarketHealthCard overview={data?.market_overview || null} />
+      )}
+
+      {!loading && data?.leaders_by_industry && (
+        <LeadingIndustriesTable rows={data?.leaders_by_industry?.leading_industries || []} />
+      )}
     </VStack>
-    </Box>
   );
 };
 

@@ -392,5 +392,146 @@ class TestProviderLogic(test_app.BaseDataServiceTest):
         ]
         self.assertEqual(calc.one_month_change("TICK5"), 10.0)
 
+class TestNewHighsScreenerSource(test_app.BaseDataServiceTest):
+
+    @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
+    def test_new_highs_pagination_stops_at_total_and_enforces_us(self, mock_exec):
+        """
+        NewHighsScreenerSource: stops when total reached and filters to US symbols.
+        """
+        from providers.yfin.market_data_provider import NewHighsScreenerSource
+
+        # Page 0 -> total=3, three quotes (one non-US filtered out)
+        # After filtering: AAPL, MSFT (2)
+        # Page 2 -> one US quote NVDA -> total reached (3) -> stop
+        def side_effect(url, params):
+            offset = params.get('offset')
+            if offset == 0:
+                return {
+                    "finance": {
+                        "result": [{
+                            "total": 3,
+                            "quotes": [
+                                {"symbol": "AAPL"},     # US
+                                {"symbol": "SHOP.TO"},  # non-US -> filtered
+                                {"symbol": "MSFT"}      # US
+                            ]
+                        }]
+                    }
+                }
+            elif offset == 2:
+                return {
+                    "finance": {
+                        "result": [{
+                            "total": 3,
+                            "quotes": [{"symbol": "NVDA"}]  # US
+                        }]
+                    }
+                }
+            else:
+                return {"finance": {"result": [{"total": 3, "quotes": []}]}}
+        mock_exec.side_effect = side_effect
+
+        src = NewHighsScreenerSource(region="US")
+        out = src.get_all_quotes(max_pages=5)
+
+        syms = [q.get("symbol") for q in out]
+        self.assertEqual(syms, ["AAPL", "MSFT", "NVDA"])
+        for s in syms:
+            self.assertIsInstance(s, str)
+            self.assertNotIn(".", s)  # US enforcement (no country suffixes)
+        # Assert region and pagination offsets were requested
+        calls_params = [call.kwargs.get('params') if hasattr(call, 'kwargs') else call[1] for call in mock_exec.call_args_list]
+        offsets = sorted({p.get('offset') for p in calls_params})
+        regions = {p.get('region') for p in calls_params}
+        self.assertEqual(offsets, [0, 2])
+        self.assertEqual(regions, {"US"})
+
+    @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
+    def test_new_highs_pagination_exits_on_empty_when_total_not_reached(self, mock_exec):
+        """
+        NewHighsScreenerSource: exits cleanly when pages exhaust even if screener-reported total not reached after US-filtering.
+        """
+        from providers.yfin.market_data_provider import NewHighsScreenerSource
+
+        def side_effect(url, params):
+            offset = params.get('offset')
+            if offset == 0:
+                return {
+                    "finance": {"result": [{
+                        "total": 4,
+                        "quotes": [
+                            {"symbol": "AAPL"}, {"symbol": "MSFT"}  # 2 US
+                        ]
+                    }]}
+                }
+            elif offset == 2:
+                return {
+                    "finance": {"result": [{
+                        "total": 4,
+                        "quotes": [
+                            {"symbol": "SHOP.TO"},  # non-US -> filtered
+                            {"symbol": "NVDA"}      # US
+                        ]
+                    }]}
+                }
+            else:
+                return {"finance": {"result": [{"total": 4, "quotes": []}]}}
+        mock_exec.side_effect = side_effect
+
+        src = NewHighsScreenerSource(region="US")
+        out = src.get_all_quotes(max_pages=5)
+
+        syms = [q.get("symbol") for q in out]
+        # Only 3 US symbols exist; loop exits on empty page even though total=4
+        self.assertEqual(syms, ["AAPL", "MSFT", "NVDA"])
+
+class TestMarketBreadthFetcher(test_app.BaseDataServiceTest):
+
+    @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
+    def test_breadth_ratio_edges(self, mock_exec):
+        """
+        MarketBreadthFetcher: verify totals and ratio edge cases.
+        - lows=0, highs>0 -> ratio=inf
+        - highs=0, lows>0 -> ratio=0.0
+        - highs=0, lows=0 -> ratio=0.0
+        """
+        from providers.yfin.market_data_provider import MarketBreadthFetcher
+
+        def make_side_effect(highs_total, lows_total):
+            def f(url, params):
+                scr = params.get('scrIds')
+                total = highs_total if scr == 'new_52_week_high' else lows_total
+                return {"finance": {"result": [{"total": total}]}}
+            return f
+
+        # Case 1: lows=0, highs>0 -> inf
+        mock_exec.side_effect = make_side_effect(10, 0)
+        mbf = MarketBreadthFetcher(region="US")
+        out = mbf.get_breadth()
+        self.assertEqual(out["new_highs"], 10)
+        self.assertEqual(out["new_lows"], 0)
+        self.assertEqual(out["high_low_ratio"], float("inf"))
+
+        # Case 2: highs=0, lows>0 -> 0.0
+        mock_exec.side_effect = make_side_effect(0, 5)
+        out = mbf.get_breadth()
+        self.assertEqual(out["new_highs"], 0)
+        self.assertEqual(out["new_lows"], 5)
+        self.assertEqual(out["high_low_ratio"], 0.0)
+
+        # Case 3: highs=0, lows=0 -> 0.0
+        mock_exec.side_effect = make_side_effect(0, 0)
+        out = mbf.get_breadth()
+        self.assertEqual(out["new_highs"], 0)
+        self.assertEqual(out["new_lows"], 0)
+        self.assertEqual(out["high_low_ratio"], 0.0)
+
+        # Assert the calls always include region=US and count=1
+        for _, kwargs in mock_exec.call_args_list:
+            params = kwargs.get("params") or {}
+            self.assertEqual(params.get("region"), "US")
+            self.assertEqual(params.get("count"), 1)
+
 if __name__ == '__main__':
     unittest.main()

@@ -4,11 +4,13 @@ from flask import Flask, request, jsonify
 import os
 import logging
 from logging.handlers import RotatingFileHandler
-
+import threading
+import time
 
 # --- 1. Initialize Flask App and Basic Config ---
 app = Flask(__name__)
 PORT = int(os.getenv("PORT", 3006))
+MONITORING_SERVICE_URL = os.getenv("MONITORING_SERVICE_URL", "http://monitoring-service:3006")
 
 # --- 2. Define Logging Setup Function ---
 def setup_logging(app):
@@ -43,6 +45,10 @@ def setup_logging(app):
     file_handler.setFormatter(log_formatter)
     console_handler.setFormatter(log_formatter)
 
+    # avoid duplicate log records if setup_logging is called multiple times
+    if app.logger.handlers:
+        for h in list(app.logger.handlers):
+            app.logger.removeHandler(h)
     app.logger.addHandler(file_handler)
     app.logger.addHandler(console_handler)
     app.logger.setLevel(log_level)
@@ -68,6 +74,19 @@ setup_logging(app)
 # --- 3. Import Project-Specific Modules ---
 from market_health_utils import get_market_health
 from market_leaders import get_market_leaders
+
+#prewarm market health on startup to avoid first-user 504
+def _prewarm_market_health():
+    try:
+        delay = int(os.getenv("MONITOR_PREWARM_DELAY_SEC", "3"))
+        timeout = int(os.getenv("MONITOR_PREWARM_TIMEOUT_SEC", "55"))
+        time.sleep(delay)
+        # Call the service locally to build caches
+        url = f"{MONITORING_SERVICE_URL}/monitor/market-health"
+        requests.get(url, timeout=timeout)
+        app.logger.info("Prewarm for /monitor/market-health completed.")
+    except Exception as e:
+        app.logger.warning(f"Prewarm failed: {e}")
 
 @app.route('/monitor/market-health', methods=['GET'])
 def get_aggregated_market_health():
@@ -151,4 +170,6 @@ def health_check():
     return jsonify({"status": "healthy"}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=PORT)
+    setup_logging(app)
+    threading.Thread(target=_prewarm_market_health, daemon=True).start()  # Latest Add
+    app.run(host="0.0.0.0", port=PORT)

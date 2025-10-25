@@ -21,55 +21,67 @@ PORT = int(os.environ.get('PORT', 3001))
 # --- 2. Define Logging Setup Function ---
 def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
-    log_directory = "/app/logs"
-    if not os.path.exists(log_directory):
-        os.makedirs(log_directory)
-
     log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
 
-    # The filename is now specific to the service and in a dedicated folder.
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Handlers (console + rotating file), built once
+    handlers = []
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    handlers.append(console_handler)
+
+    log_directory = "/app/logs"
+    os.makedirs(log_directory, exist_ok=True)
     log_file = os.path.join(log_directory, "data_service.log")
 
-    # Create a rotating file handler to prevent log files from growing too large.
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.INFO)
-
-    # Create a console handler for stdout
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-
-    # Define the log format
-    log_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(log_formatter)
-    console_handler.setFormatter(log_formatter)
-
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(console_handler)
+    file_handler = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5)
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    handlers.append(file_handler)
+    
     app.logger.setLevel(log_level)
     app.logger.propagate = False
-
-    # Find and configure the loggers from the provider and helper modules
-    # This ensures that log messages from background threads are captured correctly.
-    module_loggers = [
-        logging.getLogger('providers.yfin.yahoo_client'),
-        logging.getLogger('providers.yfin.price_provider'),
-        logging.getLogger('providers.yfin.financials_provider'),
-        logging.getLogger('providers.yfin.market_leaders'),
-        logging.getLogger('helper_functions')
-    ]
     
-    for logger_instance in module_loggers:
-        logger_instance.addHandler(file_handler)
-        logger_instance.addHandler(console_handler)
-        logger_instance.setLevel(logging.DEBUG)
+    # Clear existing handlers to avoid duplication
+    for h in list(app.logger.handlers):
+        app.logger.removeHandler(h)
+
+    # Latest Add: Attach the handlers to app.logger
+    for h in handlers:
+        app.logger.addHandler(h)
+
+    # prevent werkzeug from duplicating to root/stdout
+    werk = logging.getLogger("werkzeug")
+    werk.propagate = False
+    for h in list(werk.handlers):
+        if isinstance(h, logging.StreamHandler):
+            werk.removeHandler(h)
+
+    # Module loggers that should emit through the same handlers
+    module_names = [
+        "providers.yfin.yahoo_client",
+        "providers.yfin.price_provider",
+        "providers.yfin.financials_provider",
+        "providers.yfin.market_data_provider",
+        "helper_functions",
+    ]
+    for name in module_names:
+        module_loggers = logging.getLogger(name)
+        module_loggers.setLevel(log_level)
+        module_loggers.propagate = False
+        # Clear existing handlers
+        for h in list(module_loggers.handlers):
+            module_loggers.removeHandler(h)
+        # Attach shared handlers
+        for h in handlers:
+            module_loggers.addHandler(h)
 
     app.logger.info("Data service logging initialized.")
 # --- End of Logging Setup ---
@@ -90,13 +102,15 @@ from helper_functions import check_market_trend_context, validate_and_prepare_fi
 config = {
     "CACHE_TYPE": "flask_caching.backends.rediscache.RedisCache",
     "CACHE_REDIS_URL": os.environ.get('CACHE_REDIS_URL', 'redis://localhost:6379/0'),
-    "CACHE_DEFAULT_TIMEOUT": 300 # Default 5 minutes for routes without explicit timeout
+    "CACHE_DEFAULT_TIMEOUT": 300, # Default 5 minutes for routes without explicit timeout
+    "CACHE_KEY_PREFIX": os.environ.get("CACHE_KEY_PREFIX", "datasvc:")
 }
 
 PRICE_CACHE_TTL = 1209600 # 14 days, 0 for indefinite
 NEWS_CACHE_TTL = 604800 # 7 days
 FINANCIALS_CACHE_TTL = 1209600 # 14 days
 INDUSTRY_CACHE_TTL = 1209600 # 14 days
+BREADTH_CACHE_TTL = int(os.getenv("BREADTH_CACHE_TTL", "86400")) # 1 day
 
 app.config.from_mapping(config)
 cache = Cache(app)
@@ -121,37 +135,18 @@ except Exception as e:
     db = None
 # --- End of Persistent DB Client Setup ---
 
+# --- Initialize Yahoo Finance pool at startup ---
+try:
+    size = int(os.getenv("YF_POOL_SIZE", "12"))
+    yf_client.init_pool(size=size)
+    app.logger.info(f"Initialized Yahoo Finance identity pool (size={size})")
+except Exception as e:
+    app.logger.warning(f"Yahoo Finance pool initialization failed: {e}")
+
 # --- Custom Exceptions ---
 class ProviderNoDataError(Exception):
     """Custom exception raised when a data provider returns no data."""
     pass
-
-# --- Yahoo Finance Pool Setup ---
-# Process-wide guard (in addition to yahoo_client guards)
-_YF_POOL_READY = False
-def _init_yf_pool():
-    """
-    Initialize the Yahoo Finance identity/session pool per worker before the first request.
-    Uses idempotent, thread-safe init_pool to avoid duplicate pools under hot reloads or tests.
-    """
-    global _YF_POOL_READY
-    if _YF_POOL_READY:
-        return
-    size = int(os.getenv("YF_POOL_SIZE", "12"))
-    try:
-        yf_client.init_pool(size=size)  # idempotent + thread-safe inside yahoo_client
-        app.logger.info(f"Initialized Yahoo Finance identity pool (size={size})")
-    except Exception as e:
-        app.logger.warning(f"Yahoo Finance pool initialization failed: {e}")
-    _YF_POOL_READY = True
-
-# Prefer per-worker startup hook; fallback to once-before-request
-if hasattr(app, "before_serving"):
-    app.before_serving(_init_yf_pool)
-else:
-    @app.before_request
-    def _ensure_yf_pool_once():
-        _init_yf_pool()
 
 # --- Centralized Executor ---
 # Using a ThreadPoolExecutor for concurrent requests in batch endpoints
@@ -310,8 +305,8 @@ def get_batch_data():
         else:
             # Defensive fallback to avoid dropping any ticker
             failed_tickers.append(ticker)
-
-    app.logger.info(f"Batch request. Cache hits: {len(cached_results)}, Cache misses: {len(missed_tickers)}")
+        total_miss_tickers = sum(len(v) for v in missed_tickers.values())
+    app.logger.info(f"Batch request. Cache hits: {len(cached_results)}, Cache misses: {len(missed_tickers)}, Cache miss tickers: {total_miss_tickers}")
 
     # --- Execute full fetches for Cache Misses ---
     results = cached_results
@@ -494,7 +489,8 @@ def clear_cache():
             'price': ['price_*'],
             'news': ['news_*'],
             'financials': ['financials_*'],
-            'industry': ['peers_*', 'industry_candidates_*', 'day_gainers_*']
+            'industry': ['peers_*', 'industry_candidates_*', 'day_gainers_*'],
+            'breadth': ['breadth_*'], 
         }
 
         all_keys = []  # preserve order
@@ -862,10 +858,25 @@ def get_market_breadth():
     Query params: region=US|... (optional)
     """
     region = (request.args.get('region') or 'US').upper()
+
+    # route-level cache
+    cache_key = f"breadth_{region}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        app.logger.debug(f"[breadth] cache HIT key={cache_key}")
+        return jsonify(cached), 200
+
     try:
-        mbf = MarketBreadthFetcher(region=region)
-        out = mbf.get_breadth()
-        return jsonify(out), 200
+        fetcher = MarketBreadthFetcher(region=region)
+        result = fetcher.get_breadth()  # expected to return dict with new_highs, new_lows, high_low_ratio
+        try:
+            cache.set(cache_key, result, timeout=BREADTH_CACHE_TTL)
+        except Exception as e:
+            app.logger.debug(f"[breadth] cache SET failed key={cache_key} err={e}")
+        
+        app.logger.debug(f"[breadth] computed region={region} result={result}")
+        return jsonify(result), 200
+    
     except Exception as e:
         app.logger.error(f"/market/breadth failed: {e}", exc_info=True)
         return jsonify({"error": "Failed to fetch market breadth"}), 500

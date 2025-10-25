@@ -145,12 +145,13 @@ def _industry_counts_from_quotes(quotes: List[dict]) -> List[Dict[str, Any]]:
 
     return [{"industry": ind, "breadth_count": counts[ind]} for ind in top_inds]
 
-class MarketLeadersService52w:
+class MarketLeadersService52w(MarketLeadersService):
     """
-    Alternative leaders strategy using 52-week highs clustering.
+    Leaders strategy using 52-week highs clustering.
     """
+    # Ensure base is initialized; ranker unused here but harmless
     def __init__(self):
-        pass
+        super().__init__(ranker=IndustryRanker())
 
     def get_industry_leaders_by_new_highs(self) -> List[Dict[str, Any]]:
         url = f"{DATA_SERVICE_URL}/market/screener/52w_highs"

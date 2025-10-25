@@ -59,7 +59,13 @@ def gateway(service, path=""):
         else:  # Default to GET
             # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.
             query_params = dict(request.args)
-            resp = requests.get(target_url, params=query_params, timeout=45)
+
+            # elevate timeout for /monitor/market-health
+            if service == 'monitor' and request.path.startswith('/monitor/market-health'):
+                get_timeout = 60 
+            else:
+                get_timeout = 45  
+            resp = requests.get(target_url, params=query_params, timeout=get_timeout)
 
         # Safely handle JSON decoding
         try:

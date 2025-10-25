@@ -297,72 +297,192 @@ class NewHighsScreenerSource(SectorIndustrySource):
     """
     def __init__(self, region: str = "US"):
         self.region = (region or "US").upper()
-        self._page_size: int = int(os.getenv("YF_SCREENER_PAGE_SIZE", "250"))
+        self.page_size = int(os.getenv("YF_SCREENER_PAGE_SIZE", "250"))
+        # Reuse MarketBreadthFetcher's resolver
+        self.fetcher = MarketBreadthFetcher(region=self.region, enable_pagination_fallback=False)
 
     def _fetch_page(self, offset: int, size: int) -> dict | None:
-        url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-        params = {
-            "scrIds": "new_52_week_high",
-            "count": size,
-            "offset": offset,
-            "lang": "en-US",
-            "region": self.region,
-        }
+        """Try predefined screener with resolver fallback."""
         try:
-            return yahoo_client.execute_request(url, params=params)
-        except Exception as e:
-            logger.debug(f"52w highs screener page failed: {e}")
+            field = "price_signal_fifty_two_wk_high.datetime"
+            payload = {
+                "size": size,
+                "offset": offset,
+                "sortType": "DESC",
+                "sortField": "ticker",
+                "includeFields": [],
+                "topOperator": "AND",
+                "query": {
+                    "operator": "and",
+                    "operands": [
+                        {"operator": "eq", "operands": ["region", self.region.lower()]},
+                        {"operator": "gte", "operands": [field, "now-1w/d"]},
+                    ],
+                },
+                "quoteType": "EQUITY",
+            }
+            url = "https://query1.finance.yahoo.com/v1/finance/screener"
+            return yahoo_client.execute_request(
+                url,
+                method="POST",
+                params={"formatted": "false", "lang": "en-US", "region": self.region},
+                json_payload=payload,
+            )
+        except Exception:
             return None
 
     def get_all_quotes(self, max_pages: int = 40) -> list[dict]:
-        """
-        Returns the full quotes list for the 52w highs set, paginating until all are fetched
-        or until max_pages is reached.
-        """
-        quotes: list[dict] = []
-        size = self._page_size
+        """Returns the full quotes list for 52w highs, paginating until complete."""
+        quotes = []
         offset = 0
         total = None
         pages = 0
+        
         while pages < max_pages:
-            data = self._fetch_page(offset, size)
+            data = self._fetch_page(offset, self.page_size)
             if not data:
+                logger.warning(f"[52w highs] No data returned at offset={offset}, stopping pagination")
                 break
-            node = (data.get("finance") or {}).get("result", [{}])[0]
+            
+            node = ((data.get("finance") or {}).get("result") or [])
+            node = node if node else {}
             total = node.get("total", total)
             batch = node.get("quotes") or []
+            
             if not batch:
                 break
-            # Enforce US symbols if region=US (consistent with existing helpers)
+            
+            # Enforce US symbols if region=US
             if self.region == "US":
                 batch = [q for q in batch if _is_us_symbol(q.get("symbol", ""))]
+            
             quotes.extend(batch)
             offset += len(batch)
             pages += 1
+            
             if total is not None and len(quotes) >= int(total):
                 break
+        
+        logger.info(f"[52w highs] Fetched {len(quotes)} quotes across {pages} pages")
         return quotes
 
 class MarketBreadthFetcher:
     """
     Reads totals from predefined screeners for 52w highs and 52w lows and returns aggregate breadth.
     """
-    def __init__(self, region: str = "US"):
+    def __init__(self, region: str = "US", enable_pagination_fallback: bool = True, max_pages: int = 12, page_size: int = 250):
         self.region = (region or "US").upper()
+        self.enable_pagination_fallback = enable_pagination_fallback
+        self.max_pages = max_pages
+        self.page_size = page_size
+        self._resolved = {}  # {"high": (host, ver, scrId, params), "low": ...}
 
-    def _get_total(self, scr_id: str) -> int:
-        url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-        params = {"scrIds": scr_id, "count": 1, "offset": 0, "lang": "en-US", "region": self.region}
+    def _candidate_variants(self, kind: str):
+        # kind in {"high","low"}
+        scr_ids = {
+            "high": ["new_52_week_high", "NEW_52_WEEK_HIGH", "new52WeekHigh", "new_52_week_highs", "NEW_52_WEEK_HIGHS"],
+            "low":  ["new_52_week_low",  "NEW_52_WEEK_LOW",  "new52WeekLow",  "new_52_week_lows",  "NEW_52_WEEK_LOWS"],
+        }[kind]
+        versions = ["v1", "v7"]
+        hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
+        param_variants = [
+            {"lang": "en-US", "region": self.region, "formatted": "false"},
+            {"lang": "en-US", "region": self.region},
+            {"lang": "en-US", "region": self.region.lower(), "formatted": "false"},
+        ]
+        for host in hosts:
+            for ver in versions:
+                for scr in scr_ids:
+                    for pv in param_variants:
+                        yield host, ver, scr, pv
+
+    def _try_predefined_total(self, host: str, ver: str, scr_id: str, params: dict) -> int | None:
+        url = f"https://{host}/{ver}/finance/screener/predefined/saved"
+        q = dict(params, scrIds=scr_id, count=self.page_size, offset=0)
+        data = yahoo_client.execute_request(url, params=q)
+        node0 = ((data or {}).get("finance") or {}).get("result") or []
+        node0 = node0[0] if node0 else {}
+        total = node0.get("total")
+        if not total:
+            quotes = node0.get("quotes") or node0.get("quotesList") or []
+            if isinstance(quotes, list) and self.region == "US":
+                quotes = [q for q in quotes if _is_us_symbol(q.get("symbol") or "")]
+            total = len(quotes)
+        return int(total) if total else None
+
+    def _fallback_post_total(self, high: bool) -> int:
+        # direct POST screener query for recent 52w highs/lows, size=1 to read total
+        field = "price_signal_fifty_two_wk_high.datetime" if high else "price_signal_fifty_two_wk_low.datetime"
+        payload = {
+            "size": 1,
+            "offset": 0,
+            "sortType": "DESC",
+            "sortField": "ticker",
+            "includeFields": [],
+            "topOperator": "AND",
+            "query": {
+                "operator": "and",
+                "operands": [
+                    {"operator": "eq", "operands": ["region", self.region.lower()]},
+                    {"operator": "gte", "operands": [field, "now-1w/d"]},
+                ],
+            },
+            "quoteType": "EQUITY",
+        }
+        url = "https://query1.finance.yahoo.com/v1/finance/screener"
+        data = yahoo_client.execute_request(url, method="POST", params={"formatted": "false", "lang": "en-US", "region": self.region}, json_payload=payload)
+        node0 = ((data or {}).get("finance") or {}).get("result") or []
+        node0 = node0[0] if node0 else {}
+        return int(node0.get("total") or 0)
+
+    # Prefer POST screener first; skip legacy GET unless enabled
+    def _get_total(self, scr_kind: str, region: str) -> int:
+        # 1) POST screener first (most reliable now)
         try:
-            data = yahoo_client.execute_request(url, params=params)
-            node = (data.get("finance") or {}).get("result", [{}])[0]
-            return int(node.get("total") or 0)
-        except Exception as e:
-            logger.debug(f"Screener total fetch failed for {scr_id}: {e}")
+            total = self._fallback_post_total(high=(scr_kind == "high"))
+            if total:
+                return total
+        except Exception:
+            pass
+
+        # 2) Optionally allow legacy predefined resolution if explicitly enabled
+        if os.getenv("YF_ENABLE_PREDEFINED", "0") not in ("1", "true", "TRUE"):
             return 0
 
+        # 3) Use cached resolution
+        if scr_kind in self._resolved:
+            host, ver, scr, pv = self._resolved[scr_kind]
+            try:
+                total = self._try_predefined_total(host, ver, scr, pv)
+                if total is not None:
+                    return total
+            except Exception:
+                pass
+
+        # 4) Brute-force permutations with tighter cap
+        attempts = 0
+        for host, ver, scr, pv in self._candidate_variants(scr_kind):
+            attempts += 1
+            try:
+                total = self._try_predefined_total(host, ver, scr, pv)
+                if total is not None:
+                    self._resolved[scr_kind] = (host, ver, scr, pv)
+                    return total
+            except Exception:
+                pass
+            if attempts >= 12:  # Latest Add: keep small to reduce noise
+                break
+
+        # 5) Finally, paginate if enabled
+        if self.enable_pagination_fallback:
+            return self._paginate_count(
+                scr_id=(self._resolved.get(scr_kind, (None, None, "new_52_week_high" if scr_kind == "high" else "new_52_week_low", {}))[2]),
+                region=region,
+            )
+        return 0
+
     def get_breadth(self) -> dict:
-        highs = self._get_total("new_52_week_high")
-        lows = self._get_total("new_52_week_low")
-        ratio = float("inf") if lows == 0 and highs > 0 else (round(highs / lows, 2) if lows > 0 else 0.0)
+        highs = self._get_total("high", self.region)
+        lows = self._get_total("low", self.region)
+        ratio = round(highs / max(1, lows), 3) if (highs + lows) > 0 else 0.0
         return {"new_highs": highs, "new_lows": lows, "high_low_ratio": ratio}

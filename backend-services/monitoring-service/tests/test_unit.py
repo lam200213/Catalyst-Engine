@@ -204,3 +204,35 @@ def test_get_market_health_handles_breadth_edge_cases(mock_breadth, mock_batch, 
     assert result3["new_highs"] == 0
     assert result3["new_lows"] == 0
     assert result3["high_low_ratio"] == 0.0
+
+def test_build_index_payload_iloc_minus2_numeric():
+    from market_health_utils import _build_index_dfs, _build_index_payload, INDICES
+    # Build 252 points where the final bar spikes highs so prior day has enough history
+    def mk_series(base_open=100, base_high=100, base_low=90, base_close=95, spike_high=5000, n=252):
+        series = []
+        for i in range(n - 1):
+            series.append({
+                "formatted_date": f"2024-01-{(i%28)+1:02d}",
+                "open": base_open, "high": base_high, "low": base_low, "close": base_close, "volume": 1
+            })
+        # last bar
+        series.append({
+            "formatted_date": "2024-02-29",
+            "open": base_open + 1, "high": spike_high, "low": base_low - 1, "close": base_close + 1, "volume": 1
+        })
+        return series
+
+    idx_data = {
+        "^GSPC": mk_series(),
+        "^DJI": mk_series(base_open=200, base_high=200, base_low=190, base_close=195, spike_high=3000),
+        "^IXIC": mk_series(base_open=300, base_high=300, base_low=290, base_close=295, spike_high=4000),
+    }
+    dfs = _build_index_dfs(idx_data)
+    payload = _build_index_payload(dfs)
+    for sym in INDICES:
+        p = payload.get(sym) or {}
+        assert isinstance(p.get("current_price"), (int, float))
+        assert (p.get("sma_50") is None) or isinstance(p.get("sma_50"), (int, float))
+        assert (p.get("sma_200") is None) or isinstance(p.get("sma_200"), (int, float))
+        assert (p.get("high_52_week") is None) or isinstance(p.get("high_52_week"), (int, float))
+        assert (p.get("low_52_week") is None) or isinstance(p.get("low_52_week"), (int, float))
