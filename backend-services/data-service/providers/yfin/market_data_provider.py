@@ -344,8 +344,10 @@ class NewHighsScreenerSource(SectorIndustrySource):
                 logger.warning(f"[52w highs] No data returned at offset={offset}, stopping pagination")
                 break
             
-            node = ((data.get("finance") or {}).get("result") or [])
-            node = node if node else {}
+            # Extract result list, then get first element
+            result_list = ((data.get("finance") or {}).get("result") or [])
+            node = result_list[0] if result_list else {}
+            # Now node is a dict, safe to use .get()
             total = node.get("total", total)
             batch = node.get("quotes") or []
             
@@ -356,7 +358,8 @@ class NewHighsScreenerSource(SectorIndustrySource):
             if self.region == "US":
                 batch = [q for q in batch if _is_us_symbol(q.get("symbol", ""))]
             
-            quotes.extend(batch)
+            projected = [self._project_quote(q) for q in batch]
+            quotes.extend(projected)
             offset += len(batch)
             pages += 1
             
@@ -365,6 +368,19 @@ class NewHighsScreenerSource(SectorIndustrySource):
         
         logger.info(f"[52w highs] Fetched {len(quotes)} quotes across {pages} pages")
         return quotes
+
+    # An explicit projection helper inside NewHighsScreenerSource
+    def _project_quote(self, q: dict) -> dict:
+        return {
+            "symbol": q.get("symbol"),
+            "industry": q.get("industry"),
+            "shortName": q.get("shortName"),
+            "sector": q.get("sector"),
+            "regularMarketPrice": q.get("regularMarketPrice"),
+            "fiftyTwoWeekHigh": q.get("fiftyTwoWeekHigh"),
+            "fiftyTwoWeekHighChangePercent": q.get("fiftyTwoWeekHighChangePercent"),
+            "marketCap": q.get("marketCap"),
+        }
 
 class MarketBreadthFetcher:
     """
@@ -380,8 +396,8 @@ class MarketBreadthFetcher:
     def _candidate_variants(self, kind: str):
         # kind in {"high","low"}
         scr_ids = {
-            "high": ["new_52_week_high", "NEW_52_WEEK_HIGH", "new52WeekHigh", "new_52_week_highs", "NEW_52_WEEK_HIGHS"],
-            "low":  ["new_52_week_low",  "NEW_52_WEEK_LOW",  "new52WeekLow",  "new_52_week_lows",  "NEW_52_WEEK_LOWS"],
+            "high": ["new_52_week_high", "NEW_52_WEEK_HIGH", "new52WeekHigh","new_52_week_highs", "NEW_52_WEEK_HIGHS", "new52weekhigh"],
+            "low":  ["new_52_week_low",  "NEW_52_WEEK_LOW",  "new52WeekLow",  "new_52_week_lows",  "NEW_52_WEEK_LOWS", "new52weeklow"],
         }[kind]
         versions = ["v1", "v7"]
         hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
@@ -470,7 +486,7 @@ class MarketBreadthFetcher:
                     return total
             except Exception:
                 pass
-            if attempts >= 12:  # Latest Add: keep small to reduce noise
+            if attempts >= 12:  # keep small to reduce noise
                 break
 
         # 5) Finally, paginate if enabled
@@ -484,5 +500,13 @@ class MarketBreadthFetcher:
     def get_breadth(self) -> dict:
         highs = self._get_total("high", self.region)
         lows = self._get_total("low", self.region)
-        ratio = round(highs / max(1, lows), 3) if (highs + lows) > 0 else 0.0
+
+        # ratio semantics expected by tests
+        if highs > 0 and lows == 0:
+            ratio = float("inf")
+        elif highs == 0:
+            ratio = 0.0
+        else:
+            ratio = round(highs / lows, 3)
+
         return {"new_highs": highs, "new_lows": lows, "high_low_ratio": ratio}

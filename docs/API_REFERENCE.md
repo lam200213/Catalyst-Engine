@@ -737,8 +737,17 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 
 - **GET `/market/screener/52w_highs`**
   - Service: `data-service`
-  - Purpose: Provides a list of stocks making new 52-week highs, grouped by industry. This is used by the `monitoring-service` to identify currently leading industries and stocks.
-  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
+  - Purpose: Returns the full quotes list for the Yahoo Finance 52-week highs screener (US by default), used by monitoring-service to derive leading industries and breadth.
+  - **Query Parameters**: region (optional, default: US)
+  - **Data Contract:** [`ScreenerQuoteList`](./DATA_CONTRACTS.md#13-ScreenerQuote).
+    - symbol: string
+    - industry: string | null
+    - shortName: string | null
+    - sector: string | null
+    - regularMarketPrice: number | null
+    - fiftyTwoWeekHigh: number | null
+    - fiftyTwoWeekHighChangePercent: number | null
+    - marketCap: number | null
   - **Example Usage (from another service)**:
       ```python
       import requests
@@ -746,13 +755,34 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
       response = requests.get(f"{data_service_url}/market/screener/52w_highs")
       leading_candidates = response.json()
       ```
-  - **Example Success Response**:
+  - **Example Success Response (truncated)**:
       ```json
-      {
-        "Semiconductors": ["NVDA", "AVGO"],
-        "Software - Infrastructure": ["MSFT", "CRWD", "NET"]
-      }
+      [
+        {
+          "symbol": "NVDA",
+          "industry": "Semiconductors",
+          "shortName": "NVIDIA Corporation",
+          "sector": "Technology",
+          "regularMarketPrice": 123.45,
+          "fiftyTwoWeekHigh": 130.00,
+          "fiftyTwoWeekHighChangePercent": -0.05,
+          "marketCap": 2220000000000
+        },
+        {
+          "symbol": "MSFT",
+          "industry": "Software - Infrastructure",
+          "shortName": "Microsoft Corporation",
+          "sector": "Technology",
+          "regularMarketPrice": 410.10,
+          "fiftyTwoWeekHigh": 415.00,
+          "fiftyTwoWeekHighChangePercent": -0.012,
+          "marketCap": 3100000000000
+        }
+      ]
       ```
+  - **Notes**:
+    - The list is already filtered for US tickers when region=US.
+    - Only the listed fields are returned to minimize payload and avoid leaking upstream fields.
 
 - **GET `/monitor/internal/leaders`**
   - Service: `monitoring-service`

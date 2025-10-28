@@ -15,57 +15,65 @@ MONITORING_SERVICE_URL = os.getenv("MONITORING_SERVICE_URL", "http://monitoring-
 # --- 2. Define Logging Setup Function ---
 def setup_logging(app):
     """Configures comprehensive logging for the Flask app."""
-    log_directory = "/app/logs"
-    if not os.path.exists(log_directory):
-        os.makedirs(log_directory)
-
     log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
 
-    # The filename is now specific to the service and in a dedicated folder.
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Handlers (console + rotating file), built once
+    handlers = []
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    handlers.append(console_handler)
+
+    log_directory = "/app/logs"
+    os.makedirs(log_directory, exist_ok=True)
     log_file = os.path.join(log_directory, "monitoring_service.log")
 
-    # Create a rotating file handler to prevent log files from growing too large.
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.INFO)
-
-    # Create a console handler for stdout
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-
-    # Define the log format
-    log_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(log_formatter)
-    console_handler.setFormatter(log_formatter)
-
-    # avoid duplicate log records if setup_logging is called multiple times
-    if app.logger.handlers:
-        for h in list(app.logger.handlers):
-            app.logger.removeHandler(h)
-    app.logger.addHandler(file_handler)
-    app.logger.addHandler(console_handler)
+    file_handler = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5)
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    handlers.append(file_handler)
+    
     app.logger.setLevel(log_level)
     app.logger.propagate = False
-
-    # Find and configure the loggers from the provider and helper modules
-    # This ensures that log messages from background threads are captured correctly.
-    module_loggers = [
-        logging.getLogger('market_health_utils'),
-        logging.getLogger('market_leaders'),
-        logging.getLogger('helper_functions')
-    ]
     
-    for logger_instance in module_loggers:
-        logger_instance.addHandler(file_handler)
-        logger_instance.addHandler(console_handler)
-        logger_instance.setLevel(logging.DEBUG)
+    # Clear existing handlers to avoid duplication
+    for h in list(app.logger.handlers):
+        app.logger.removeHandler(h)
+
+    # Attach the handlers to app.logger
+    for h in handlers:
+        app.logger.addHandler(h)
+
+    # prevent werkzeug from duplicating to root/stdout
+    werk = logging.getLogger("werkzeug")
+    werk.propagate = False
+    for h in list(werk.handlers):
+        if isinstance(h, logging.StreamHandler):
+            werk.removeHandler(h)
+
+    # Module loggers that should emit through the same handlers
+    module_names = [
+        "market_health_utils",
+        "market_leaders",
+        "helper_functions",
+    ]
+    for name in module_names:
+        module_loggers = logging.getLogger(name)
+        module_loggers.setLevel(log_level)
+        module_loggers.propagate = False
+        # Clear existing handlers
+        for h in list(module_loggers.handlers):
+            module_loggers.removeHandler(h)
+        # Attach shared handlers
+        for h in handlers:
+            module_loggers.addHandler(h)
 
     app.logger.info("Monitoring service logging initialized.")
 # --- End of Logging Setup ---
@@ -75,7 +83,7 @@ setup_logging(app)
 from market_health_utils import get_market_health
 from market_leaders import get_market_leaders
 
-#prewarm market health on startup to avoid first-user 504
+# Prewarm market health on startup to avoid first-user 504
 def _prewarm_market_health():
     try:
         delay = int(os.getenv("MONITOR_PREWARM_DELAY_SEC", "3"))

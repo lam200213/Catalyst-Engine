@@ -238,7 +238,7 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
         cache_start_dt = datetime.fromisoformat(min(dates)).date()
         cache_end_dt = datetime.fromisoformat(max(dates)).date()
 
-        # Latest Add: log the extracted bounds and request shape
+        # log the extracted bounds and request shape
         logger.info(f"coverage: bounds start={cache_start_dt}, end={cache_end_dt}, req_period={req_period}, req_start={req_start}")
 
         if req_start:
@@ -254,7 +254,7 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
             }
             count = trading_days_by_period.get(req_period, 252)
 
-            # Latest Add: row-count fast path
+            # row-count fast path
             if len(dates) >= count:
                 logger.info(f"coverage:row_count path: row_count={len(dates)}, needed={count}, decision=True")
                 return True
@@ -274,7 +274,7 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
                 f"first={(schedule.index[0].date() if not schedule.empty else None)}, "
                 f"last={(schedule.index[-1].date() if not schedule.empty else None)}"
             )
-            # Latest Add: treat a DataFrame with only an index as valid if the index has length
+            # treat a DataFrame with only an index as valid if the index has length
             idx = getattr(schedule, "index", None)
             idx_len = (len(idx) if idx is not None else 0)
             logger.info(
@@ -287,7 +287,7 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
                 logger.info("coverage:calendar index empty → decision=False")
                 return False
 
-            # Latest Add: compute required_start directly from the last `count` sessions
+            # compute required_start directly from the last `count` sessions
             if idx_len >= count:
                 required_start_dt = idx[-count].date()
                 logger.info(f"coverage:required_start(length-based)={required_start_dt} (count={count})")

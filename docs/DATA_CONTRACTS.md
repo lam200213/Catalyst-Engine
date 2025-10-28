@@ -742,3 +742,64 @@ Represents the leadership breadth within a specific industry by providing a coun
         ]
     }
     ```
+
+---
+
+## 13. ScreenerQuoteList (52w highs)
+
+A flat list of minimally projected screener quotes for stocks making 52-week highs. This is returned by the data-service and consumed by the monitoring-service to derive breadth and leadership without leaking the full upstream Yahoo response.
+
+-   **Producer:** `data-service`
+-   **Consumer(s)**: `monitoring-service`
+-   **Pydantic Model**: `ScreenerQuoteList` (List of `ScreenerQuote`)
+-   **Description**: The projection includes only fields used by downstream computations and UI composition: `symbol`, `industry`, `shortName`, `sector`, `regularMarketPrice`, `fiftyTwoWeekHigh`, `fiftyTwoWeekHighChangePercent`, `marketCap`. Upstream fields are intentionally omitted to reduce payload and enforce a stable contract.
+-   **Endpoint**: GET `/market/screener/52w_highs` (region defaults to `US`)
+
+-   **JSON Schema (for each list item):**:
+  ```json
+  {
+  "title": "ScreenerQuote",
+  "type": "object",
+  "properties": {
+  "symbol": { "type": "string" },
+  "industry": { "type": ["string", "null"] },
+  "shortName": { "type": ["string", "null"] },
+  "sector": { "type": ["string", "null"] },
+  "regularMarketPrice": { "type": ["number", "null"] },
+  "fiftyTwoWeekHigh": { "type": ["number", "null"] },
+  "fiftyTwoWeekHighChangePercent": { "type": ["number", "null"] },
+  "marketCap": { "type": ["number", "null"] }
+  },
+  "required": ["symbol"]
+  }
+  ```
+
+- **Example Payload**:
+  ```json
+  [
+    {
+    "symbol": "NVDA",
+    "industry": "Semiconductors",
+    "shortName": "NVIDIA Corporation",
+    "sector": "Technology",
+    "regularMarketPrice": 123.45,
+    "fiftyTwoWeekHigh": 130.0,
+    "fiftyTwoWeekHighChangePercent": -0.05,
+    "marketCap": 2220000000000
+    },
+    {
+    "symbol": "MSFT",
+    "industry": "Software - Infrastructure",
+    "shortName": "Microsoft Corporation",
+    "sector": "Technology",
+    "regularMarketPrice": 410.1,
+    "fiftyTwoWeekHigh": 415.0,
+    "fiftyTwoWeekHighChangePercent": -0.012,
+    "marketCap": 3100000000000
+    }
+  ]
+  ```
+
+- **Notes**:
+  - The list is already filtered for US tickers when `region=US` (the default).
+  - Only the specified fields are returned to minimize payload and enforce a stable inter-service contract.

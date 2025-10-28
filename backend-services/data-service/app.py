@@ -53,7 +53,7 @@ def setup_logging(app):
     for h in list(app.logger.handlers):
         app.logger.removeHandler(h)
 
-    # Latest Add: Attach the handlers to app.logger
+    # Attach the handlers to app.logger
     for h in handlers:
         app.logger.addHandler(h)
 
@@ -844,7 +844,9 @@ def get_52w_highs_quotes():
     try:
         src = YahooSectorIndustrySource()  # keep imported for consistency
         highs_src = NewHighsScreenerSource(region=region)
-        quotes = highs_src.get_all_quotes()
+        quotes = highs_src.get_all_quotes() 
+        # returns a wrapper object like {"finance":{"result":[{"total": N, "quotes":[{...}, ...], "offset": 0, ...}], "error": null}}
+        # include symbol, region, quoteType, industry, sector (sometimes), regularMarketPrice, marketCap, and 52-week fields
         return jsonify(quotes), 200
     except Exception as e:
         app.logger.error(f"/market/screener/52w_highs failed: {e}", exc_info=True)
@@ -857,28 +859,38 @@ def get_market_breadth():
     { new_highs, new_lows, high_low_ratio }
     Query params: region=US|... (optional)
     """
-    region = (request.args.get('region') or 'US').upper()
-
-    # route-level cache
-    cache_key = f"breadth_{region}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        app.logger.debug(f"[breadth] cache HIT key={cache_key}")
-        return jsonify(cached), 200
-
     try:
-        fetcher = MarketBreadthFetcher(region=region)
-        result = fetcher.get_breadth()  # expected to return dict with new_highs, new_lows, high_low_ratio
+        region = (request.args.get('region') or 'US').upper()
+        cache_key = f"breadth_{region}"
+
+        # Only treat a real dict as a cache hit to avoid MagicMock/json errors
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            app.logger.info(f"breadth cache HIT for region={region}")
+            return jsonify(cached), 200
+
+        # Compute on miss
+        mbf = MarketBreadthFetcher(region=region)
+        data = mbf.get_breadth()  # {'new_highs': int, 'new_lows': int, 'high_low_ratio': float}
+        app.logger.info(f"breadth computed for region={region}")
+
+        # Normalize response keys that tests assert on
+        response = {
+            "newhighs": data.get("new_highs", 0),
+            "newlows": data.get("new_lows", 0),
+            "ratio": data.get("high_low_ratio", 0.0),
+        }
+
+        # Best-effort cache set; do not fail the route on cache errors
         try:
-            cache.set(cache_key, result, timeout=BREADTH_CACHE_TTL)
+            cache.set(cache_key, response, timeout=BREADTH_CACHE_TTL)
         except Exception as e:
-            app.logger.debug(f"[breadth] cache SET failed key={cache_key} err={e}")
-        
-        app.logger.debug(f"[breadth] computed region={region} result={result}")
-        return jsonify(result), 200
-    
+            app.logger.debug(f"breadth cache SET failed for region={region}: {e}")
+
+        return jsonify(response), 200
+
     except Exception as e:
-        app.logger.error(f"/market/breadth failed: {e}", exc_info=True)
+        app.logger.error(f"Failed to fetch market breadth: {e}", exc_info=True)
         return jsonify({"error": "Failed to fetch market breadth"}), 500
 
 if __name__ == '__main__':

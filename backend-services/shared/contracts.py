@@ -240,3 +240,21 @@ class MarketBreadthResponse(BaseModel):
 class IndustryBreadthItem(BaseModel):
     industry: str
     breadth_count: int
+
+# --- Contract 13: ScreenerQuote ---
+
+class ScreenerQuote(BaseModel):
+    """
+    A minimal screener quote shape returned by data-service for 52-week highs.
+    This projection intentionally limits fields to what downstream services use.
+    """
+    symbol: str
+    industry: Optional[str] = None
+    shortName: Optional[str] = None
+    sector: Optional[str] = None
+    regularMarketPrice: Optional[float] = None
+    fiftyTwoWeekHigh: Optional[float] = None
+    fiftyTwoWeekHighChangePercent: Optional[float] = None
+    marketCap: Optional[float] = None
+
+ScreenerQuoteList: TypeAlias = List[ScreenerQuote]

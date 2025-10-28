@@ -151,7 +151,7 @@ def init_pool(size: int = _POOL_SIZE):
                     pass
             # publish pool only after success
             _ID_POOL = local_pool
-            _POOL_READY = True  # Latest Add: success path only
+            _POOL_READY = True  # success path only
             logger.info(f"Yahoo client pool initialized size={len(_ID_POOL)}")
         except Exception as e:
             logger.warning(f"Yahoo client pool init failed: {e}")
