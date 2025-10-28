@@ -363,16 +363,30 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
 
 - **GET `/health`**  
-  - Proxies to: leadership-service
+  - Proxies to: data-service, leadership-service
   - Purpose: A standard health check endpoint used for service monitoring to confirm that the service is running and responsive.
 
   - **Data Contract:** N/A
   - **Example Usage (from a monitoring tool or another service)**
       ```bash
-      curl http://leadership-service:3005/health
+      curl http://localhost:3005/health
       ```
 
-  - **Example Success Response:**
+      ```bash
+      curl http://localhost:3001/health
+      ```
+
+  - **Example Success Response for data-service:**
+      ```JSON
+      {
+        "mongo": true,
+        "ok": true,
+        "redis": true,
+        "yf_pool_ready": true
+      }
+      ```
+
+  - **Example Success Response for leadership-service:**
       ```JSON
       {
         "status": "healthy"

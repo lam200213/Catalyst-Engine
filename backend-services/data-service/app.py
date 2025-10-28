@@ -13,6 +13,7 @@ from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient, errors
 from pymongo.errors import OperationFailure
 from typing import List
+import threading
 
 # --- 1. Initialize Flask App and Basic Config ---
 app = Flask(__name__)
@@ -136,12 +137,14 @@ except Exception as e:
 # --- End of Persistent DB Client Setup ---
 
 # --- Initialize Yahoo Finance pool at startup ---
-try:
-    size = int(os.getenv("YF_POOL_SIZE", "12"))
-    yf_client.init_pool(size=size)
-    app.logger.info(f"Initialized Yahoo Finance identity pool (size={size})")
-except Exception as e:
-    app.logger.warning(f"Yahoo Finance pool initialization failed: {e}")
+def _init_yf_pool_bg():
+    try:
+        size = int(os.getenv("YF_POOL_SIZE", "12"))
+        yf_client.init_pool(size=size)
+        app.logger.info(f"Initialized Yahoo Finance identity pool (size={size})")
+    except Exception as e:
+        app.logger.warning(f"Yahoo Finance pool initialization failed (background): {e}")
+threading.Thread(target=_init_yf_pool_bg, daemon=True).start()
 
 # --- Custom Exceptions ---
 class ProviderNoDataError(Exception):
@@ -892,6 +895,28 @@ def get_market_breadth():
     except Exception as e:
         app.logger.error(f"Failed to fetch market breadth: {e}", exc_info=True)
         return jsonify({"error": "Failed to fetch market breadth"}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    redis_ok = False
+    mongo_ok = db is not None
+    yf_pool_ready = False
+    try:
+        # Flask-Caching Redis backend write client
+        rc = cache.cache._write_client  # type: ignore[attr-defined]
+        redis_ok = bool(rc.ping())
+    except Exception:
+        redis_ok = False
+    try:
+        # Do not block on Yahoo; just report status
+        yf_pool_ready = getattr(yf_client, "is_pool_ready", lambda: False)()
+    except Exception:
+        yf_pool_ready = False
+
+    ok = redis_ok and mongo_ok  # core readiness for serving
+    status = 200 if ok else 503
+    return jsonify({"ok": ok, "redis": redis_ok, "mongo": mongo_ok, "yf_pool_ready": yf_pool_ready}), status
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT)

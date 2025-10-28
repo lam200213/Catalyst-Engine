@@ -3,10 +3,8 @@
 This module provides the business logic for fetching market leaders data.
 """
 import os
-import requests
 import logging
 from typing import Dict, List, Any, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor
 
 #DEBUG
 import logging
@@ -15,6 +13,13 @@ import json
 logger = logging.getLogger(__name__)
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
+
+from data_fetcher import (
+    get_sector_industry_map,
+    get_day_gainers_map,
+    post_returns_1m_batch,
+    get_52w_highs,
+)
 
 class SectorIndustrySource:
     """Abstract source of industry -> candidate tickers mapping."""
@@ -70,65 +75,35 @@ class MarketLeadersService:
         self.ranker = ranker
         self.max_workers = max_workers
 
-    def _fetch_candidates_from_source(self, url: str) -> Optional[Dict[str, List[str]]]:
-        """Fetches candidate tickers from a data-service endpoint."""
-        try:
-            resp = requests.get(url, timeout=180)
-            if resp.status_code == 200:
-                return resp.json()
-            logger.warning(f"Candidate source at {url} returned status {resp.status_code}")
-            return None
-        except requests.RequestException as e:
-            logger.error(f"Failed to fetch candidates from {url}: {e}")
-            return None
-
-    def _fetch_one_month_changes_batch(self, symbols: List[str]) -> Dict[str, Optional[float]]:
-            """Fetches 1-month returns for a list of symbols from the data-service's batch endpoint."""
-            try:
-                url = f"{DATA_SERVICE_URL}/data/return/1m/batch"
-                resp = requests.post(url, json={"tickers": symbols}, timeout=30)
-                if resp.status_code == 200:
-                    return resp.json()
-                return {s: None for s in symbols} # Return None for all on failure
-            except requests.RequestException as e:
-                logger.error(f"Batch return fetch failed: {e}")
-                return {s: None for s in symbols}
-
     def get_market_leaders(self) -> Dict:
-        # 1. Fetch candidate tickers from primary source
-        primary_url = f"{DATA_SERVICE_URL}/market/sectors/industries"
-        industry_to_symbols = self._fetch_candidates_from_source(primary_url)
-
-        # 2. If primary fails, try fallback source
+        # 1) Try primary sector/industry candidates
+        industry_to_symbols = get_sector_industry_map()
+        # 2) Fallback to day_gainers screener mapping
         if not industry_to_symbols:
             logger.info("Primary source failed, trying fallback day_gainers screener.")
-            fallback_url = f"{DATA_SERVICE_URL}/market/screener/day_gainers"
-            industry_to_symbols = self._fetch_candidates_from_source(fallback_url)
-
+            industry_to_symbols = get_day_gainers_map()
         if not industry_to_symbols:
             logger.error("All candidate sources failed. Cannot determine market leaders.")
             return {}
 
-        # 3. Fetch 1-month returns for all candidates in ONE batch call
-        all_symbols = list(set(sym for syms in industry_to_symbols.values() for sym in syms))
-        
-        # Make a single, efficient batch request.
-        symbol_returns = self._fetch_one_month_changes_batch(all_symbols)
+        # 3) Single batch fetch of 1m returns
+        all_symbols = list({sym for syms in industry_to_symbols.values() for sym in syms})
+        # Guard empty candidates 
+        if not industry_to_symbols:
+            logger.error("All candidate sources failed. Cannot determine market leaders.")
+            return {}
+        all_symbols = list({sym for syms in industry_to_symbols.values() for sym in syms})
+        if not all_symbols:
+            logger.warning("No symbols to fetch returns for; skipping return fetch.")
+            return {}
+        symbol_returns = post_returns_1m_batch(all_symbols)
 
+        # 4) Map and rank
         industry_to_returns: Dict[str, List[Tuple[str, Optional[float]]]] = {k: [] for k in industry_to_symbols}
         for ind, syms in industry_to_symbols.items():
             for sym in syms:
-                # Map the results from the batch call back to the industry structure
                 industry_to_returns[ind].append((sym, symbol_returns.get(sym)))
-
-        # 4. Rank the results
         return self.ranker.rank(industry_to_returns, top_industries=5, top_stocks_per_industry=3)
-
-# def get_market_leaders() -> List[Dict[str, Any]]:
-#     """Facade used by Flask route; orchestrates the process."""
-#     ranker = IndustryRanker()
-#     svc = MarketLeadersService(ranker)
-#     return svc.get_market_leaders()
 
 def _industry_counts_from_quotes(quotes: List[dict]) -> List[Dict[str, Any]]:
     """
@@ -154,8 +129,7 @@ class MarketLeadersService52w(MarketLeadersService):
         super().__init__(ranker=IndustryRanker())
 
     def get_industry_leaders_by_new_highs(self) -> List[Dict[str, Any]]:
-        url = f"{DATA_SERVICE_URL}/market/screener/52w_highs"
-        quotes = self._fetch_candidates_from_source(url)  # reuse existing fetch method signature
+        quotes = get_52w_highs()
         if not isinstance(quotes, list):
             logger.warning("52w highs screener returned no data or wrong shape.")
             return []

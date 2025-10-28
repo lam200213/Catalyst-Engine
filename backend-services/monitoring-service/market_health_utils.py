@@ -5,16 +5,63 @@ import os
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
 import requests
+import time
 
 import logging
 logger = logging.getLogger(__name__)
 
 from helper_functions import check_market_trend_context
+from data_fetcher import post_price_batch, get_price_single, get_breadth
 
 # Indices to evaluate posture
 INDICES = ['^GSPC', '^DJI', '^IXIC']
 
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
+
+def _fetch_prices_batch(tickers: List[str]) -> Dict[str, List[dict]]:
+    """
+    Use the app's batch endpoint to fetch price data for many tickers.
+    """
+    result = post_price_batch(tickers)
+    success = result.get("success") or {}
+
+    for sym in tickers:
+        series = success.get(sym) or []
+        logger.info(f"_fetch_prices_batch: {sym} raw_len={len(series)}")
+
+    # totals
+    logger.info(f"_fetch_prices_batch: keys={list(success.keys())}")
+    return success
+
+
+def _fetch_price_single(ticker: str) -> Optional[List[dict]]:
+    """
+    Fallback to the app's single endpoint to fetch one ticker's price data.
+    """
+    data = get_price_single(ticker)
+    logger.info(f"_fetch_price_single: {ticker} raw_len={len(data) if isinstance(data, list) else 'na'} type={type(data).__name__}")
+    return data
+
+def _fetch_breadth() -> dict | None:
+    """
+    Calls data-service /market/breadth to retrieve {new_highs, new_lows, high_low_ratio}.
+    """
+    try:
+        data = get_breadth()
+        t = type(data).__name__
+        keys = list(data.keys()) if isinstance(data, dict) else None
+        logger.info(f"_fetch_breadth: type={t} keys={keys}")
+        # olerate list responses by extracting first dict-like element
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and any(k in item for k in ("new_highs", "new_lows", "high_low_ratio")):
+                    return item
+            return None
+        return None
+    except requests.RequestException:
+        return None
 
 def _to_df(series: Union[List[dict], Dict]) -> pd.DataFrame:
     """
@@ -73,45 +120,6 @@ def _to_df(series: Union[List[dict], Dict]) -> pd.DataFrame:
         return pd.DataFrame()
 
     return df[cols].copy()
-
-
-def _fetch_prices_batch(tickers: List[str]) -> Dict[str, List[dict]]:
-    """
-    Use the app's batch endpoint to fetch price data for many tickers.
-    """
-    url = f"{DATA_SERVICE_URL}/price/batch"
-    payload = {
-        "tickers": tickers,
-        "source": "yfinance",
-        "period": "2y" 
-    }
-    resp = requests.post(url, json=payload, timeout=60)
-    resp.raise_for_status()
-    result = resp.json() or {}
-    success = result.get("success") or {}
-
-    for sym in tickers:
-        series = success.get(sym) or []
-        logger.info(f"_fetch_prices_batch: {sym} raw_len={len(series)}")
-
-    # totals
-    logger.info(f"_fetch_prices_batch: keys={list(success.keys())}")
-    return success
-
-
-def _fetch_price_single(ticker: str) -> Optional[List[dict]]:
-    """
-    Fallback to the app's single endpoint to fetch one ticker's price data.
-    """
-    url = f"{DATA_SERVICE_URL}/price/{ticker}?source=yfinance"
-    resp = requests.get(url, timeout=30)
-    if resp.status_code != 200:
-        return None
-    
-    data = resp.json()
-    logger.info(f"_fetch_price_single: {ticker} raw_len={len(data) if isinstance(data, list) else 'na'} type={type(data).__name__}")
-    return data
-
 
 def _build_index_dfs(idx_data: Dict[str, List[dict]]) -> Dict[str, pd.DataFrame]:
     idx_dfs: Dict[str, pd.DataFrame] = {}
@@ -179,32 +187,6 @@ def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
     if pd.isna(high_52) or high_52 in (None, 0) or pd.isna(close) or close is None:
         return 0.0
     return round((float(close) - float(high_52)) / float(high_52) * 100.0, 2)
-
-
-def _fetch_breadth() -> dict | None:
-    """
-    Calls data-service /market/breadth to retrieve {new_highs, new_lows, high_low_ratio}.
-    """
-    url = f"{DATA_SERVICE_URL}/market/breadth"
-    try:
-        resp = requests.get(url, timeout=20)
-        if resp.status_code == 200:
-            data = resp.json()
-            t = type(data).__name__
-            keys = list(data.keys()) if isinstance(data, dict) else None
-            logger.info(f"_fetch_breadth: type={t} keys={keys}")
-            # olerate list responses by extracting first dict-like element
-            if isinstance(data, dict):
-                return data
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict) and any(k in item for k in ("new_highs", "new_lows", "high_low_ratio")):
-                        return item
-                return None
-            return None
-        return None
-    except requests.RequestException:
-        return None
 
 def get_market_health(universe: Optional[List[str]] = None) -> dict:
     """

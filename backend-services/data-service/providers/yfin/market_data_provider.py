@@ -3,19 +3,15 @@
 This module provides the business logic for fetching market-wide data
 like sector/industry candidates, screeners, and specific metrics like returns.
 """
-
 import yfinance as yf
 import datetime as dt
 import pandas as pd
 import time
 import random
 from typing import Dict, List, Tuple, Optional
-from curl_cffi import requests as cffi_requests
 from typing import List, Dict, Any
-from collections import defaultdict
 import os
 import re
-from typing import Iterable
 
 from . import yahoo_client, price_provider # Use relative import
 
@@ -49,6 +45,7 @@ class YahooSectorIndustrySource(SectorIndustrySource):
     """Primary source using yfinance Sector/Industry APIs."""
     def __init__(self, sector_keys: Optional[List[str]] = None):
         self._sector_keys = sector_keys
+        self.region = _DEFAULT_REGION.upper()
         # Prefer discovering sectors dynamically; allow override via config
         # soft limits to avoid long blocking calls
         self._max_sectors: int = int(os.getenv("YF_MAX_SECTORS", "11"))
@@ -82,7 +79,7 @@ class YahooSectorIndustrySource(SectorIndustrySource):
     def _search_symbol_for_name(self, name: str) -> Optional[str]:
         try:
             url = "https://query2.finance.yahoo.com/v1/finance/search"
-            params = {"q": name, "lang": "en-US", "region": "US", "quotesCount": 1}
+            params = {"q": name, "lang": "en-US", "region": self.region, "quotesCount": 1}
             data = yahoo_client.execute_request(url, params=params)
             quotes = (data or {}).get("quotes") or []
             for q in quotes:
@@ -141,8 +138,9 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                 break
         return out
 
-    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: str = "US") -> Dict[str, List[str]]:
+    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: Optional[str] = None) -> Dict[str, List[str]]:
         
+        effective_region = (region or self.region).upper()
         out: Dict[str, List[str]] = {}
         started = time.time()
         for s in self._discover_sector_keys():
@@ -187,7 +185,7 @@ class YahooSectorIndustrySource(SectorIndustrySource):
                                 cleaned.append(c)
 
                         if cleaned:
-                            if region.upper() == "US":
+                            if effective_region.upper() == "US":
                                 cleaned = [c for c in cleaned if _is_us_symbol(c)]
                             out[ind_key] = cleaned[:per_industry_limit]
 
@@ -204,9 +202,10 @@ class YahooSectorIndustrySource(SectorIndustrySource):
 class DayGainersSource(SectorIndustrySource):
     """Fallback source using yfinance screener day_gainers."""
     def __init__(self):
-        pass 
+        self.region = _DEFAULT_REGION.upper()
 
-    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: str = "US") -> Dict[str, List[str]]:
+    def get_industry_top_tickers(self, per_industry_limit: int = 10, region: Optional[str] = None) -> Dict[str, List[str]]:
+        effective_region = (region or self.region).upper()
         out: Dict[str, List[str]] = {}
         try:
             url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
@@ -214,7 +213,7 @@ class DayGainersSource(SectorIndustrySource):
                 "scrIds": "day_gainers",
                 "count": 200,
                 "lang": "en-US",
-                "region": region.upper()
+                "region": effective_region.upper()
             }
             data = yahoo_client.execute_request(url, params=params)
             
@@ -226,7 +225,7 @@ class DayGainersSource(SectorIndustrySource):
                 # tolerate missing industry
                 if not sym:
                     continue
-                if region.upper() == "US" and not _is_us_symbol(sym):  # enforce US by default
+                if effective_region == "US" and not _is_us_symbol(sym):  # enforce US by default
                     continue
                 ind = q.get("industry") or "Unclassified"
                 bucket = out.setdefault(ind, [])
@@ -295,8 +294,8 @@ class NewHighsScreenerSource(SectorIndustrySource):
     Fetches the full list of current 52-week highs from Yahoo predefined screener.
     Mirrors DayGainersSource shape but uses scrIds='new_52_week_high'.
     """
-    def __init__(self, region: str = "US"):
-        self.region = (region or "US").upper()
+    def __init__(self, region: Optional[str] = None):
+        self.region = (region or _DEFAULT_REGION).upper()
         self.page_size = int(os.getenv("YF_SCREENER_PAGE_SIZE", "250"))
         # Reuse MarketBreadthFetcher's resolver
         self.fetcher = MarketBreadthFetcher(region=self.region, enable_pagination_fallback=False)
@@ -386,8 +385,8 @@ class MarketBreadthFetcher:
     """
     Reads totals from predefined screeners for 52w highs and 52w lows and returns aggregate breadth.
     """
-    def __init__(self, region: str = "US", enable_pagination_fallback: bool = True, max_pages: int = 12, page_size: int = 250):
-        self.region = (region or "US").upper()
+    def __init__(self, region: Optional[str] = None, enable_pagination_fallback: bool = True, max_pages: int = 12, page_size: int = 250):
+        self.region = (region or _DEFAULT_REGION).upper()
         self.enable_pagination_fallback = enable_pagination_fallback
         self.max_pages = max_pages
         self.page_size = page_size

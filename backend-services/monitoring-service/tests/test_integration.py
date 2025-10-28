@@ -45,20 +45,21 @@ def test_health_ok():
     assert resp.status_code == 200
     assert resp.get_json() == {"status": "healthy"}
 
-@patch("market_leaders.requests.get")
-@patch("market_health_utils._fetch_breadth")
-@patch("market_health_utils.requests.post")
-def test_get_monitor_market_health_dependency_mocks(mock_mhu_post, mock_breadth, mock_ml_get):
+
+@patch("market_health_utils.get_breadth")
+@patch("market_leaders.get_52w_highs")
+@patch("market_health_utils.post_price_batch")
+def test_get_monitor_market_health_dependency_mocks(mock_post_batch, mock_get_52w, mock_breadth):
     client = flask_app.test_client()
 
     idx_payload = {"success": {"^GSPC": _series(), "^DJI": _series(base=200), "^IXIC": _series(base=300)}}
-    mock_mhu_post.return_value = _ok_response(idx_payload)
+    mock_post_batch.return_value = idx_payload
 
     # Return dict directly from the helper to avoid cross-patch interference
     mock_breadth.return_value = {"new_highs": 120, "new_lows": 40, "high_low_ratio": 3.0}
 
     leaders_quotes = [{"industry": "Tech", "ticker": "A"}, {"industry": "Tech", "ticker": "B"}]
-    mock_ml_get.return_value = _ok_response(leaders_quotes)
+    mock_get_52w.return_value = leaders_quotes
 
     resp = client.get("/monitor/market-health")
     assert resp.status_code == 200
@@ -67,38 +68,35 @@ def test_get_monitor_market_health_dependency_mocks(mock_mhu_post, mock_breadth,
     assert mo["new_highs"] == 120
     assert mo["new_lows"] == 40
     assert mo["high_low_ratio"] == 3.0
-@patch("market_leaders.requests.post")
-@patch("market_leaders.requests.get")
-def test_get_internal_leaders_handles_failures(mock_ml_get, mock_ml_post):
+
+@patch("market_leaders.post_returns_1m_batch")
+@patch("market_leaders.get_day_gainers_map")
+@patch("market_leaders.get_sector_industry_map")
+@patch("market_leaders.get_52w_highs")
+def test_get_internal_leaders_handles_failures(mock_52w, mock_sector, mock_day_gainers, mock_returns):
     client = flask_app.test_client()
 
-    # Mock 52w screener to fail (returns non-list), then fallback sources also fail
-    mock_ml_get.side_effect = [
-        MagicMock(status_code=500), # 52w highs screener
-        MagicMock(status_code=500), # Primary fallback
-        MagicMock(status_code=500), # Secondary fallback
-    ]
-    mock_ml_post.return_value = MagicMock(status_code=500)
+    mock_52w.return_value = None
+    mock_sector.return_value = {}
+    mock_day_gainers.return_value = {}
+    mock_returns.return_value = {}
 
     resp = client.get("/monitor/internal/leaders")
     assert resp.status_code == 404
     assert "No market leader data available" in resp.get_json()["message"]
 
-@patch("market_health_utils.requests.post")
-@patch("market_health_utils.requests.get")
-def test_integration_internal_health_no_universe(mock_mhu_get, mock_mhu_post):
+@patch("market_health_utils.post_price_batch")
+@patch("market_health_utils.get_breadth")
+def test_integration_internal_health_no_universe(mock_get_breadth, mock_post_batch):
     """
     Integration-test /monitor/internal/health: verify outputs stable without universe
     and consistent ratio against mocked data-service response.
     """
     client = flask_app.test_client()
 
-    # Mock dependencies for get_market_health
     idx_payload = {"success": {"^GSPC": _series(), "^DJI": _series(), "^IXIC": _series()}}
-    mock_mhu_post.return_value = _ok_response(idx_payload)
-
-    breadth_payload = {"new_highs": 100, "new_lows": 25, "high_low_ratio": 4.0}
-    mock_mhu_get.return_value = _ok_response(breadth_payload)
+    mock_post_batch.return_value = idx_payload
+    mock_get_breadth.return_value = {"new_highs": 100, "new_lows": 25, "high_low_ratio": 4.0}
 
     # Make request without any universe parameter
     resp = client.get("/monitor/internal/health")
@@ -112,8 +110,8 @@ def test_integration_internal_health_no_universe(mock_mhu_get, mock_mhu_post):
     assert "market_stage" in data
 
 
-@patch("market_leaders.requests.get")
-def test_integration_internal_leaders_top_5_selection(mock_ml_get):
+@patch("market_leaders.get_52w_highs")
+def test_integration_internal_leaders_top_5_selection(mock_52w):
     """
     Integration-test /monitor/internal/leaders: verify top 5 industries selection
     by quote industry counts with ties and “Unclassified” handling.
@@ -129,7 +127,7 @@ def test_integration_internal_leaders_top_5_selection(mock_ml_get):
         {"industry": "Energy"},                                                               # 1 (tie)
         {"industry": "Industrial"},                                                           # 1 (tie)
     ]
-    mock_ml_get.return_value = _ok_response(mock_quotes)
+    mock_52w.return_value = mock_quotes
 
     resp = client.get("/monitor/internal/leaders")
     assert resp.status_code == 200

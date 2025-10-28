@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-10-28
-Debugged data-service /market/screener/52w_highs, update test cases of /market/breadth;
+Centralize region defaults via _DEFAULT_REGION in market_data_provider.py; Debugged the startup race, made data-service ready quickly (non-blocking init + readiness endpoint), gate monitoring-service startup on data-service health; Introduced data_fetcher in monitoring-service, and updated the test cases.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

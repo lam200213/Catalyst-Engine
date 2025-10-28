@@ -46,6 +46,12 @@ services:
       - redis
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import json,urllib.request,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://localhost:3001/health')).get('ok') else 1)\""]
+      interval: 120s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     volumes:
       - ./backend-services/data-service:/app
       # for development: Mount local directory to container's /app (Live Code Reloading)
@@ -142,9 +148,12 @@ services:
       DATA_SERVICE_URL: http://data-service:3001
       LOG_LEVEL: INFO
     depends_on:
-      - mongodb
-      - analysis-service
-      - data-service
+      mongodb:
+        condition: service_started
+      analysis-service:
+        condition: service_started
+      data-service:
+        condition: service_healthy
     networks:
       - app-network
     volumes:
