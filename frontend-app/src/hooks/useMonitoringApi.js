@@ -17,6 +17,7 @@ export const useMonitoringApi = (apiFunc, autoFetch = true, retryCount = 2) => {
     while (attempts <= retryCount) {
       try {
         const response = await apiFunc(...args);
+        console.log('[DEBUG] Market health response:', JSON.stringify(response.data, null, 2));
         setData(response.data);
       // debug log (remove after verifying)
       // console.log('Market health payload:', response.data);

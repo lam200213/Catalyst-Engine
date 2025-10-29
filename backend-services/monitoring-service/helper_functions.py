@@ -3,9 +3,15 @@ import logging
 from pymongo import MongoClient, errors
 from datetime import datetime, timezone
 import os
-from typing import List
+from typing import List, Any, Dict
 from pydantic import ValidationError, TypeAdapter
-from shared.contracts import PriceDataItem, CoreFinancials
+from shared.contracts import (
+    PriceDataItem, 
+    CoreFinancials,
+    MarketOverview,
+    MarketLeaders,
+    MarketHealthResponse,
+)
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -214,3 +220,47 @@ def mark_ticker_as_delisted(ticker: str, reason: str):
     finally:
         if 'client' in locals() and client:
             client.close()
+
+def validate_market_overview(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        return MarketOverview(**(payload or {})).model_dump(mode="json")
+    except ValidationError as e:
+        logger.warning(f"MarketOverview validation failed: {e}")
+        # Minimal safe default to keep UI rendering consistently
+        return {
+            "market_stage": "Unknown",
+            "correction_depth_percent": 0.0,
+            "high_low_ratio": 0.0,
+            "new_highs": 0,
+            "new_lows": 0,
+        }
+
+def validate_market_leaders(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        # Defensive: if payload is a list (incorrect type), wrap it
+        if isinstance(payload, list):
+            logger.warning(f"validate_market_leaders received a list instead of dict. Wrapping it.")
+            payload = {"leading_industries": payload}
+        elif not isinstance(payload, dict):
+            logger.warning(f"validate_market_leaders received unexpected type: {type(payload).__name__}. Using empty default.")
+            payload = {"leading_industries": []}
+        
+        return MarketLeaders(**(payload or {"leading_industries": []})).model_dump(mode="json")
+    except ValidationError as e:
+        logger.warning(f"MarketLeaders validation failed: {e}")
+        return {"leading_industries": []}
+
+def compose_market_health_response(overview: Dict[str, Any], leaders: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        obj = MarketHealthResponse(
+            market_overview=MarketOverview(**overview),
+            leaders_by_industry=MarketLeaders(**leaders),
+        )
+        return obj.model_dump(mode="json")
+    except ValidationError as e:
+        logger.error(f"MarketHealthResponse composition failed: {e}")
+        # Fall back to validated sub-objects to avoid breaking UI
+        return {
+            "market_overview": validate_market_overview(overview),
+            "leaders_by_industry": validate_market_leaders(leaders),
+        }

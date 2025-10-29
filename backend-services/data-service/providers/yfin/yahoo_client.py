@@ -51,6 +51,12 @@ def _should_rotate(status_code: int, body_text: str) -> bool:
     t = (body_text or "").lower()
     return "too many requests" in t or "rate limit" in t
 
+# helper to stringify proxies for logs
+def _proxy_str(p: Optional[Dict[str, str]]) -> str:
+    if not p:
+        return "none"
+    return p.get("https") or p.get("http") or "unknown"
+
 def _pick_profile() -> str:
     return random.choice(SUPPORTED_IMPERSONATE_PROFILES)
 
@@ -122,6 +128,12 @@ class _Identity:
             logger.debug(f"Yahoo crumb refreshed ({reason}), profile={self.profile}, proxy={'on' if self.proxy else 'off'}")
             return self.crumb
         except Exception as e:
+            # explicit 407/proxy-auth tunnel logging with proxy detail
+            msg = str(e).lower()
+            if ("response 407" in msg) or ("proxy authentication required" in msg) or ("connect tunnel failed" in msg):
+                logger.warning(
+                    f"[yf] crumb refresh 407/tunnel failure ({reason}): proxy={_proxy_str(self.proxy)} profile={self.profile}"
+                )
             logger.warning(f"Failed to refresh Yahoo crumb ({reason}): {e}")
             self.crumb = None
             self.expiry = 0.0
@@ -252,7 +264,15 @@ def _execute_json_once(url: str, *, method: str = "GET", params: dict | None = N
         )
         body_preview = (resp.text or "")[:256]
         if not (200 <= resp.status_code < 300):
-            logger.warning(f"[yf] {resp.status_code} url={url} host={resp.url.split('//')[1].split('/')[0]} params={params} body[:256]={body_preview}")
+            # include proxy string on all non-2xx, and highlight 407 specifically
+            logger.warning(
+                f"[yf] {resp.status_code} url={url} host={resp.url.split('//')[1].split('/')[0]} "
+                f"params={params} proxy={_proxy_str(ident.proxy)} body[:256]={body_preview}"
+            )
+            if resp.status_code == 407:
+                logger.warning(
+                    f"[yf] proxy auth required (407) — proxy={_proxy_str(ident.proxy)} profile={ident.profile}"
+                )
             resp.raise_for_status()
         return resp.json()
     except Exception as e:

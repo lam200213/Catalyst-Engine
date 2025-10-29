@@ -82,6 +82,11 @@ setup_logging(app)
 # --- 3. Import Project-Specific Modules ---
 from market_health_utils import get_market_health
 from market_leaders import get_market_leaders
+from helper_functions import (
+    validate_market_overview,
+    validate_market_leaders,
+    compose_market_health_response,
+)
 
 # Prewarm market health on startup to avoid first-user 504
 def _prewarm_market_health():
@@ -112,12 +117,10 @@ def get_aggregated_market_health():
 
         # 3. Assemble the final response payload according to the contract
         # The contract expects leaders_by_industry: { leading_industries: [...] }
-        response_payload = {
-            "market_overview": market_overview_data,
-            "leaders_by_industry": {
-                "leading_industries": leaders_data
-            }
-        }
+        response_payload = compose_market_health_response(
+            validate_market_overview(market_overview_data),
+            validate_market_leaders(leaders_data),
+        )
 
         return jsonify(response_payload), 200
 
@@ -135,12 +138,8 @@ def market_leaders():
     """
     app.logger.info("Request received for /monitor/internal/leaders")
     try:
-        data = get_market_leaders()
-        if not data:
-            return jsonify({"message": "No market leader data available at the moment."}), 404
-
-        # Contract: { leading_industries: string[], leading_stocks: [{ticker, percent_change_1m}] }
-        return jsonify({"leading_industries": data}), 200
+        leaders = get_market_leaders()  # returns {"leading_industries": [...]}
+        return jsonify(validate_market_leaders(leaders)), 200
     except Exception as e:
         app.logger.error(f"Failed to get market leaders: {e}")
         return jsonify({"error": "Internal server error"}), 500
@@ -153,15 +152,10 @@ def get_market_health_endpoint():
     - correction_depth_percent (percent from 52w high on ^GSPC)
     - high_low_ratio
     - new_highs, new_lows (explicit counts)
-    Optional query: ?tickers=AAPL,MSFT,... for breadth universe.
     """
     try:
-        tickers_param = request.args.get('tickers')
-        universe = None
-        if tickers_param:
-            universe = [t.strip().upper() for t in tickers_param.split(',') if t.strip()]
-        payload = get_market_health(universe=universe)
-        return jsonify(payload), 200
+        overview = get_market_health()  # returns dict with expected keys
+        return jsonify(validate_market_overview(overview)), 200
     except Exception as e:
         app.logger.error(f"Error in /monitor/internal/health: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500

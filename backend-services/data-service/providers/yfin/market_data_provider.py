@@ -237,16 +237,16 @@ class DayGainersSource(SectorIndustrySource):
 
 
 class ReturnCalculator:
-    """Computes 1-month percent change for a ticker."""
+    """Computes percentage change over a yfinance-supported period."""
     def __init__(self, executor=None):
         self.executor = executor
 
-    def one_month_change(self, symbol: str) -> Optional[float]:
+    def percent_change(self, symbol: str, period: str = "3mo") -> Optional[float]:
         try:
             data = price_provider.get_stock_data(
                 symbol,
                 executor=self.executor,  # may be None; provider will handle
-                period="1mo"
+                period=period
             )
             # Path A - list-of-dicts shape
             if isinstance(data, list):
@@ -267,7 +267,7 @@ class ReturnCalculator:
 
             # Path B - legacy Ticker-like with .history()
             if hasattr(data, "history"):
-                df = data.history(period="1mo")
+                df = data.history(period=period)
                 if not isinstance(df, pd.DataFrame) or "Close" not in df.columns:
                     return None
                 closes = [float(x) for x in df["Close"].dropna().tolist()]
@@ -283,9 +283,12 @@ class ReturnCalculator:
             return None
 
         except Exception as e:
-            logger.debug(f"1mo change via price_provider failed for {symbol}: {e}")
+            logger.debug(f"{period} change via price_provider failed for {symbol}: {e}")
             return None
 
+    # Backward compatibility wrapper
+    def one_month_change(self, symbol: str) -> Optional[float]:
+        return self.percent_change(symbol, period="1mo")
         
 # --- 52-week highs / lows screener and market breadth helpers ---
 

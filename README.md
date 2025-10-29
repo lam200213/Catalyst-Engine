@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-28
-Centralize region defaults via _DEFAULT_REGION in market_data_provider.py; Debugged the startup race, made data-service ready quickly (non-blocking init + readiness endpoint), gate monitoring-service startup on data-service health; Introduced data_fetcher in monitoring-service, and updated the test cases.
+2025-10-29
+Debugged monitoring-service, integrate the new feature to frontend UI; Refactoring extends the prior 1‑month return logic to support any yfinance period while adding a generic returns endpoint that defaults to 3m; Updated test cases
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

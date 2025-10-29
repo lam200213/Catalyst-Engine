@@ -7,13 +7,14 @@ import datetime as dt
 from flask_caching import Cache
 import pandas_market_calendars as mcal
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from logging.handlers import RotatingFileHandler
-from pymongo import MongoClient, errors
+from pymongo import MongoClient
 from pymongo.errors import OperationFailure
 from typing import List
 import threading
+from pydantic import TypeAdapter
 
 # --- 1. Initialize Flask App and Basic Config ---
 app = Flask(__name__)
@@ -94,9 +95,11 @@ from providers import finnhub_provider, marketaux_provider
 from providers.yfin import yahoo_client as yf_client 
 from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
-from providers.yfin.market_data_provider import DayGainersSource, ReturnCalculator, YahooSectorIndustrySource, NewHighsScreenerSource, MarketBreadthFetcher
+from providers.yfin.market_data_provider import DayGainersSource, YahooSectorIndustrySource, NewHighsScreenerSource, MarketBreadthFetcher
 # Import the logic
-from helper_functions import check_market_trend_context, validate_and_prepare_financials, validate_and_prepare_price_data, cache_covers_request, plan_incremental_price_fetch, finalize_price_response
+from helper_functions import check_market_trend_context, validate_and_prepare_financials, cache_covers_request, plan_incremental_price_fetch, finalize_price_response, compute_returns_for_period
+
+from shared.contracts import ScreenerQuote
 
 # --- Flask-Caching Setup ---
 # Configuration for Redis Cache. The URL is provided by the environment.
@@ -805,12 +808,12 @@ def get_day_gainers_candidates():
         logging.error(f"Failed in /market/screener/day_gainers: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
-@app.route('/data/return/1m/batch', methods=['POST'])
-def get_one_month_return_batch():
+@app.route('/data/return/batch', methods=['POST'])
+def get_n_month_return_batch():
     """
-    Calculates the 1-month percentage return for a batch of tickers.
-    Accepts a JSON payload: {"tickers": ["AAPL", "MSFT", ...]}
-    Returns a dictionary of tickers to their returns.
+    Calculates the percentage return for a batch of tickers over the requested yfinance period.
+    Request: { "tickers": [...], "period": "3mo" }  # period optional; defaults to 3mo
+    Response: { "AAPL": 12.34, "MSFT": 9.87, ... }
     """
     data = request.get_json()
     tickers = data.get("tickers")
@@ -818,21 +821,31 @@ def get_one_month_return_batch():
     if not tickers or not isinstance(tickers, list):
         return jsonify({"error": "Invalid or missing 'tickers' list in request body"}), 400
 
-    results = {}
+    # Default to 3mo; validate against known allowed YF periods when available
+    period = (data.get("period") or "3mo").lower()
+    try:
+        from helper_functions import ALLOWED_YF_PERIODS  # reuse canonical set if present
+        if period not in ALLOWED_YF_PERIODS:
+            return jsonify({"error": f"Invalid period '{period}'. Allowed: {sorted(list(ALLOWED_YF_PERIODS))}"}), 400
+    except Exception:
+        pass  # Soft-accept if constant import not available; yfinance will error downstream if invalid   
 
-    # Use a ThreadPoolExecutor for concurrent requests
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        calculator = ReturnCalculator(executor=executor)
-        # Map each ticker to the one_month_change function
-        future_to_ticker = {executor.submit(calculator.one_month_change, ticker): ticker for ticker in tickers}
-        for future in as_completed(future_to_ticker):
-            ticker = future_to_ticker[future]
-            try:
-                result = future.result()
-                results[ticker] = result
-            except Exception as e:
-                logging.error(f"Error fetching 1m return for {ticker}: {e}")
-                results[ticker] = None
+    results = compute_returns_for_period(tickers, period)
+    return jsonify(results), 200
+
+@app.route('/data/return/1m/batch', methods=['POST'])
+def get_one_month_return_batch():
+    """
+    Backward-compatible alias for 1-month returns. Use /data/return/batch with {"period":"1mo"}.
+    Accepts: { "tickers": [...] } and returns { "TICK": float_or_null, ... }
+    """
+    data = request.get_json()
+    tickers = data.get("tickers")
+
+    if not tickers or not isinstance(tickers, list):
+        return jsonify({"error": "Invalid or missing 'tickers' list in request body"}), 400
+
+    results = compute_returns_for_period(tickers, "1mo")
     
     return jsonify(results), 200
 
@@ -841,16 +854,18 @@ def get_52w_highs_quotes():
     """
     Returns the full quotes list for current 52-week highs (US region by default).
     Query params: region=US|... (optional)
-    Response: list of screener quotes (each contains symbol, industry if available, etc.)
+    Response: strictly validated against the ScreenerQuote contract.
     """
-    region = (request.args.get('region') or 'US').upper()
+    region = (request.args.get('region') or os.getenv('YF_REGION_DEFAULT') or 'US').upper()
     try:
         src = YahooSectorIndustrySource()  # keep imported for consistency
         highs_src = NewHighsScreenerSource(region=region)
         quotes = highs_src.get_all_quotes() 
         # returns a wrapper object like {"finance":{"result":[{"total": N, "quotes":[{...}, ...], "offset": 0, ...}], "error": null}}
         # include symbol, region, quoteType, industry, sector (sometimes), regularMarketPrice, marketCap, and 52-week fields
-        return jsonify(quotes), 200
+        validator = TypeAdapter(List[ScreenerQuote])
+        items = validator.validate_python(quotes)
+        return jsonify([it.model_dump(mode="json") for it in items]), 200
     except Exception as e:
         app.logger.error(f"/market/screener/52w_highs failed: {e}", exc_info=True)
         return jsonify({"error": "Failed to fetch 52w highs"}), 500

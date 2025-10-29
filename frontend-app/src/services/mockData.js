@@ -3,7 +3,7 @@
 /**
  * @typedef {object} LeadingStock
  * @property {string} ticker
- * @property {number} percent_change_1m
+ * @property {number} percent_change_3m
  */
 
 /**
@@ -43,21 +43,21 @@ export const mockMarketHealthResponse = {
       {
         industry: 'Semiconductors',
         stocks: [
-          { ticker: 'NVDA', percent_change_1m: 18.2 },
-          { ticker: 'AVGO', percent_change_1m: 12.5 },
+          { ticker: 'NVDA', percent_change_3m: 18.2 },
+          { ticker: 'AVGO', percent_change_3m: 12.5 },
         ],
       },
       {
         industry: 'Software - Infrastructure',
         stocks: [
-          { ticker: 'CRWD', percent_change_1m: 21.7 },
-          { ticker: 'NET', percent_change_1m: 16.3 },
+          { ticker: 'CRWD', percent_change_3m: 21.7 },
+          { ticker: 'NET', percent_change_3m: 16.3 },
         ],
       },
       {
         industry: 'Biotechnology',
         stocks: [
-            { ticker: 'VRTX', percent_change_1m: 9.8 },
+            { ticker: 'VRTX', percent_change_3m: 9.8 },
         ]
       }
     ],

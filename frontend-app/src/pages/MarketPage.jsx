@@ -36,6 +36,9 @@ const MarketPage = () => {
     );
   }
 
+  const marketOverview = data?.market_overview ?? null;
+  const marketLeaders = data?.leaders_by_industry ?? { leading_industries: [] };
+
   return (
     <VStack align="stretch" spacing={4} p={4}>
       <Heading size="lg">Market Health</Heading>
@@ -45,11 +48,11 @@ const MarketPage = () => {
           <Spinner />
         </Box>
       ) : (
-        <MarketHealthCard overview={data?.market_overview || null} />
+        <MarketHealthCard marketOverview={marketOverview} loading={loading} />
       )}
 
-      {!loading && data?.leaders_by_industry && (
-        <LeadingIndustriesTable rows={data?.leaders_by_industry?.leading_industries || []} />
+      {!loading && (
+        <LeadingIndustriesTable marketLeaders={marketLeaders} />
       )}
     </VStack>
   );

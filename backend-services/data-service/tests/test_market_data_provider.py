@@ -133,36 +133,22 @@ class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
         self.assertEqual(resp.json["error"], "Internal server error")
 
 class TestReturnBatchEndpoint(test_app.BaseDataServiceTest):
-    @patch('app.ReturnCalculator')
-    def test_return_1m_batch_success_mix(self, mock_calc_cls):
-        """POST /data/return/1m/batch: mixed results and type checks."""
-        # Arrange
+    # patch ReturnCalculator.percent_change at source
+    @patch('providers.yfin.market_data_provider.ReturnCalculator.percent_change')
+    def test_return_1m_batch_success_mix(self, mock_pc):
+        def pc_side_effect(sym, period='1mo'):
+            if sym == 'AAPL': return 3.21
+            if sym == 'MSFT': return None
+            if sym == 'BROKEN': raise RuntimeError('Provider failed')
+        mock_pc.side_effect = pc_side_effect
+
         payload = {"tickers": ["AAPL", "MSFT", "BROKEN"]}
-        mock_calc = MagicMock()
-        # Map return values: float for AAPL, None for MSFT, exception for BROKEN -> becomes None in response
-        def side_effect(symbol):
-            if symbol == "AAPL":
-                return 3.21
-            if symbol == "MSFT":
-                return None
-            if symbol == "BROKEN":
-                raise RuntimeError("Provider failed")
-
-        mock_calc.one_month_change.side_effect = side_effect
-        mock_calc_cls.return_value = mock_calc
-
-        # Act
         resp = self.client.post('/data/return/1m/batch', json=payload)
-
-        # Assert
         self.assertEqual(resp.status_code, 200)
-        data = resp.json
-        # Assert identifying data (keys) and logical outcomes (values)
-        self.assertSetEqual(set(data.keys()), {"AAPL", "MSFT", "BROKEN"})
-        self.assertIsInstance(data["AAPL"], float)
+        data = resp.get_json()
         self.assertEqual(data["AAPL"], 3.21)
-        self.assertIsNone(data["MSFT"])  # intentionally None is allowed
-        self.assertIsNone(data["BROKEN"])  # exception -> None at endpoint
+        self.assertIsNone(data["MSFT"])
+        self.assertIsNone(data["BROKEN"])
 
     def test_return_1m_batch_invalid_payload(self):
         """POST /data/return/1m/batch: invalid payloads return 400."""
@@ -177,20 +163,18 @@ class TestReturnBatchEndpoint(test_app.BaseDataServiceTest):
                 self.assertEqual(resp.status_code, 400)
                 self.assertIn("error", resp.json)
 
-    def test_return_1m_batch_security_long_strings(self):
+    @patch('helper_functions.compute_returns_for_period')
+    def test_return_1m_batch_security_long_strings(self, mock_compute):
         """POST /data/return/1m/batch: ensure long/malicious tickers do not break."""
         # Not validated by route, but should return cleanly with None values
         long_ticker = "A" * 1024
         payload = {"tickers": [long_ticker]}
-        with patch('app.ReturnCalculator') as mock_calc_cls:
-            mock_calc = MagicMock()
-            mock_calc.one_month_change.return_value = None
-            mock_calc_cls.return_value = mock_calc
+        mock_compute.return_value = {long_ticker: None}
 
-            resp = self.client.post('/data/return/1m/batch', json=payload)
-            self.assertEqual(resp.status_code, 200)
-            self.assertIn(long_ticker, resp.json)
-            self.assertIsNone(resp.json[long_ticker])
+        resp = self.client.post('/data/return/1m/batch', json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(long_ticker, resp.json)
+        self.assertIsNone(resp.json[long_ticker])
 
     def test_return_1m_batch_get_method_not_allowed(self):
         """GET /data/return/1m/batch: surfaces route-method discrepancy (only POST implemented)."""

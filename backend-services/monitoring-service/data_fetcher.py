@@ -1,4 +1,4 @@
-# Latest Add: backend-services/monitoring-service/data_fetcher.py
+# backend-services/monitoring-service/data_fetcher.py
 import os, logging, requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -41,15 +41,19 @@ def get_day_gainers_map(limit=200, timeout=60):
     data = r.json()
     return data if isinstance(data, dict) else {}
 
-def post_returns_1m_batch(tickers, timeout=30):
+def post_returns_batch(tickers, period="3mo", timeout=30):
     if not tickers:
         return {}
-    url = f"{DATA_SERVICE_URL}/data/return/1m/batch"
-    r = _session_singleton.post(url, json={"tickers": tickers}, timeout=timeout)
+    url = f"{DATA_SERVICE_URL}/data/return/batch"
+    payload = {"tickers": tickers, "period": period}
+    r = _session_singleton.post(url, json=payload, timeout=timeout)
     r.raise_for_status()
     data = r.json()
     # Expect dict: { "TICK": float_or_null, ... }
     return data if isinstance(data, dict) else {t: None for t in tickers}
+
+def post_returns_1m_batch(tickers, timeout=30):
+    return post_returns_batch(tickers, period="1mo", timeout=timeout)
 
 def get_52w_highs(timeout=60):
     # Screener returns a list of quote dicts
@@ -74,6 +78,11 @@ def get_price_single(ticker, source="yfinance", timeout=30):
     return r.json()
 
 def get_breadth(timeout=20):
+    """
+    Fetches breadth data from data-service.
+    Returns: dict with keys {newhighs, newlows, ratio} (data-service format)
+    Note: Caller must map to contract format {new_highs, new_lows, high_low_ratio}
+    """
     url = f"{DATA_SERVICE_URL}/market/breadth"
     r = _session_singleton.get(url, timeout=timeout)
     if r.status_code != 200:

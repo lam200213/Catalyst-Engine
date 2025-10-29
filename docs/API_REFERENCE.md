@@ -436,14 +436,14 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
           {
             "industry": "Semiconductors",
             "stocks": [
-              { "ticker": "NVDA", "percent_change_1m": 15.5 },
-              { "ticker": "AVGO", "percent_change_1m": 11.2 }
+              { "ticker": "NVDA", "percent_change_3m": 15.5 },
+              { "ticker": "AVGO", "percent_change_3m": 11.2 }
             ]
           },
           {
             "industry": "Software - Infrastructure",
             "stocks": [
-              { "ticker": "CRWD", "percent_change_1m": 12.1 }
+              { "ticker": "CRWD", "percent_change_3m": 12.1 }
             ]
           }
         ]
@@ -702,9 +702,33 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
       }
       ```
 
-- **POST `/data/return/1m/batch`**
+- **POST `/data/return/batch`**
   - Service: `data-service`
-  - Purpose: Calculates the 1-month percentage return for a batch of tickers. Used by the `monitoring-service` to efficiently gather performance data for ranking industries.
+  - Purpose: Batch percent returns over any yfinance-supported period. Used by the `monitoring-service` to efficiently gather performance data for ranking industries. 
+  - **Data Contract:** N/A (Custom Response: `Dict[str, float | None]`)
+  - **Request Body (JSON):**
+      - `tickers` (required): A list of stock ticker strings.
+      - `period` (optional): Allowed examples: "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max". If period is omitted, default is 3mo to emphasize medium-term leadership.
+  - **Example Usage (from another service)**:
+      ```python
+      import requests
+      data_service_url = "http://data-service:3001"
+      payload = {"tickers": ["NVDA", "AAPL", "FAKETICKER"], "period": period}
+      response = requests.post(f"{data_service_url}/data/return/batch", json=payload)
+      returns = response.json()
+      ```
+  - **Example Success Response**:
+      ```json
+      {
+        "NVDA": 15.5,
+        "AAPL": 8.2,
+        "FAKETICKER": null
+      }
+      ```
+
+- **POST `/data/return/1m/batch` (deprecated)**
+  - Service: `data-service`
+  - Purpose: Equivalent to POST /data/return/batch with period="1mo".
   - **Data Contract:** N/A (Custom Response: `Dict[str, float | None]`)
   - **Request Body**:
       ```json
@@ -815,8 +839,8 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
           {
             "industry": "Semiconductors",
             "stocks": [
-              { "ticker": "NVDA", "percent_change_1m": 15.5 },
-              { "ticker": "AVGO", "percent_change_1m": 11.2 }
+              { "ticker": "NVDA", "percent_change_3m": 15.5 },
+              { "ticker": "AVGO", "percent_change_3m": 11.2 }
             ]
           }
         ]
@@ -826,7 +850,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
 - **GET `/monitor/internal/health`**
   - Service: `monitoring-service`
   - Purpose: Returns a market health snapshot including market stage and correction depth. It retrieves breadth statistics (new highs/lows) by calling the `data-service`'s `/market/breadth` endpoint. This logic is consumed by the main `/monitor/market-health` endpoint.
-  - **Query Parameters**: None. The `tickers` parameter is no longer used as the calculation is centralized in the data-service.
+  - **Query Parameters**: None. 
   - **Data Contract**: Produces [`MarketOverview`](./DATA_CONTRACTS.md#10-markethealth).
   - **Example Usage (from within the monitoring service)**:
       ```python

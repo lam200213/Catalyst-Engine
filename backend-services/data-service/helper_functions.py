@@ -4,8 +4,13 @@ from pymongo import MongoClient, errors
 from datetime import datetime, timezone, date, timedelta
 import os
 from typing import List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydantic import ValidationError, TypeAdapter
-from shared.contracts import PriceDataItem, CoreFinancials
+from shared.contracts import (
+    PriceDataItem, 
+    CoreFinancials,
+)
+from providers.yfin.market_data_provider import ReturnCalculator
 import pandas_market_calendars as mcal
 
 # Use logger
@@ -526,3 +531,18 @@ def finalize_price_response(
         cache.set(cache_key, validated_new, timeout=ttl_seconds)
     return validated_new, 200
 
+# shared helper to compute returns for a period with pooling
+def compute_returns_for_period(tickers: List[str], period: str) -> dict:
+    results = {}
+    with ThreadPoolExecutor(max_workers=20) as executor_local:
+        calculator = ReturnCalculator(executor=executor_local)
+        # Map each ticker to the percent_change function
+        future_to_ticker = {executor_local.submit(calculator.percent_change, t, period): t for t in tickers}
+        for future in as_completed(future_to_ticker):
+            t = future_to_ticker[future]
+            try:
+                results[t] = future.result()
+            except Exception as e:
+                logging.error(f"Error fetching {period} return for {t}: {e}")
+                results[t] = None
+    return results

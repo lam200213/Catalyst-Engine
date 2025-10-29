@@ -212,7 +212,7 @@ class MarketOverview(BaseModel):
 class LeadingStock(BaseModel):
     """Represents a leading stock."""
     ticker: str
-    percent_change_1m: Optional[float] = Field(None, description="1-month percentage return")
+    percent_change_3m: Optional[float] = Field(None, description="3-month percentage return")
 
 class LeadingIndustry(BaseModel):
     """Represents a leading industry with its leading stocks, creates the nested structure"""

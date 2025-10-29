@@ -624,8 +624,8 @@ This is the comprehensive data payload for the frontend's Market Health page, pr
             "ticker": {
               "type": "string"
             },
-            "percent_change_1m": {
-              "description": "1-month percentage return",
+            "percent_change_3m": {
+              "description": "3-month percentage return",
               "type": [
                 "number",
                 "null"

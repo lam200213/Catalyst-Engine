@@ -18,7 +18,7 @@ const LeadingIndustriesTable = ({ marketLeaders }) => {
       return Object.entries(li).map(([industry, stocks]) => {
         const normalizedStocks = Array.isArray(stocks)
           ? (typeof stocks[0] === 'string'
-              ? stocks.map((t) => ({ ticker: t, percent_change_1m: null }))
+              ? stocks.map((t) => ({ ticker: t, percent_change_3m: null }))
               : stocks)
           : [];
         return { industry, stocks: normalizedStocks };
@@ -47,7 +47,7 @@ const LeadingIndustriesTable = ({ marketLeaders }) => {
           <Thead>
             <Tr>
               <Th>Industry</Th>
-              <Th>Leading Stocks (1-Month Return)</Th>
+              <Th>Leading Stocks (3-Month Return)</Th>
             </Tr>
           </Thead>
           <Tbody>
@@ -56,12 +56,12 @@ const LeadingIndustriesTable = ({ marketLeaders }) => {
                 <Td>{industry}</Td>
                 <Td>
                   <VStack align="start" spacing={1}>
-                    {(stocks || []).map(({ ticker, percent_change_1m }) => (
+                    {(stocks || []).map(({ ticker, percent_change_3m }) => (
                       <HStack key={ticker} spacing={2}>
                         <Tag>{ticker}</Tag>
                         <Text>
-                          {percent_change_1m !== null && percent_change_1m !== undefined
-                            ? `${percent_change_1m.toFixed(1)}%`
+                          {percent_change_3m !== null && percent_change_3m !== undefined
+                            ? `${percent_change_3m.toFixed(1)}%`
                             : '—'}
                         </Text>
                       </HStack>

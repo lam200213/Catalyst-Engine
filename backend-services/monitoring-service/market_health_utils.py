@@ -42,24 +42,32 @@ def _fetch_price_single(ticker: str) -> Optional[List[dict]]:
     logger.info(f"_fetch_price_single: {ticker} raw_len={len(data) if isinstance(data, list) else 'na'} type={type(data).__name__}")
     return data
 
-def _fetch_breadth() -> dict | None:
+def _fetch_breadth() -> Dict[str, Union[int, float]]:
     """
-    Calls data-service /market/breadth to retrieve {new_highs, new_lows, high_low_ratio}.
+    Fetches market breadth from data-service and maps keys to contract format.
+    data-service returns: {newhighs, newlows, ratio}
+    contract expects: {new_highs, new_lows, high_low_ratio}
     """
     try:
         data = get_breadth()
         t = type(data).__name__
         keys = list(data.keys()) if isinstance(data, dict) else None
         logger.info(f"_fetch_breadth: type={t} keys={keys}")
-        # olerate list responses by extracting first dict-like element
-        if isinstance(data, dict):
-            return data
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict) and any(k in item for k in ("new_highs", "new_lows", "high_low_ratio")):
-                    return item
-            return None
-        return None
+
+        if not data:
+            return {"new_highs": 0, "new_lows": 0, "high_low_ratio": 0.0}
+        
+        # Map data-service keys to contract keys
+        # Accept both data-service and already-contract-shaped keys
+        new_highs = data.get("new_highs")
+        new_lows = data.get("new_lows")
+        ratio = data.get("high_low_ratio")
+        return {
+            "new_highs": new_highs if isinstance(new_highs, (int, float)) else data.get("newhighs", 0),
+            "new_lows":  new_lows  if isinstance(new_lows,  (int, float)) else data.get("newlows", 0),
+            "high_low_ratio": ratio if isinstance(ratio, (int, float)) else data.get("ratio", 0.0),
+        }
+
     except requests.RequestException:
         return None
 

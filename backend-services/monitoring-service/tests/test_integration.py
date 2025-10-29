@@ -31,14 +31,6 @@ def _series(days=252, base=100.0, step=0.5):
         })
     return points
 
-
-def _ok_response(json_payload):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json = lambda: json_payload
-    return resp
-
-
 def test_health_ok():
     client = flask_app.test_client()
     resp = client.get("/health")
@@ -69,7 +61,7 @@ def test_get_monitor_market_health_dependency_mocks(mock_post_batch, mock_get_52
     assert mo["new_lows"] == 40
     assert mo["high_low_ratio"] == 3.0
 
-@patch("market_leaders.post_returns_1m_batch")
+@patch("market_leaders.post_returns_batch")
 @patch("market_leaders.get_day_gainers_map")
 @patch("market_leaders.get_sector_industry_map")
 @patch("market_leaders.get_52w_highs")
@@ -82,8 +74,10 @@ def test_get_internal_leaders_handles_failures(mock_52w, mock_sector, mock_day_g
     mock_returns.return_value = {}
 
     resp = client.get("/monitor/internal/leaders")
-    assert resp.status_code == 404
-    assert "No market leader data available" in resp.get_json()["message"]
+    # internal leaders now returns 200 with empty MarketLeaders on total failure
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data == {"leading_industries": []}
 
 @patch("market_health_utils.post_price_batch")
 @patch("market_health_utils.get_breadth")
@@ -113,19 +107,18 @@ def test_integration_internal_health_no_universe(mock_get_breadth, mock_post_bat
 @patch("market_leaders.get_52w_highs")
 def test_integration_internal_leaders_top_5_selection(mock_52w):
     """
-    Integration-test /monitor/internal/leaders: verify top 5 industries selection
-    by quote industry counts with ties and “Unclassified” handling.
+    Verify top 5 industries are selected (breadth) and emitted via MarketLeaders.
     """
     client = flask_app.test_client()
 
     mock_quotes = [
-        {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}, # 4
-        {"industry": "Finance"}, {"industry": "Finance"}, {"industry": "Finance"},             # 3
-        {"industry": "Retail"}, {"industry": "Retail"},                                       # 2
-        {"industry": "Health"}, {"industry": "Health"},                                       # 2 (tie)
-        {"industry": None}, # Unclassified                                                    # 1
-        {"industry": "Energy"},                                                               # 1 (tie)
-        {"industry": "Industrial"},                                                           # 1 (tie)
+        {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"},  # 4
+        {"industry": "Finance"}, {"industry": "Finance"}, {"industry": "Finance"},               # 3
+        {"industry": "Retail"}, {"industry": "Retail"},                                         # 2
+        {"industry": "Health"}, {"industry": "Health"},                                         # 2
+        {"industry": None},  # Unclassified: 1
+        {"industry": "Energy"},                                                                 # 1
+        {"industry": "Industrial"},                                                             # 1
     ]
     mock_52w.return_value = mock_quotes
 
@@ -135,16 +128,12 @@ def test_integration_internal_leaders_top_5_selection(mock_52w):
     
     # The contract is {"leading_industries": [...]}
     industries = data["leading_industries"]
+    # Check names only, since stocks are returned not breadth_count
     assert len(industries) == 5
-
-    # Verify the top 5 industries are correct, respecting counts
-    counts = {item['industry']: item['breadth_count'] for item in industries}
-    assert counts["Tech"] == 4
-    assert counts["Finance"] == 3
-    assert counts["Retail"] == 2
-    assert counts["Health"] == 2
-    
-    # The last spot is a tie between Unclassified, Energy, Industrial. One of them should be there.
-    last_industry = industries[4]['industry']
-    assert last_industry in ["Unclassified", "Energy", "Industrial"]
-    assert counts[last_industry] == 1
+    names = [item["industry"] for item in industries]
+    assert "Tech" in names
+    assert "Finance" in names
+    assert "Retail" in names
+    assert "Health" in names
+    # 5th is one of the ties
+    assert any(n in names for n in ["Unclassified", "Energy", "Industrial"])
