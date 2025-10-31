@@ -2,10 +2,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useStockData } from './useStockData';
-import * as api from '../services/api';
+import * as api from '../services/screeningApi';
 
 // Mock the entire api module
-vi.mock('../services/api');
+vi.mock('../services/screeningApi');
 
 describe('hooks/useStockData', () => {
 

@@ -219,6 +219,27 @@ class TestHelperFunctionValidation:
         assert isinstance(result, dict)
         assert result == {"leading_industries": []}
 
+    @patch("market_leaders.post_returns_batch", return_value={"AAPL": 0.10, "MSFT": 0.08})
+    @patch("market_leaders.get_sector_industry_map", return_value={"Tech": ["AAPL", "MSFT"]})
+    def test_service_returns_list_on_success(self, mock_sector, mock_returns):
+        svc = MarketLeadersService(IndustryRanker())
+        out = svc.get_market_leaders()
+        assert isinstance(out, list)
+
+    @patch("market_leaders.get_52w_highs", return_value=[])
+    @patch("market_leaders.get_day_gainers_map", return_value={})
+    @patch("market_leaders.get_sector_industry_map", return_value={})
+    def test_service_returns_empty_list_on_total_failure(self, mock_sector, mock_day_gainers, mock_highs):
+        svc = MarketLeadersService(IndustryRanker())
+        out = svc.get_market_leaders()
+        assert out == []  # current implementation sentinel
+
+    @patch("market_leaders.MarketLeadersService.get_market_leaders", return_value={})
+    def test_wrapper_normalizes_to_contract_on_failure(self, mock_svc):
+        result = get_market_leaders()
+        assert isinstance(result, dict)
+        assert "leading_industries" in result
+        assert result["leading_industries"] == []
 
 class TestIntegrationWithFlaskEndpoint:
     """

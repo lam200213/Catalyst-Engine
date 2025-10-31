@@ -1,6 +1,6 @@
 // frontend-app/src/hooks/useStockData.js
 import { useState } from 'react';
-import { fetchStockData } from '../services/api';
+import { fetchStockData } from '../services/screeningApi';
 
 export const useStockData = (initialTicker = 'AAPL') => {
     const [ticker, setTicker] = useState(initialTicker);

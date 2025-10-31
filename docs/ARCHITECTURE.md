@@ -26,14 +26,16 @@
 │   │   │   └── yfin/
 │   │   │       ├── __init__.py
 │   │   │       ├── yahoo_client.py
+│   │   │       └── webshare_proxies.py
 │   │   │       ├── price_provider.py
 │   │   │       └── financials_provider.py
 │   │   │       └── market_data__provider.py
 │   │   ├── tests/
 │   │   │   ├── __init__.py
-│   │   │   ├── test_app.py
+│   │   │   ├── test_app.py 
+│   │   │   ├── test_integration.py
 │   │   │   ├── test_finnhub_provider.py
-│   │   │   └── test_marketaux_provider.py
+│   │   │   ├── test_marketaux_provider.py
 │   │   │   └── test_market_data_provider.py
 │   │   ├── app.py
 │   │   ├── helper_functions.py
@@ -61,10 +63,14 @@
 │   │   │   ├── test_integration.py
 │   │   │   ├── test_unit.py
 │   │   │   ├── test_market_leaders_logic.py
+│   │   │   ├── test_api_contract_compliance.py
+│   │   │   ├── test_market_leaders_contract_validation.py
+│   │   │   ├── test_new_highs_screener_source.py
 │   │   ├── app.py
 │   │   ├── market_health_utils.py
 │   │   ├── market_leaders.py
 │   │   ├── helper_functions.py
+│   │   ├── data_fetcher.py
 │   │   ├── Dockerfile
 │   │   ├── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria

@@ -4,8 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-10-30
-Debugged Screener 52-week highs returns many quotes with industry and sector set to null, in market_provider, data-service; Introduced refreshment of proxies at runtime inside data-service, by auto-pulling from Webshare on a schedule and merging them with any manually provided YAHOO_FINANCE_PROXIES; Runnable /market page.
+2025-10-31
+Frontend UI refinement: Adopt an app-wide query cache using TanStack Query, Tune refetch behaviors globally and per-query, Define one query hook per resource; Deleted unused file, rename file to avoid confusion; Test cases updated.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

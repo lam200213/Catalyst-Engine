@@ -1,7 +1,11 @@
-// frontend-app/src/services/api.js
+// frontend-app/src/services/screeningApi.js
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+});
 
 /**
  * Fetches both screening and analysis data for a given ticker.
@@ -25,3 +29,26 @@ export const fetchStockData = async (ticker) => {
         throw new Error(errorMessage);
     }
 };
+
+/**
+ * Fetches screening result for a single ticker.
+ * @param {string} ticker - The stock ticker symbol.
+ * @returns {Promise} Screening result.
+ */
+export const getScreeningResult = (ticker) => apiClient.get(`/screen/${ticker}`);
+
+/**
+ * Fetches VCP analysis for a single ticker.
+ * @param {string} ticker - The stock ticker symbol.
+ * @param {string} [mode='full'] - 'full' or 'fast' mode.
+ * @returns {Promise} VCP analysis result.
+ */
+export const getVCPAnalysis = (ticker, mode = 'full') => 
+  apiClient.get(`/analyze/${ticker}`, { params: { mode } });
+
+/**
+ * Fetches leadership profile for a single ticker.
+ * @param {string} ticker - The stock ticker symbol.
+ * @returns {Promise} Leadership profile result.
+ */
+export const getLeadershipProfile = (ticker) => apiClient.get(`/leadership/${ticker}`);
