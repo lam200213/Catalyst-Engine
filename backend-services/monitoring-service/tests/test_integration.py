@@ -61,6 +61,11 @@ def test_get_monitor_market_health_dependency_mocks(mock_post_batch, mock_get_52
     assert mo["new_lows"] == 40
     assert mo["high_low_ratio"] == 3.0
 
+    # mirroring the API compliance test’s structure requirements
+    assert "leaders_by_industry" in data
+    assert "leading_industries" in data["leaders_by_industry"]
+    assert isinstance(data["leaders_by_industry"]["leading_industries"], list)
+
 @patch("market_leaders.post_returns_batch")
 @patch("market_leaders.get_day_gainers_map")
 @patch("market_leaders.get_sector_industry_map")

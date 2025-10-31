@@ -25,18 +25,13 @@ services:
     container_name: data-service
     ports:
       - "3001:3001"
+    env_file:
+      - .env
     environment:
       MONGO_URI: ${MONGO_URI}
       CACHE_REDIS_URL: redis://redis:6379/0
-      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
-      MARKETAUX_API_KEY: ${MARKETAUX_API_KEY}
       PORT: 3001
-      YAHOO_FINANCE_PROXIES: ${YAHOO_FINANCE_PROXIES}
-      YF_POOL_SIZE: ${YF_POOL_SIZE}
-      YF_REQUEST_TIMEOUT: ${YF_REQUEST_TIMEOUT}
-      YF_CRUMB_TTL_SECONDS: ${YF_CRUMB_TTL_SECONDS}
-      YF_SCREENER_PAGE_SIZE: ${YF_SCREENER_PAGE_SIZE}
-      LOG_LEVEL: INFO
+      LOG_LEVEL: ${LOG_LEVEL}
     # Add a DNS configuration for network stability
     dns:
       - 1.1.1.1  # Cloudflare DNS

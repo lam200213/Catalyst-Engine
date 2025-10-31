@@ -80,7 +80,7 @@ def test_build_index_dfs_length_thresholds():
     dfs_251 = mhu._build_index_dfs(idx_data_251)
     dfs_252 = mhu._build_index_dfs(idx_data_252)
 
-    # Below threshold -> last high_52_week NaN, sma_200 NaN
+    # Below threshold -> last high_52_week NaN; 200-day SMA is defined with 251 points and should not be NaN.
     last_251 = dfs_251["^GSPC"].iloc[-2]
     assert pd.isna(last_251["high_52_week"])
 # A 200-day SMA is valid with 251 data points, so it should not be NaN.
@@ -142,7 +142,7 @@ def test_get_market_health_missing_index_raises(mock_batch, mock_single):
     # Mock the fallback to also return nothing, preventing a real network call
     mock_single.return_value = None
     with pytest.raises(RuntimeError):
-        mhu.get_market_health(universe=None)
+        mhu.get_market_health()
 
 def test_market_overview_market_stage_literal_enforced():
     # Valid should pass

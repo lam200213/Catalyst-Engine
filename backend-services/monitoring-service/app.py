@@ -173,5 +173,5 @@ def health_check():
 
 if __name__ == '__main__':
     setup_logging(app)
-    threading.Thread(target=_prewarm_market_health, daemon=True).start()  # Latest Add
+    threading.Thread(target=_prewarm_market_health, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT)

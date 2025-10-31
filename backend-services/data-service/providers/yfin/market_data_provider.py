@@ -307,20 +307,40 @@ class NewHighsScreenerSource(SectorIndustrySource):
         """Try predefined screener with resolver fallback."""
         try:
             field = "price_signal_fifty_two_wk_high.datetime"
+            # Keep the human-readable string for backward-compat, but also build arrays
+            include_fields = (
+                "symbol,shortName,marketCap,regularMarketPrice,"
+                "sector,industry,fiftyTwoWeekHigh,fiftyTwoWeekHighChangePercent,quoteType"
+            )
+            fields_list = [
+                "symbol","shortName","marketCap","regularMarketPrice",
+                "sector","industry","fiftyTwoWeekHigh","fiftyTwoWeekHighChangePercent","quoteType"
+            ]
+            sector_filter_enabled = os.getenv("YF_FORCE_SECTOR_FILTER", "1") in ("1", "true", "TRUE")
+            us_sectors = [
+                "Basic Materials","Consumer Cyclical","Financial Services","Real Estate",
+                "Consumer Defensive","Healthcare","Utilities","Communication Services",
+                "Energy","Industrials","Technology"
+            ]
+            query_operands = [
+                {"operator": "eq", "operands": ["region", self.region.lower()]},
+                {"operator": "gte", "operands": [field, "now-1w/d"]},
+            ]
+            # optionally force sector inclusion to encourage industry hydration upstream
+            if sector_filter_enabled:
+                sector_eqs = [{"operator": "eq", "operands": ["sector", s]} for s in us_sectors]
+                query_operands.append({"operator": "or", "operands": sector_eqs})
+
             payload = {
                 "size": size,
                 "offset": offset,
                 "sortType": "DESC",
                 "sortField": "ticker",
-                "includeFields": [],
+                "includeFields": include_fields, 
+                "fields": fields_list,           # explicit array
+                "quoteFields": fields_list,      # belt-and-suspenders
                 "topOperator": "AND",
-                "query": {
-                    "operator": "and",
-                    "operands": [
-                        {"operator": "eq", "operands": ["region", self.region.lower()]},
-                        {"operator": "gte", "operands": [field, "now-1w/d"]},
-                    ],
-                },
+                "query": {"operator": "and", "operands": query_operands},
                 "quoteType": "EQUITY",
             }
             url = "https://query1.finance.yahoo.com/v1/finance/screener"
@@ -333,6 +353,52 @@ class NewHighsScreenerSource(SectorIndustrySource):
         except Exception:
             return None
 
+    def _enrich_industry_sector(self, quotes: List[dict]) -> List[dict]:
+        """
+        Enrich quotes with industry/sector from batch quote API if missing.
+        Uses v7/finance/quote which returns sector/industry in a single call.
+        """
+        if not os.getenv("YF_ENRICH_CLASSIFICATION", "1") in ("1", "true", "TRUE"):
+            return quotes
+        
+        # Collect symbols needing enrichment
+        to_enrich = [q["symbol"] for q in quotes if not q.get("industry") and not q.get("sector")]
+        if not to_enrich:
+            return quotes
+        
+        # Batch fetch via v7/finance/quote (accepts comma-separated symbols)
+        profile_map = {}
+        batch_size = 100  # Yahoo v7 quote supports ~100 symbols per request
+        
+        for i in range(0, len(to_enrich), batch_size):
+            batch = to_enrich[i:i+batch_size]
+            try:
+                url = "https://query1.finance.yahoo.com/v7/finance/quote"
+                params = {"symbols": ",".join(batch), "fields": "symbol,sector,industry"}
+                resp = yahoo_client.execute_request(url, params=params)
+                
+                results = (resp or {}).get("quoteResponse", {}).get("result", [])
+                for item in results:
+                    sym = item.get("symbol")
+                    ind = item.get("industry")
+                    sec = item.get("sector")
+                    if sym and (ind or sec):
+                        profile_map[sym] = {"industry": ind, "sector": sec}
+            except Exception as e:
+                logger.warning(f"Failed to enrich batch {i}-{i+len(batch)}: {e}")
+                continue
+        
+        # Merge back
+        for q in quotes:
+            if q["symbol"] in profile_map:
+                if not q.get("industry"):
+                    q["industry"] = profile_map[q["symbol"]].get("industry")
+                if not q.get("sector"):
+                    q["sector"] = profile_map[q["symbol"]].get("sector")
+        
+        logger.info(f"[52w highs] Enriched {len(profile_map)} symbols with industry/sector")
+        return quotes
+    
     def get_all_quotes(self, max_pages: int = 40) -> list[dict]:
         """Returns the full quotes list for 52w highs, paginating until complete."""
         quotes = []
@@ -367,7 +433,7 @@ class NewHighsScreenerSource(SectorIndustrySource):
             
             if total is not None and len(quotes) >= int(total):
                 break
-        
+        quotes = self._enrich_industry_sector(quotes)
         logger.info(f"[52w highs] Fetched {len(quotes)} quotes across {pages} pages")
         return quotes
 

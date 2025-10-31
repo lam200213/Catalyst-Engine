@@ -72,6 +72,7 @@ def setup_logging(app):
         "providers.yfin.price_provider",
         "providers.yfin.financials_provider",
         "providers.yfin.market_data_provider",
+        "providers.yfin.webshare_proxies",
         "helper_functions",
     ]
     for name in module_names:

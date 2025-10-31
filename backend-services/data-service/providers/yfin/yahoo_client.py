@@ -6,6 +6,9 @@ from curl_cffi import requests as cffi_requests
 from curl_cffi.requests import errors as cffi_errors
 import os, time, json, random, threading
 from typing import Optional, Dict, Any, List, Tuple
+import time
+
+from . import webshare_proxies # Use relative import
 
 # Get a child logger
 logger = logging.getLogger(__name__)
@@ -39,11 +42,20 @@ SUPPORTED_IMPERSONATE_PROFILES = [
 ]
 
 # Proxies are now loaded from an environment variable for better configuration management.
-PROXIES = [p.strip() for p in os.getenv("YAHOO_FINANCE_PROXIES", "").split(',') if p.strip()]
-if PROXIES:
-    logger.info(f"Successfully loaded {len(PROXIES)} proxies from environment.")
+PROXIES: list[str] = webshare_proxies.load_manual_and_file_proxies()
+_env_has_ws = bool(os.getenv("WEBSHARE_PROXY_DOWNLOAD_URL") or os.getenv("WEBSHARE_API_KEY"))
+webshare_PROXIES: list[str] = webshare_proxies.get_proxy_snapshot()
+if not PROXIES and not webshare_PROXIES and _env_has_ws:
+    for _ in range(10):  # ~1s total
+        time.sleep(0.2)
+        webshare_PROXIES = webshare_proxies.get_proxy_snapshot()
+        if webshare_PROXIES:
+            break
+count = len(PROXIES)+len(webshare_PROXIES)
+if count>0:
+    logger.info(f"Successfully loaded {count} proxies from environment.")
 else:
-    logger.warning("YAHOO_FINANCE_PROXIES environment variable not set or is empty. No proxies will be used.")
+    logger.warning("No proxies loaded from env/file. Using direct IP unless proxies are configured.")
 
 def _should_rotate(status_code: int, body_text: str) -> bool:
     if status_code in (401, 403, 429):
@@ -69,7 +81,8 @@ def _get_random_proxy() -> dict | None:
     Returns a random proxy from the configured list if available or None to use the local IP.
     This ensures that even with proxies configured, some requests will use the direct connection.
     """
-    proxy_choices = PROXIES + [None]
+    proxy_list = webshare_proxies.get_proxy_snapshot()
+    proxy_choices = proxy_list + PROXIES + [None]
     chosen_proxy = random.choice(proxy_choices)
     if chosen_proxy is None:
         # logger.info("Using local IP address (no proxy for this request).")
@@ -153,6 +166,13 @@ def init_pool(size: int = _POOL_SIZE):
         if _POOL_READY and _ID_POOL:
             return
         try:
+            # Wait briefly for proxies if WS configured but not ready
+            if _env_has_ws and not (webshare_proxies.get_proxy_snapshot() or PROXIES):
+                start = time.time()
+                while time.time() - start < 2.0:
+                    if webshare_proxies.get_proxy_snapshot():
+                        break
+                    time.sleep(0.1)
             # build a fresh local pool first
             local_pool = [_Identity() for _ in range(max(1, size))]
             # opportunistic crumb prime; failures are tolerated

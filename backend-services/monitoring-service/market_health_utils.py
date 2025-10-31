@@ -196,7 +196,7 @@ def _compute_correction_depth(spx_df: pd.DataFrame) -> float:
         return 0.0
     return round((float(close) - float(high_52)) / float(high_52) * 100.0, 2)
 
-def get_market_health(universe: Optional[List[str]] = None) -> dict:
+def get_market_health() -> dict:
     """
     Orchestrate the market health snapshot using the app's own HTTP endpoints:
     - Fetch index data via POST /price/batch

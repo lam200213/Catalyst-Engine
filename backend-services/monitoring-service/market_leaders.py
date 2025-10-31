@@ -77,13 +77,30 @@ class IndustryRanker:
 def _group_by_industry(quotes: List[dict]) -> Dict[str, List[dict]]:
     buckets: Dict[str, List[dict]] = defaultdict(list)
     for q in quotes or []:
-        ind = (q.get("industry") or "").strip() or "Unclassified"
+        ind = (q.get("industry") or "").strip()
+        if not ind:
+            # fallback to sector to avoid "Unclassified"
+            ind = (q.get("sector") or "").strip()
+        if not ind:
+            ind = "Unclassified"
         buckets[ind].append(q)
     return buckets
 
 def _top_industries_by_breadth(quotes: List[dict], k: int = 5) -> List[str]:
-    counts = Counter(((q.get("industry") or "").strip() or "Unclassified") for q in (quotes or []))
-    return [ind for ind, _ in counts.most_common(k)]
+    """
+    Select top k industries by breadth (quote count), breaking ties by 
+    total marketCap of quotes in that industry, then by industry name.
+    """
+    stats = defaultdict(lambda: {"count": 0, "mcap": 0.0})
+    
+    for q in quotes:
+        ind = (q.get("industry") or "").strip() or "Unclassified"
+        stats[ind]["count"] += 1
+        stats[ind]["mcap"] += q.get("marketCap") or 0.0
+    
+    # Primary: count desc, Secondary: mcap desc, Tertiary: name asc
+    ranked = sorted(stats.items(), key=lambda x: (-x[1]["count"], -x[1]["mcap"], x[0]))
+    return [ind for ind, _ in ranked[:k]]
 
 def _select_symbols(buckets: Dict[str, List[dict]], inds: List[str], per_industry: int) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
@@ -106,6 +123,8 @@ def _leaders_from_52w(per_industry: int = 3) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for ind in top_inds:
         stocks = [{"ticker": s, "percent_change_3m": returns.get(s)} for s in syms_map.get(ind, [])]
+        # Sort by return descending, treating None as -inf
+        stocks.sort(key=lambda x: x["percent_change_3m"] if x["percent_change_3m"] is not None else float('-inf'), reverse=True)
         out.append({"industry": ind, "stocks": stocks})
     return out
 
@@ -156,7 +175,6 @@ def _industry_counts_from_quotes(quotes: List[dict]) -> List[Dict[str, Any]]:
     """
     Collapses quotes into industry counts and returns top 5 industries by breadth.
     """
-    from collections import Counter, defaultdict
     # Normalize industry
     def norm_ind(q):
         ind = (q.get("industry") or "").strip()

@@ -3,7 +3,6 @@ import yfinance as yf
 import datetime as dt
 import pandas as pd
 import time
-from typing import Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client, price_provider # Use relative import
 from helper_functions import is_ticker_delisted, mark_ticker_as_delisted

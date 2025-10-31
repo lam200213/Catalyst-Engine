@@ -57,7 +57,7 @@ def test_market_leaders_fallback_when_primary_fails(mock_sector_map, mock_day_ga
 @patch("market_leaders.post_returns_batch")
 @patch("market_leaders.get_day_gainers_map")
 @patch("market_leaders.get_sector_industry_map")
-def test_market_leaders_all_sources_fail_returns_empty_dict(mock_sector_map, mock_day_gainers, mock_returns, mock_52w):
+def test_market_leaders_all_sources_fail_returns_empty_list(mock_sector_map, mock_day_gainers, mock_returns, mock_52w):
     mock_sector_map.return_value = {}
     mock_day_gainers.return_value = {}
     service = MarketLeadersService(IndustryRanker())
