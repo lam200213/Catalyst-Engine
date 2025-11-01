@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-11-1
-Configured ESLint to catch unreachable code and undefined variables; Enabled strict mode in Vite config to catch module errors early; Minor bugs fixed
+Minor bugs fixed; Refine the structure of frontend
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

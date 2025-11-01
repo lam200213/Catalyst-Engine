@@ -1,6 +1,6 @@
 // frontend-app/src/components/TickerForm.test.jsx
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { renderWithProviders } from '../test-utils'; // Optional but consistent
@@ -13,7 +13,6 @@ describe('components/TickerForm', () => {
         // Arrange: Create a mock function for the submission handler
         const handleSubmit = vi.fn((e) => e.preventDefault());
         const setTicker = vi.fn();
-        const user = userEvent.setup();
 
         renderWithProviders(
         <TickerForm ticker="AAPL" setTicker={setTicker} handleSubmit={handleSubmit} loading={false} />

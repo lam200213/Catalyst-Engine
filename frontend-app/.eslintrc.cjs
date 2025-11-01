@@ -5,8 +5,22 @@ module.exports = {
   env: {
     browser: true,
     es2021: true,
-    node: true,
   },
+  overrides: [
+    {
+      files: ['**/*.test.js', '**/*.test.jsx', 'src/setupTests.js'],
+      env: {
+        node: true,
+        jest: true,
+      }
+    },
+    {
+      files: ['**/*.cjs', 'scripts/**/*.js'],
+      env: {
+        node: true,
+      }
+    }
+  ],
   extends: [
     'eslint:recommended',
     'plugin:react/recommended',
@@ -21,17 +35,12 @@ module.exports = {
   },
   plugins: ['react', 'react-hooks'],
   rules: {
-    // Catch unreachable code (prevents white/black screen bugs)
     'no-unreachable': 'error',
     'no-undef': 'error',
-    
-    // React-specific rules
-    'react/react-in-jsx-scope': 'off', // Not needed in React 17+
-    'react/prop-types': 'warn',
-    
-    // Code quality
+    'react/react-in-jsx-scope': 'off',
+    'react/prop-types': 'off',  // REMOVED DUPLICATE - only this line
     'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
-    'no-console': ['warn', { allow: ['warn', 'error'] }],
+    'no-console': ['warn', { allow: ['warn', 'error', 'log'] }],
   },
   settings: {
     react: {

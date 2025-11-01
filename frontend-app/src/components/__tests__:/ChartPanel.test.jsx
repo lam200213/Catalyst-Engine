@@ -10,7 +10,7 @@ vi.mock('lightweight-charts', () => ({
   createChart: vi.fn(() => ({
     addCandlestickSeries: vi.fn(() => mockCandlestick),
     addHistogramSeries: vi.fn(() => mockVolumeSeries),
-    addLineSeries: vi.fn((options) => {
+    addLineSeries: vi.fn((_options) => {
       // Return different mock based on call order/options
       if (currentLineSeriesCallCount === 0) {
         currentLineSeriesCallCount++;

@@ -93,9 +93,13 @@
 │   │   └── verify-structure.cjs
 │   ├── src/
 │   │   ├── components/      # Reusable React components
+│   │   │   └── __tests__/
 │   │   ├── hooks/           # Custom React hooks for state logic
+│   │   │   └── __tests__/
 │   │   ├── pages/           # Top-level page components
+│   │   │   └── __tests__/
 │   │   ├── services/        # API communication logic and mockdata
+│   │   │   └── __tests__/
 │   │   ├── App.jsx          # Main application component with routing
 │   │   ├── App.test.jsx
 │   │   ├── main.jsx         # Application entry point
