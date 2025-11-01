@@ -83,7 +83,7 @@ def test_build_index_dfs_length_thresholds():
     # Below threshold -> last high_52_week NaN; 200-day SMA is defined with 251 points and should not be NaN.
     last_251 = dfs_251["^GSPC"].iloc[-2]
     assert pd.isna(last_251["high_52_week"])
-# A 200-day SMA is valid with 251 data points, so it should not be NaN.
+    # A 200-day SMA is valid with 251 data points, so it should not be NaN.
     assert pd.notna(last_251["sma_200"])
 
     # At threshold -> high_52_week not NaN (but sma_200 still depends on 200+ points and should be defined)
@@ -236,3 +236,55 @@ def test_build_index_payload_iloc_minus2_numeric():
         assert (p.get("sma_200") is None) or isinstance(p.get("sma_200"), (int, float))
         assert (p.get("high_52_week") is None) or isinstance(p.get("high_52_week"), (int, float))
         assert (p.get("low_52_week") is None) or isinstance(p.get("low_52_week"), (int, float))
+
+def test_leaders_from_52w_populates_stock_count(monkeypatch):
+    """
+    Verify that _leaders_from_52w correctly populates stock_count
+    for each industry, matching the full count of stocks in that industry
+    from the 52-week highs screener.
+    """
+    from market_leaders import _leaders_from_52w
+    
+    # Mock get_52w_highs to return controlled data
+    mock_quotes = [
+        {"symbol": "NVDA", "industry": "Semiconductors", "marketCap": 1e12},
+        {"symbol": "AVGO", "industry": "Semiconductors", "marketCap": 8e11},
+        {"symbol": "MU", "industry": "Semiconductors", "marketCap": 5e11},
+        {"symbol": "AMD", "industry": "Semiconductors", "marketCap": 3e11},
+        {"symbol": "ASML", "industry": "Semiconductors", "marketCap": 2e11},
+        {"symbol": "JPM", "industry": "Banks—Regional", "marketCap": 4e11},
+        {"symbol": "BAC", "industry": "Banks—Regional", "marketCap": 3e11},
+        {"symbol": "WFC", "industry": "Banks—Regional", "marketCap": 2e11},
+    ]
+    
+    # Mock post_returns_1m_batch to return dummy returns
+    mock_returns = {
+        "NVDA": 15.5, "AVGO": 12.3, "MU": 8.1, "AMD": 5.2, "ASML": 3.4,
+        "JPM": 4.2, "BAC": 3.1, "WFC": 2.5
+    }
+    
+    monkeypatch.setattr("market_leaders.get_52w_highs", lambda: mock_quotes)
+    monkeypatch.setattr("market_leaders.post_returns_1m_batch", lambda syms: mock_returns)
+    
+    # Call the function with per_industry=3 (display top 3 stocks per industry)
+    result = _leaders_from_52w(per_industry=3)
+    
+    # Assert structure
+    assert isinstance(result, list)
+    assert len(result) == 2  # Two industries: Semiconductors, Banks—Regional
+    
+    # Check Semiconductors industry
+    semi_ind = next((x for x in result if x["industry"] == "Semiconductors"), None)
+    assert semi_ind is not None
+    assert semi_ind["stock_count"] == 5  # 5 total stocks in Semiconductors from mock data
+    assert len(semi_ind["stocks"]) == 3  # But only top 3 displayed
+    
+    # Check Banks—Regional industry
+    banks_ind = next((x for x in result if x["industry"] == "Banks—Regional"), None)
+    assert banks_ind is not None
+    assert banks_ind["stock_count"] == 3  # 3 total stocks in Banks—Regional
+    assert len(banks_ind["stocks"]) == 3  # All 3 displayed since count <= per_industry
+    
+    # Verify stocks are sorted by return descending
+    assert semi_ind["stocks"][0]["ticker"] == "NVDA"  # Highest return
+    assert semi_ind["stocks"][-1]["ticker"] == "MU"  # Lowest return among top 3

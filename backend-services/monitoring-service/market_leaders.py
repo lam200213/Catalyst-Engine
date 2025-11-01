@@ -70,6 +70,7 @@ class IndustryRanker:
             top = entries[:top_stocks_per_industry]
             ranked.append({
                 "industry": ind,
+                "stock_count": len(items),
                 "stocks": [{"ticker": t, "percent_change_3m": r} for (t, r) in top]
             })
         return ranked
@@ -125,7 +126,9 @@ def _leaders_from_52w(per_industry: int = 3) -> List[Dict[str, Any]]:
         stocks = [{"ticker": s, "percent_change_3m": returns.get(s)} for s in syms_map.get(ind, [])]
         # Sort by return descending, treating None as -inf
         stocks.sort(key=lambda x: x["percent_change_3m"] if x["percent_change_3m"] is not None else float('-inf'), reverse=True)
-        out.append({"industry": ind, "stocks": stocks})
+        # Populate stock_count from the full bucket, not just the displayed stocks
+        full_count = len(buckets.get(ind, []))
+        out.append({"industry": ind, "stock_count": full_count, "stocks": stocks})
     return out
 
 class MarketLeadersService:

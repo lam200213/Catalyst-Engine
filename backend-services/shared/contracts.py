@@ -217,6 +217,7 @@ class LeadingStock(BaseModel):
 class LeadingIndustry(BaseModel):
     """Represents a leading industry with its leading stocks, creates the nested structure"""
     industry: str
+    stock_count: int  # Number of stocks contributing to this industry's leadership
     stocks: List[LeadingStock]
 
 class MarketLeaders(BaseModel):

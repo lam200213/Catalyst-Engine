@@ -794,6 +794,174 @@ class TestMarketBreadthIntegration(BaseIntegrationTest):
         self.assertEqual(data['newlows'], 50)
         # Ratio calculation: 0 / max(1, 50) = 0.0
         self.assertEqual(data['ratio'], 0.0)
+
+# =====================================================================
+# ==                Market Health Integration Tests                  ==
+# =====================================================================
+
+# Integration test for stock_count field in market-health response
+def test_market_health_endpoint_includes_stock_count(client, monkeypatch):
+    """
+    Integration test: Mock the data-service /market/screener/52whighs response
+    and assert that GET /monitor/market-health correctly includes the stock_count
+    field for each leading industry.
+    """
+    import json
+    from unittest.mock import MagicMock
+    
+    # Mock the 52-week highs screener response from data-service
+    mock_52w_response = [
+        {
+            "symbol": "NVDA",
+            "industry": "Semiconductors",
+            "sector": "Technology",
+            "regularMarketPrice": 450.0,
+            "fiftyTwoWeekHigh": 455.0,
+            "fiftyTwoWeekHighChangePercent": -1.1,
+            "marketCap": 1.1e12,
+            "shortName": "NVIDIA Corporation"
+        },
+        {
+            "symbol": "AVGO",
+            "industry": "Semiconductors",
+            "sector": "Technology",
+            "regularMarketPrice": 850.0,
+            "fiftyTwoWeekHigh": 860.0,
+            "fiftyTwoWeekHighChangePercent": -1.16,
+            "marketCap": 8e11,
+            "shortName": "Broadcom Inc."
+        },
+        {
+            "symbol": "MU",
+            "industry": "Semiconductors",
+            "sector": "Technology",
+            "regularMarketPrice": 90.0,
+            "fiftyTwoWeekHigh": 92.0,
+            "fiftyTwoWeekHighChangePercent": -2.17,
+            "marketCap": 5e11,
+            "shortName": "Micron Technology"
+        },
+        {
+            "symbol": "JPM",
+            "industry": "Banks—Regional",
+            "sector": "Financial Services",
+            "regularMarketPrice": 150.0,
+            "fiftyTwoWeekHigh": 152.0,
+            "fiftyTwoWeekHighChangePercent": -1.32,
+            "marketCap": 4e11,
+            "shortName": "JPMorgan Chase & Co."
+        },
+        {
+            "symbol": "BAC",
+            "industry": "Banks—Regional",
+            "sector": "Financial Services",
+            "regularMarketPrice": 35.0,
+            "fiftyTwoWeekHigh": 36.0,
+            "fiftyTwoWeekHighChangePercent": -2.78,
+            "marketCap": 3e11,
+            "shortName": "Bank of America Corporation"
+        }
+    ]
+    
+    # Mock post_returns_1m_batch to return dummy 1-month returns
+    mock_returns = {
+        "NVDA": 15.5,
+        "AVGO": 12.3,
+        "MU": 8.1,
+        "JPM": 4.2,
+        "BAC": 3.1
+    }
+    
+    # Patch the data_fetcher functions
+    monkeypatch.setattr("market_leaders.get_52w_highs", lambda: mock_52w_response)
+    monkeypatch.setattr("market_leaders.post_returns_1m_batch", lambda syms: mock_returns)
+    
+    # Mock market health overview (index data and breadth)
+    mock_index_data = {
+        "^GSPC": {
+            "current_price": 4500.0,
+            "sma_50": 4450.0,
+            "sma_200": 4300.0,
+            "high_52_week": 4600.0,
+            "low_52_week": 4000.0
+        },
+        "^DJI": {
+            "current_price": 35000.0,
+            "sma_50": 34800.0,
+            "sma_200": 34500.0,
+            "high_52_week": 36000.0,
+            "low_52_week": 33000.0
+        },
+        "^IXIC": {
+            "current_price": 14000.0,
+            "sma_50": 13900.0,
+            "sma_200": 13700.0,
+            "high_52_week": 14500.0,
+            "low_52_week": 13000.0
+        }
+    }
+    
+    mock_breadth = {
+        "newhighs": 176,
+        "newlows": 214,
+        "ratio": 0.822
+    }
+    
+    monkeypatch.setattr("market_health_utils._fetch_prices_batch", lambda: mock_index_data)
+    monkeypatch.setattr("market_health_utils._fetch_breadth", lambda: mock_breadth)
+    
+    # Call the endpoint
+    response = client.get("/monitor/market-health")
+    
+    # Assert status
+    assert response.status_code == 200
+    
+    # Parse response
+    data = response.get_json()
+    
+    # Assert structure
+    assert "market_overview" in data
+    assert "leaders_by_industry" in data
+    assert "leading_industries" in data["leaders_by_industry"]
+    
+    leading_industries = data["leaders_by_industry"]["leading_industries"]
+    
+    # Assert we have industry data
+    assert len(leading_industries) > 0
+    
+    # Find Semiconductors industry
+    semi = next((x for x in leading_industries if x["industry"] == "Semiconductors"), None)
+    assert semi is not None, "Semiconductors industry should be present"
+    
+    # Assert stock_count field exists and is correct
+    assert "stock_count" in semi, "stock_count field must be present"
+    assert semi["stock_count"] == 3, f"Expected 3 stocks in Semiconductors, got {semi['stock_count']}"
+    
+    # Assert stocks array is present and limited by per_industry parameter
+    assert "stocks" in semi
+    assert isinstance(semi["stocks"], list)
+    assert len(semi["stocks"]) <= 3  # Should display at most 3 stocks
+    
+    # Assert each stock has ticker and percent_change_3m
+    for stock in semi["stocks"]:
+        assert "ticker" in stock
+        assert "percent_change_3m" in stock
+    
+    # Verify stocks are sorted by return descending
+    if len(semi["stocks"]) > 1:
+        for i in range(len(semi["stocks"]) - 1):
+            curr_return = semi["stocks"][i]["percent_change_3m"]
+            next_return = semi["stocks"][i+1]["percent_change_3m"]
+            if curr_return is not None and next_return is not None:
+                assert curr_return >= next_return, "Stocks should be sorted by return descending"
+    
+    # Check Banks—Regional industry
+    banks = next((x for x in leading_industries if x["industry"] == "Banks—Regional"), None)
+    assert banks is not None, "Banks—Regional industry should be present"
+    assert "stock_count" in banks
+    assert banks["stock_count"] == 2, f"Expected 2 stocks in Banks—Regional, got {banks['stock_count']}"
+
+
 # =====================================================================
 # ==                        NEWS ENDPOINTS                           ==
 # =====================================================================

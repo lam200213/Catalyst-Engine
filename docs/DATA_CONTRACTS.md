@@ -643,6 +643,10 @@ This is the comprehensive data payload for the frontend's Market Health page, pr
             "industry": {
               "type": "string"
             },
+            "stock_count": {
+              "type": "integer",
+              "description": "Number of stocks in this industry making new 52-week highs"
+            },      
             "stocks": {
               "items": {
                 "$ref": "#/definitions/LeadingStock"

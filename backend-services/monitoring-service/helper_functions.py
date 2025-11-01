@@ -12,6 +12,7 @@ from shared.contracts import (
     MarketLeaders,
     MarketHealthResponse,
 )
+import json
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -245,9 +246,13 @@ def validate_market_leaders(payload: Dict[str, Any]) -> Dict[str, Any]:
             logger.warning(f"validate_market_leaders received unexpected type: {type(payload).__name__}. Using empty default.")
             payload = {"leading_industries": []}
         
-        return MarketLeaders(**(payload or {"leading_industries": []})).model_dump(mode="json")
+        # Log the payload structure before validation for debugging
+        logger.debug(f"validate_market_leaders input: {json.dumps(payload, indent=2)}")
+        validated = MarketLeaders(**(payload or {"leading_industries": []}))
+        return validated.model_dump(mode="json")
     except ValidationError as e:
         logger.warning(f"MarketLeaders validation failed: {e}")
+        logger.error(f"Payload that failed validation: {json.dumps(payload, indent=2)}")
         return {"leading_industries": []}
 
 def compose_market_health_response(overview: Dict[str, Any], leaders: Dict[str, Any]) -> Dict[str, Any]:

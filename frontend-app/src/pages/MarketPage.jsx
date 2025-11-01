@@ -4,6 +4,7 @@ import { Box, Heading, VStack, SimpleGrid, Button, Alert, AlertIcon, Spinner } f
 import MarketHealthCard from '../components/MarketHealthCard';
 import LeadingIndustriesTable from '../components/LeadingIndustriesTable';
 import { useMarketHealthQuery } from '../hooks/useMarketHealthQuery';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const MarketPage = () => {
   const { data, isLoading, error, refetch, isFetching } = useMarketHealthQuery();
@@ -29,11 +30,14 @@ const MarketPage = () => {
     <VStack align="stretch" spacing={6} p={6}>
       <Heading size="lg">Market Health</Heading>
 
-      <MarketHealthCard marketOverview={marketOverview} loading={isLoading || isFetching} />
+      {/* Wrap each component in its own error boundary */}
+      <ErrorBoundary>
+        <MarketHealthCard marketOverview={marketOverview} loading={isLoading || isFetching} />
+      </ErrorBoundary>
 
-      {!isLoading && (
-        <LeadingIndustriesTable marketLeaders={marketLeaders} />
-      )}
+      <ErrorBoundary>
+        {!isLoading && <LeadingIndustriesTable marketLeaders={marketLeaders} />}
+      </ErrorBoundary>
     </VStack>
   );
 };

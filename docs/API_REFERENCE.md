@@ -838,6 +838,7 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
         "leading_industries": [
           {
             "industry": "Semiconductors",
+            "stock_count": 12,
             "stocks": [
               { "ticker": "NVDA", "percent_change_3m": 15.5 },
               { "ticker": "AVGO", "percent_change_3m": 11.2 }
