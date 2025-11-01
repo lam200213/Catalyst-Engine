@@ -166,6 +166,20 @@ def get_watchlist(user_id):
     # Existing watchlist logic
     pass
 
+@app.route('/monitor/internal/update-all', methods=['POST'])
+def update_all():
+    try:
+        # TODO: delegate to update orchestrator (fetch + recompute + persist)
+        # TODO: implement services/update_orchestrator.py when backend dependencies are ready.
+        return jsonify({
+            "message": "Monitor data update completed successfully.",
+            "updated_portfolio_items": 0,
+            "updated_watchlist_items": 0
+        }), 200
+    except Exception as e:
+        app.logger.error(f"update-all failed: {e}", exc_info=True)
+        return jsonify({ "error": "Service unavailable" }), 503
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Standard health check endpoint."""

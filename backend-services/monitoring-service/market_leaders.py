@@ -120,7 +120,7 @@ def _leaders_from_52w(per_industry: int = 3) -> List[Dict[str, Any]]:
     syms_map = _select_symbols(buckets, top_inds, per_industry=per_industry)
     all_syms = [s for arr in syms_map.values() for s in arr]
     # Optional enrichment; if not supported, defaults to None per symbol
-    returns = post_returns_1m_batch(list(set(all_syms))) or {}
+    returns = post_returns_batch(list(set(all_syms)), period=LEADER_LOOKBACK_PERIOD) or {}
     out: List[Dict[str, Any]] = []
     for ind in top_inds:
         stocks = [{"ticker": s, "percent_change_3m": returns.get(s)} for s in syms_map.get(ind, [])]

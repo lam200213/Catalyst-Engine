@@ -1,7 +1,7 @@
 // frontend-app/src/services/api.test.js
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import axios from 'axios';
-import { fetchStockData } from './api';
+import { fetchStockData } from './screeningApi';
 
 // Mock the axios library
 vi.mock('axios');
@@ -73,7 +73,7 @@ describe('services/api', () => {
         axios.get.mockResolvedValue({ data: {} });
 
         // 2. Act: Dynamically import the module AFTER setting the env var
-        const { fetchStockData } = await import('./api');
+        const { fetchStockData } = await import('./screeningApi');
         await fetchStockData('TEST');
 
         // 3. Assert: Check if the correct URL was used

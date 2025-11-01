@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-11-1
-Frontend UI refinement: Add "Count" field to Leading Industries table, Add tooltips for other fields (general pattern); Implement a multi-layer defense-in-depth error handling strategy to prevent black screens when components crash.
+Configured ESLint to catch unreachable code and undefined variables; Enabled strict mode in Vite config to catch module errors early; Minor bugs fixed
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

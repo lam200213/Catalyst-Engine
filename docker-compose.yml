@@ -142,6 +142,8 @@ services:
       PORT: 3006
       DATA_SERVICE_URL: http://data-service:3001
       LOG_LEVEL: INFO
+      MONITOR_PREWARM_DELAY_SEC: ${MONITOR_PREWARM_DELAY_SEC}
+      MONITOR_PREWARM_TIMEOUT_SEC: ${MONITOR_PREWARM_TIMEOUT_SEC}
     depends_on:
       mongodb:
         condition: service_started

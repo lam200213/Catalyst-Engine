@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import { getMarketHealth } from '../services/monitoringApi';
 
 // Stable key so all pages/widgets share the same cache entry
-const queryKey = ['monitoring', 'marketHealth'];
+export const MARKET_HEALTH_QUERY_KEY = ['monitoring', 'marketHealth'];
 
 export function useMarketHealthQuery(options = {}) {
   return useQuery({
-    queryKey,
+    queryKey: MARKET_HEALTH_QUERY_KEY,
     queryFn: async () => {
       const res = await getMarketHealth();
       return res.data; // normalize to the data payload

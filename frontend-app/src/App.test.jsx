@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ChakraProvider } from '@chakra-ui/react';
 import App from './App';
-import * as api from './services/api';
+import * as screeningApi from './services/screeningApi';
 
 // Mock the lightweight-charts library
 vi.mock('lightweight-charts', () => ({
@@ -26,7 +26,7 @@ vi.mock('lightweight-charts', () => ({
 }));
 
 // Mock the api service module
-vi.mock('./services/api');
+vi.mock('./services/screeningApi');
 
 describe('App Component Integration Test', () => {
 
@@ -59,7 +59,7 @@ describe('App Component Integration Test', () => {
     // Ttest dedicated to verifying the loading state.
     it('should display loading indicators while fetching data', async () => {
         // Arrange: Use a mock promise that never resolves to freeze the app in a loading state.
-        api.fetchStockData.mockReturnValue(new Promise(() => {}));
+        screeningApi.fetchStockData.mockReturnValue(new Promise(() => {}));
         const user = userEvent.setup();
         renderApp();
         
@@ -85,7 +85,7 @@ describe('App Component Integration Test', () => {
             screening: { ticker: 'AAPL', passes: true, details: { current_price_above_ma50: true } },
             analysis: { analysis: { message: 'VCP analysis complete.' } }
         };
-        api.fetchStockData.mockResolvedValue(mockSuccessData);
+        screeningApi.fetchStockData.mockResolvedValue(mockSuccessData);
         
         const user = userEvent.setup();
         renderApp();
@@ -105,7 +105,7 @@ describe('App Component Integration Test', () => {
         
         // Final sanity check that the loading state is gone.
         expect(screen.queryByText(/Analyzing.../i)).not.toBeInTheDocument();
-        expect(api.fetchStockData).toHaveBeenCalledWith('AAPL');
+        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('AAPL');
     });
 
     // Integration test for API failure
@@ -113,7 +113,7 @@ describe('App Component Integration Test', () => {
     it('should display a specific error for an invalid ticker', async () => {
         // Arrange
         const errorMessage = 'Invalid or non-existent ticker: FAKETICKER';
-        api.fetchStockData.mockRejectedValue(new Error(errorMessage));
+        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
         const user = userEvent.setup();
         renderApp();
 
@@ -130,14 +130,14 @@ describe('App Component Integration Test', () => {
             const errorAlert = screen.getByRole('alert');
             expect(errorAlert).toHaveTextContent(errorMessage);
         });
-        expect(api.fetchStockData).toHaveBeenCalledWith('FAKETICKER');
+        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('FAKETICKER');
     });
 
     // Specific test for a generic server or connection error
     it('should display a generic error for a server failure', async () => {
         // Arrange
         const errorMessage = 'Service unavailable: data-service';
-        api.fetchStockData.mockRejectedValue(new Error(errorMessage));
+        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
         const user = userEvent.setup();
         renderApp();
 
@@ -153,7 +153,7 @@ describe('App Component Integration Test', () => {
             const errorAlert = screen.getByRole('alert');
             expect(errorAlert).toHaveTextContent(errorMessage);
         });
-        expect(api.fetchStockData).toHaveBeenCalledWith('ANY');
+        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('ANY');
     });
 
     // TEST: Security test for XSS
@@ -163,7 +163,7 @@ describe('App Component Integration Test', () => {
         const escapedHtml = '&lt;script&gt;alert("XSS")&lt;/script&gt;';
         const errorMessage = `Invalid Ticker: ${maliciousInput}`;
         
-        api.fetchStockData.mockRejectedValue(new Error(errorMessage));
+        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
         
         const user = userEvent.setup();
         renderApp();
@@ -184,6 +184,6 @@ describe('App Component Integration Test', () => {
         });
         
         // Assert that the API was called with the UPPERCASED version of the input.
-        expect(api.fetchStockData).toHaveBeenCalledWith(maliciousInput.toUpperCase());
+        expect(screeningApi.fetchStockData).toHaveBeenCalledWith(maliciousInput.toUpperCase());
     });
 });

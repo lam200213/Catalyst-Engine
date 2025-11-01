@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { ChakraProvider } from '@chakra-ui/react';
+import { renderWithProviders } from '../test-utils'; 
 import ChartLegend from './ChartLegend';
 
 // Mock data for testing all scenarios
@@ -22,10 +22,8 @@ const mockLegendData = {
 };
 
 describe('components/ChartLegend', () => {
-    const renderWithProvider = (ui) => render(<ChakraProvider>{ui}</ChakraProvider>);
-
     it('1. Business Logic: should render all data correctly when props are valid', () => {
-        renderWithProvider(<ChartLegend ticker="AAPL" legendData={mockLegendData} />);
+        renderWithProviders(<ChartLegend ticker="AAPL" legendData={mockLegendData} />);
 
         // Assert Ticker and Date are rendered
         expect(screen.getByText('AAPL')).toBeInTheDocument();
@@ -49,7 +47,7 @@ describe('components/ChartLegend', () => {
     // Test for zero/null volume edge cases
     it('2. Edge Case: should handle zero or null volume correctly', () => {
         const dataWithZeroVol = { ...mockLegendData, ohlcv: { ...mockLegendData.ohlcv, volume: 0 } };
-        const { rerender } = renderWithProvider(<ChartLegend ticker="AAPL" legendData={dataWithZeroVol} />);
+        const { rerender } = renderWithProviders(<ChartLegend ticker="AAPL" legendData={dataWithZeroVol} />);
   
           // Assert that the text '0' is rendered in the document.
         expect(screen.getByText('0')).toBeInTheDocument();
@@ -62,20 +60,20 @@ describe('components/ChartLegend', () => {
 
 
     it('2. Edge Case: should not render if legendData is null', () => {
-        renderWithProvider(<ChartLegend ticker="AAPL" legendData={null} />);
+        renderWithProviders(<ChartLegend ticker="AAPL" legendData={null} />);
         // Assert that content specific to the component is not present.
         expect(screen.queryByText('AAPL')).not.toBeInTheDocument();
     });
 
     it('2. Edge Case: should gracefully omit an MA if its value is undefined', () => {
-        renderWithProvider(<ChartLegend ticker="AAPL" legendData={mockLegendData} />);
+        renderWithProviders(<ChartLegend ticker="AAPL" legendData={mockLegendData} />);
         expect(screen.getByText('MA 150:')).toBeInTheDocument(); // This one should be present
         expect(screen.queryByText('MA 200:')).not.toBeInTheDocument(); // This one should be absent
     });
 
     it('3. Security: should escape and render malicious ticker string as plain text', () => {
         const maliciousTicker = '<script>alert("XSS")</script>';
-        renderWithProvider(<ChartLegend ticker={maliciousTicker} legendData={mockLegendData} />);
+        renderWithProviders(<ChartLegend ticker={maliciousTicker} legendData={mockLegendData} />);
         // The malicious string should be rendered as text content, not as HTML
         expect(screen.getByText(maliciousTicker)).toBeInTheDocument();
     });

@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
+import { renderWithProviders } from '../test-utils'; // Optional but consistent
 import TickerForm from './TickerForm';
 
 describe('components/TickerForm', () => {
@@ -14,13 +15,8 @@ describe('components/TickerForm', () => {
         const setTicker = vi.fn();
         const user = userEvent.setup();
 
-        render(
-            <TickerForm 
-                ticker="AAPL"
-                setTicker={setTicker}
-                handleSubmit={handleSubmit}
-                loading={false} 
-            />
+        renderWithProviders(
+        <TickerForm ticker="AAPL" setTicker={setTicker} handleSubmit={handleSubmit} loading={false} />
         );
         
         // Act: Simulate form submission
@@ -37,13 +33,8 @@ describe('components/TickerForm', () => {
         const handleSubmit = vi.fn((e) => e.preventDefault());
         const setTicker = vi.fn();
 
-        render(
-            <TickerForm
-                ticker=""
-                setTicker={setTicker}
-                handleSubmit={handleSubmit}
-                loading={false}
-            />
+        renderWithProviders(
+        <TickerForm ticker="" setTicker={setTicker} handleSubmit={handleSubmit} loading={false} />
         );
         
         // Act
@@ -62,13 +53,8 @@ describe('components/TickerForm', () => {
         // Arrange
         const setTicker = vi.fn();
         const user = userEvent.setup();
-        render(
-            <TickerForm 
-                ticker=""
-                setTicker={setTicker}
-                handleSubmit={(e) => e.preventDefault()}
-                loading={false} 
-            />
+        renderWithProviders(
+        <TickerForm ticker="" setTicker={setTicker} handleSubmit={(e) => e.preventDefault()} loading={false} />
         );
         const input = screen.getByPlaceholderText(/Enter Ticker/i);
 

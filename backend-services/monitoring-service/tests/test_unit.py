@@ -264,7 +264,7 @@ def test_leaders_from_52w_populates_stock_count(monkeypatch):
     }
     
     monkeypatch.setattr("market_leaders.get_52w_highs", lambda: mock_quotes)
-    monkeypatch.setattr("market_leaders.post_returns_1m_batch", lambda syms: mock_returns)
+    monkeypatch.setattr("market_leaders.post_returns_batch", lambda syms, period: mock_returns)
     
     # Call the function with per_industry=3 (display top 3 stocks per industry)
     result = _leaders_from_52w(per_industry=3)
