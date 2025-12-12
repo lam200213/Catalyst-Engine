@@ -5,13 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-12-12
-test(frontend): fix react-query providers, normalize App integration tests, and remove JSX-in-.js issue
-- Wrap App tests with QueryClientProvider to prevent "No QueryClient set" runtime errors.
-- Improve lightweight-charts mocks to include missing series methods used by ChartPanel.
-- Rewrite App.test.jsx to align with routing + background prefetch architecture and avoid Router nesting.
-- Update failing prefetch-failure assertion to verify "no crash" instead of relying on console.warn.
-- Fix useStockData.test.js to run without JSX parsing errors by using React.createElement wrapper.
-- Standardize test QueryClient defaults for TanStack Query v5 (gcTime, retry disabled).
+Provide watchlist, market overview UI
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
