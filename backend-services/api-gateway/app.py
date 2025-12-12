@@ -26,8 +26,8 @@ SERVICES = {
     "monitor": os.getenv("MONITORING_SERVICE_URL", "http://monitoring-service:3006")
 }
 
-@app.route('/<service>/<path:path>', methods=['GET', 'POST'])
-@app.route('/<service>', methods=['GET', 'POST'])
+@app.route('/<service>/<path:path>', methods=['GET', 'POST', 'DELETE', 'PUT'])
+@app.route('/<service>', methods=['GET', 'POST', 'DELETE', 'PUT'])
 def gateway(service, path=""):
     """
     A simple gateway to forward requests to the appropriate backend service.
@@ -49,13 +49,18 @@ def gateway(service, path=""):
         # e.g., /cache/clear -> http://data-service:3001/cache/clear
         target_url = f"{base_url.rstrip('/')}{request.path}"
     try:
-        # Conditional logic to handle POST vs. GET requests
+        # Conditional logic to handle different HTTP requests
         if request.method == 'POST':
             # Only attempt to forward a JSON body if one is present in the request.
             post_data = request.get_json() if request.is_json else None
             # Set a much longer timeout specifically for the 'jobs' service
             timeout = 6000 if service == 'jobs' else 45
             resp = requests.post(target_url, json=post_data, timeout=timeout)
+        elif request.method == 'DELETE':
+            resp = requests.delete(target_url, timeout=45)
+        elif request.method == 'PUT':
+            put_data = request.get_json() if request.is_json else None
+            resp = requests.put(target_url, json=put_data, timeout=45)
         else:  # Default to GET
             # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.
             query_params = dict(request.args)

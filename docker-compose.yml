@@ -29,7 +29,7 @@ services:
       - .env
     environment:
       MONGO_URI: ${MONGO_URI}
-      CACHE_REDIS_URL: redis://redis:6379/0
+      CACHE_REDIS_URL: ${CACHE_REDIS_URL}
       PORT: 3001
       LOG_LEVEL: ${LOG_LEVEL}
     # Add a DNS configuration for network stability
@@ -95,6 +95,7 @@ services:
       - "3004:3004"
     environment:
       MONGO_URI: ${MONGO_URI}
+      CACHE_REDIS_URL: ${CACHE_REDIS_URL}
       PORT: 3004
       TICKER_SERVICE_URL: http://ticker-service:5001
       SCREENING_SERVICE_URL: http://screening-service:3002
@@ -103,10 +104,34 @@ services:
       LOG_LEVEL: INFO
     depends_on:
       - mongodb
+      - redis
       - ticker-service
       - screening-service
       - analysis-service
       - leadership-service
+    networks:
+      - app-network
+    volumes:
+      - ./backend-services/scheduler-service:/app
+      # for development: Mount local directory to container's /app
+      - ./backend-services/shared:/app/shared
+
+  scheduler-worker:
+    build:
+      context: ./backend-services/scheduler-service
+    container_name: scheduler-worker
+    command: celery -A app.celery worker --loglevel=info
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      CACHE_REDIS_URL: ${CACHE_REDIS_URL}
+      PORT: 3004
+      TICKER_SERVICE_URL: http://ticker-service:5001
+      SCREENING_SERVICE_URL: http://screening-service:3002
+      ANALYSIS_SERVICE_URL: http://analysis-service:3003
+      LEADERSHIP_SERVICE_URL: http://leadership-service:3005
+    depends_on:
+      - scheduler-service
+      - redis
     networks:
       - app-network
     volumes:
@@ -144,6 +169,9 @@ services:
       LOG_LEVEL: INFO
       MONITOR_PREWARM_DELAY_SEC: ${MONITOR_PREWARM_DELAY_SEC}
       MONITOR_PREWARM_TIMEOUT_SEC: ${MONITOR_PREWARM_TIMEOUT_SEC}
+      MONGO_URI: ${MONGO_URI}
+      MONITOR_DB: ${MONITOR_DB}
+      DEFAULT_USER_ID: ${DEFAULT_USER_ID}
     depends_on:
       mongodb:
         condition: service_started

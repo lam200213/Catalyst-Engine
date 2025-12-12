@@ -155,6 +155,56 @@ class TestScreeningEndpoint(unittest.TestCase):
         self.app = app.test_client()
         self.app.testing = True
 
+    # CHUNK_SIZE boundary behavior for /screen/batch
+    @patch("app.requests.post")
+    def test_batch_endpoint_chunking_size_boundaries(self, mock_post):
+        """
+        Verify /screen/batch chunking behavior just below and at CHUNK_SIZE.
+        Ensures:
+        - tickers < CHUNK_SIZE -> 1 upstream call
+        - tickers == CHUNK_SIZE -> still 1 upstream call
+        """
+        # We will patch CHUNK_SIZE down to 10 to keep the test fast and clear.
+        patched_chunk_size = 10
+
+        # Common dummy upstream payload: one success entry with valid PriceDataItem list
+        dummy_item = {
+            "formatted_date": "2025-01-01",
+            "open": 140.0,
+            "high": 152.0,
+            "low": 139.0,
+            "close": 150.0,
+            "volume": 1_000_000,
+            "adjclose": 150.0,
+        }
+        dummy_payload = {"success": {"T0": [dummy_item]}, "failed": []}
+        mock_post.return_value = unittest.mock.MagicMock(
+            status_code=200,
+            content=json.dumps(dummy_payload).encode("utf-8"),
+            json=lambda: dummy_payload,
+        )
+
+        # Case A: just below CHUNK_SIZE
+        tickers_below = [f"T{i}" for i in range(patched_chunk_size - 1)]
+        with patch("app.CHUNK_SIZE", patched_chunk_size):
+            resp_below = self.app.post("/screen/batch", json={"tickers": tickers_below})
+        self.assertEqual(resp_below.status_code, 200)
+        # All tickers should be considered; details of passes are handled elsewhere
+        self.assertIsInstance(resp_below.get_json(), list)
+        # Exactly one upstream batch call
+        self.assertEqual(mock_post.call_count, 1)
+
+        mock_post.reset_mock()
+
+        # Case B: exactly CHUNK_SIZE
+        tickers_at = [f"T{i}" for i in range(patched_chunk_size)]
+        with patch("app.CHUNK_SIZE", patched_chunk_size):
+            resp_at = self.app.post("/screen/batch", json={"tickers": tickers_at})
+        self.assertEqual(resp_at.status_code, 200)
+        self.assertIsInstance(resp_at.get_json(), list)
+        # Still exactly one upstream batch call
+        self.assertEqual(mock_post.call_count, 1)
+
     @patch('app.requests.post')
     def test_batch_endpoint_uses_chunking(self, mock_post):
         """
@@ -331,6 +381,7 @@ class TestScreeningEndpoint(unittest.TestCase):
         # A warning should be logged for the failed ticker
         log_calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("Data could not be fetched for the following tickers: ['FAIL_TICKER']" in call for call in log_calls))
+
 
 if __name__ == '__main__':
     unittest.main()

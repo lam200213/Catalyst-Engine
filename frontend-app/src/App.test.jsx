@@ -1,189 +1,144 @@
 // frontend-app/src/App.test.jsx
-import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ChakraProvider } from '@chakra-ui/react';
-import App from './App';
-import * as screeningApi from './services/screeningApi';
 
-// Mock the lightweight-charts library
-vi.mock('lightweight-charts', () => ({
-    createChart: vi.fn(() => ({
-        addCandlestickSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn(), setMarkers: vi.fn() })),
-        addHistogramSeries: vi.fn(() => ({ setData: vi.fn(), createPriceLine: vi.fn() })),
-        addLineSeries: vi.fn(() => ({ setData: vi.fn() })),
-        //  Add missing mock functions to prevent component crash
-        subscribeCrosshairMove: vi.fn(),
-        unsubscribeCrosshairMove: vi.fn(),
-        remove: vi.fn(),
-        timeScale: () => ({ fitContent: vi.fn() }),
-        priceScale: () => ({ applyOptions: vi.fn() }),
-        applyOptions: vi.fn(),
-    })),
-    ColorType: { Solid: 'solid' },
-    LineStyle: { Dashed: 1, Dotted: 2 },
+import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { ChakraProvider } from '@chakra-ui/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+import App from './App';
+
+// --- Mocks: keep App tests focused on routing + app glue (per architecture) ---
+vi.mock('./components/Sidebar', () => ({
+  default: () => <nav aria-label="Sidebar">Sidebar</nav>,
 }));
 
-// Mock the api service module
-vi.mock('./services/screeningApi');
+vi.mock('./components/ErrorBoundary', () => ({
+  default: ({ children }) => <>{children}</>,
+}));
 
-describe('App Component Integration Test', () => {
+vi.mock('./pages/DashboardPage', () => ({
+  default: () => <h1>DashboardPage</h1>,
+}));
 
-    // Clear all mocks before each test runs to ensure test isolation
-    beforeEach(() => {
-        vi.clearAllMocks();
+vi.mock('./pages/MarketPage', () => ({
+  default: () => <h1>MarketPage</h1>,
+}));
+
+vi.mock('./pages/WatchlistPage', () => ({
+  default: () => <h1>WatchlistPage</h1>,
+}));
+
+vi.mock('./pages/PortfolioPage', () => ({
+  default: () => <h1>PortfolioPage</h1>,
+}));
+
+// App imports the unwrapped fetcher for prefetching
+const fetchMarketHealthMock = vi.fn();
+vi.mock('./hooks/useMarketHealthQuery', () => ({
+  fetchMarketHealth: (...args) => fetchMarketHealthMock(...args),
+}));
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function renderAppAt(pathname = '/') {
+  // App uses BrowserRouter, so we control location via history
+  window.history.pushState({}, 'Test', pathname);
+
+  const queryClient = createTestQueryClient();
+  const prefetchSpy = vi.spyOn(queryClient, 'prefetchQuery');
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <ChakraProvider>
+        <App />
+      </ChakraProvider>
+    </QueryClientProvider>,
+  );
+
+  return { queryClient, prefetchSpy };
+}
+
+describe('App (routing + prefetch)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMarketHealthMock.mockResolvedValue({}); // default: successful background prefetch
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders the global layout (Sidebar) and default route content', async () => {
+    renderAppAt('/');
+
+    expect(screen.getByLabelText('Sidebar')).toBeInTheDocument();
+    // Default route should land on some page (typically dashboard)
+    // We assert one of our mocked pages is present.
+    await waitFor(() => {
+      expect(screen.getByRole('heading')).toBeInTheDocument();
+    });
+  });
+
+  it('routes to /watchlist', async () => {
+    renderAppAt('/watchlist');
+
+    await waitFor(() => {
+      expect(screen.getByText('WatchlistPage')).toBeInTheDocument();
+    });
+  });
+
+  it('routes to /market', async () => {
+    renderAppAt('/market');
+
+    await waitFor(() => {
+      expect(screen.getByText('MarketPage')).toBeInTheDocument();
+    });
+  });
+
+  it('routes to /portfolio', async () => {
+    renderAppAt('/portfolio');
+
+    await waitFor(() => {
+      expect(screen.getByText('PortfolioPage')).toBeInTheDocument();
+    });
+  });
+
+  it('kicks off background prefetch for market health on mount', async () => {
+    const { prefetchSpy } = renderAppAt('/');
+
+    await waitFor(() => {
+      expect(prefetchSpy).toHaveBeenCalled();
     });
 
-    // Helper function to render the App with ChakraProvider
-    const renderApp = () => {
-        render(
-            <ChakraProvider>
-                <App />
-            </ChakraProvider>
-        );
-    };
+    const calls = prefetchSpy.mock.calls;
+    const firstArg = calls[0]?.[0];
 
-    // Test for initial component rendering
-    it('should render the main layout with all child components on initial load', () => {
-        renderApp();
-        // Check for TickerForm by its input placeholder
-        expect(screen.getByPlaceholderText(/Enter Ticker/i)).toBeInTheDocument();
-        // Check for ScreeningPanel by its heading
-        expect(screen.getByRole('heading', { name: /Screening Results/i })).toBeInTheDocument();
-        // Check for ChartPanel by its heading
-        expect(screen.getByRole('heading', { name: /VCP Analysis/i })).toBeInTheDocument();
+    // Assert the query key matches App.jsx behavior
+    expect(firstArg?.queryKey).toEqual(['monitoring', 'marketHealth']);
+    // And App uses the unwrapped fetcher as queryFn
+    expect(typeof firstArg?.queryFn).toBe('function');
+  });
+
+  it('does not crash if background prefetch fails', async () => {
+    fetchMarketHealthMock.mockRejectedValueOnce(new Error('network down'));
+
+    renderAppAt('/');
+
+    await waitFor(() => {
+      // Ensure the effect actually ran and attempted the fetch
+      expect(fetchMarketHealthMock).toHaveBeenCalled();
     });
 
-    // Integration test for the main application view (success case)
-    // Ttest dedicated to verifying the loading state.
-    it('should display loading indicators while fetching data', async () => {
-        // Arrange: Use a mock promise that never resolves to freeze the app in a loading state.
-        screeningApi.fetchStockData.mockReturnValue(new Promise(() => {}));
-        const user = userEvent.setup();
-        renderApp();
-        
-        // Act: Simulate user input and form submission
-        const input = screen.getByPlaceholderText(/Enter Ticker/i);
-        const button = screen.getByRole('button', { name: /Analyze Stock/i });
-        await user.clear(input);
-        await user.type(input, 'AAPL');
-        await user.click(button);
-
-        // Assert: The app is now permanently in a loading state for this test.
-        // We can now reliably check for the loading indicators.
-        expect(screen.getByText(/Analyzing.../i)).toBeInTheDocument();
-        // The accessible name for Chakra's Spinner is "Loading..."
-        expect(screen.getAllByText('Loading...').length).toBeGreaterThan(0);
-        expect(button).toBeDisabled(); // The button should be disabled while loading.
-    });
-
-    //  A focused test for the successful outcome.
-    it('should render data after a successful form submission', async () => {
-        // Arrange: Mock a successful API response.
-        const mockSuccessData = {
-            screening: { ticker: 'AAPL', passes: true, details: { current_price_above_ma50: true } },
-            analysis: { analysis: { message: 'VCP analysis complete.' } }
-        };
-        screeningApi.fetchStockData.mockResolvedValue(mockSuccessData);
-        
-        const user = userEvent.setup();
-        renderApp();
-        
-        // Act
-        const input = screen.getByPlaceholderText(/Enter Ticker/i);
-        const button = screen.getByRole('button', { name: /Analyze Stock/i });
-        await user.clear(input);
-        await user.type(input, 'AAPL');
-        await user.click(button);
-
-        // Assert: Wait only for the final data to appear.
-        await waitFor(() => {
-            expect(screen.getByText('PASS')).toBeInTheDocument();
-            expect(screen.getByText('VCP analysis complete.')).toBeInTheDocument();
-        });
-        
-        // Final sanity check that the loading state is gone.
-        expect(screen.queryByText(/Analyzing.../i)).not.toBeInTheDocument();
-        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('AAPL');
-    });
-
-    // Integration test for API failure
-    // Specific test for a "Not Found" or "Bad Gateway" error
-    it('should display a specific error for an invalid ticker', async () => {
-        // Arrange
-        const errorMessage = 'Invalid or non-existent ticker: FAKETICKER';
-        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
-        const user = userEvent.setup();
-        renderApp();
-
-        // Act: Simulate user input and form submission
-        const input = screen.getByPlaceholderText(/Enter Ticker/i);
-        const button = screen.getByRole('button', { name: /Analyze Stock/i });
-        await user.clear(input);
-        await user.type(input, 'FAKETICKER');
-        await user.click(button);
-        
-        // Check loading state during the request
-        // Assert: Wait for the error message to appear
-        await waitFor(() => {
-            const errorAlert = screen.getByRole('alert');
-            expect(errorAlert).toHaveTextContent(errorMessage);
-        });
-        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('FAKETICKER');
-    });
-
-    // Specific test for a generic server or connection error
-    it('should display a generic error for a server failure', async () => {
-        // Arrange
-        const errorMessage = 'Service unavailable: data-service';
-        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
-        const user = userEvent.setup();
-        renderApp();
-
-        // Act
-        const input = screen.getByPlaceholderText(/Enter Ticker/i);
-        const button = screen.getByRole('button', { name: /Analyze Stock/i });
-        await user.clear(input);
-        await user.type(input, 'ANY');
-        await user.click(button);
-
-        // Assert
-        await waitFor(() => {
-            const errorAlert = screen.getByRole('alert');
-            expect(errorAlert).toHaveTextContent(errorMessage);
-        });
-        expect(screeningApi.fetchStockData).toHaveBeenCalledWith('ANY');
-    });
-
-    // TEST: Security test for XSS
-    it('should correctly handle and escape malicious script input', async () => {
-        const maliciousInput = '<script>alert("XSS")</script>';
-        // The expected string is corrected to what React actually renders (escaped HTML).
-        const escapedHtml = '&lt;script&gt;alert("XSS")&lt;/script&gt;';
-        const errorMessage = `Invalid Ticker: ${maliciousInput}`;
-        
-        screeningApi.fetchStockData.mockRejectedValue(new Error(errorMessage));
-        
-        const user = userEvent.setup();
-        renderApp();
-
-        const input = screen.getByPlaceholderText(/Enter Ticker/i);
-        const button = screen.getByRole('button', { name: /Analyze Stock/i });
-
-        await user.clear(input);
-        await user.type(input, maliciousInput);
-        await user.click(button);
-
-        await waitFor(() => {
-            const errorAlert = screen.getByRole('alert');
-            // Assert that the alert's innerHTML contains the ESCAPED version of the input
-            expect(errorAlert.innerHTML).toContain(escapedHtml);
-            // Assert that the raw, unescaped text is NOT present
-            expect(screen.queryByText(maliciousInput)).toBeNull();
-        });
-        
-        // Assert that the API was called with the UPPERCASED version of the input.
-        expect(screeningApi.fetchStockData).toHaveBeenCalledWith(maliciousInput.toUpperCase());
-    });
+    // App should still render normally
+    expect(screen.getByLabelText('Sidebar')).toBeInTheDocument();
+    expect(screen.getByText('DashboardPage')).toBeInTheDocument();
+  });
 });

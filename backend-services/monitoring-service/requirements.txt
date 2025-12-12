@@ -8,3 +8,5 @@ PyMongo[srv]
 pydantic
 redis
 pytest
+celery
+redis

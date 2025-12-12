@@ -8,9 +8,61 @@ living documentation for the data structures exchanged between microservices.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypeAlias, Literal 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Dict, List, Optional, TypeAlias, Literal, Annotated
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, StrictBool, StrictInt
+from enum import Enum
 
+# --- Enums: Watchlist/Archive/Freshness ---
+class ArchiveReason(str, Enum):
+    """
+    Reason for archiving a watchlist item.
+    
+    Values:
+    - MANUAL_DELETE: User explicitly removed the item via DELETE /monitor/watchlist/:ticker
+    - FAILED_HEALTH_CHECK: Item failed automated health check and was auto-archived by the orchestrator
+    
+    Usage: Used in archived_watchlist_items.reason field and by the orchestrator for auto-archiving.
+    """
+    MANUAL_DELETE = "MANUAL_DELETE"
+    FAILED_HEALTH_CHECK = "FAILED_HEALTH_CHECK"
+
+class LastRefreshStatus(str, Enum):
+    """
+    Health-check status for watchlist items after automated refresh.
+    
+    Values:
+    - PENDING: Item is queued for refresh but not yet processed
+    - PASS: Item passed all health checks (screening, VCP, freshness, data)
+    - FAIL: Item failed at least one health check stage
+    - UNKNOWN: Default state for new items or when refresh encountered errors
+    
+    Usage: Stored in watchlistitems.last_refresh_status and drives status derivation logic
+    in the watchlist status engine. Also used in InternalBatchUpdateStatusItem for legacy flow.
+    """
+    PENDING = "PENDING"
+    PASS = "PASS"
+    FAIL = "FAIL"
+    UNKNOWN = "UNKNOWN"
+
+class WatchlistStatus(str, Enum):
+    """
+    UI-facing status labels derived from last_refresh_status and VCP/pivot/volume signals.
+    
+    Values must align with the status derivation logic in monitoring-service's
+    watchlist_status_service.py.
+    
+    Values:
+    - Pending: Not yet analyzed or refresh in progress
+    - Failed: Failed health check
+    - Watch: Passed health check but no actionable setup
+    - Buy Alert: Passed with maturing VCP pattern or pullback setup
+    - Buy Ready: Passed with pivot proximity within buy band
+    """
+    PENDING = "Pending"
+    FAILED = "Failed"
+    WATCH = "Watch"
+    BUY_ALERT = "Buy Alert"
+    BUY_READY = "Buy Ready"
 # --- Contract 1: TickerList ---
 TickerList: TypeAlias = List[str]
 """A simple list of stock ticker symbols (e.g., ["AAPL", "MSFT"])."""
@@ -82,13 +134,36 @@ class VCPAnalysisBatchItem(BaseModel):
     """Lean result for a single ticker from a batch VCP analysis."""
     ticker: str
     vcp_pass: bool
-    vcpFootprint: str
+    vcpFootprint: str = Field(
+        ...,
+        description="SEPA Signature (e.g., '40W-31/3-4T') followed by raw contraction details."
+    )
 
+class VCPContractionItem(BaseModel):
+    """
+    Latest Add:
+    Represents a single contraction ("T") within a detected VCP pattern.
+    Used for granular visualization on the frontend.
+    """
+    start_date: str = Field(..., description="Date of the contraction peak")
+    start_price: float = Field(..., description="Price at the contraction peak")
+    end_date: str = Field(..., description="Date of the contraction trough")
+    end_price: float = Field(..., description="Price at the contraction trough")
+    depth_percent: float = Field(..., description="Percentage depth of this contraction (0.0 to 1.0)")
 
 class VCPChartData(BaseModel):
     """Data required for visualizing the VCP chart."""
     detected: bool
+    # vcpLines is deprecated in favor of vcpContractions but kept for backward compatibility if needed
     vcpLines: List[Dict[str, Any]]
+    # New fields for specific visualization
+    vcpContractions: Optional[List[VCPContractionItem]] = None
+    pivotPrice: Optional[float] = None
+    
+    # Diagnostic fields for visualization
+    vcp_pass: Optional[bool] = Field(None, description="Pass/Fail status specific to the chart context")
+    rejection_reason: Optional[str] = Field(None, description="Concise reason for VCP failure")
+
     buyPoints: List[Dict[str, Any]]
     sellPoints: List[Dict[str, Any]]
     ma50: List[Dict[str, Any]]
@@ -104,14 +179,20 @@ class VCPDetailCheck(BaseModel):
 class VCPDetails(BaseModel):
     """Detailed breakdown of VCP validation checks."""
     pivot_validation: VCPDetailCheck
-    volume_validation: VCPDetailCheck
+    volume_validation: VCPDetailCheck = Field(
+        ...,
+        description="Validates if volume dries up at the pivot (contracts below 50D avg)."
+    )
 
 
 class VCPAnalysisSingle(BaseModel):
     """Rich result object for a single-ticker VCP analysis."""
     ticker: str
     vcp_pass: bool
-    vcpFootprint: str
+    vcpFootprint: str = Field(
+        ...,
+        description="SEPA Signature (e.g., '40W-31/3-4T') followed by raw contraction details."
+    )
     chart_data: VCPChartData
     vcp_details: Optional[VCPDetails] = None
 
@@ -229,6 +310,8 @@ class MarketHealthResponse(BaseModel):
     """The complete data payload for the /market page, served by the monitoring-service."""
     market_overview: MarketOverview
     leaders_by_industry: MarketLeaders
+    # Full analysis data for major indices to render charts
+    indices_analysis: Optional[Dict[str, VCPAnalysisSingle]] = None
 
 # --- Contract 11: MarketBreadth ---
 class MarketBreadthResponse(BaseModel):
@@ -259,3 +342,456 @@ class ScreenerQuote(BaseModel):
     marketCap: Optional[float] = None
 
 ScreenerQuoteList: TypeAlias = List[ScreenerQuote]
+
+# --- Contract 14: Requests: Watchlist/Archive ---
+
+class FavouriteToggleRequest(BaseModel):
+    ticker: str
+    is_favourite: bool = Field(..., alias="is_favourite")
+    model_config = ConfigDict(populate_by_name=True)
+
+class BatchRemoveRequest(BaseModel):
+    tickers: List[str]
+
+class WatchlistBatchRemoveRequest(BatchRemoveRequest):
+    """
+    Request body for POST /monitor/watchlist/batch/remove.
+
+    Alias around BatchRemoveRequest to keep internal and public semantics aligned.
+    """
+    model_config = ConfigDict(populate_by_name=True)
+
+class InternalBatchAddRequest(BaseModel):
+    tickers: List[str]
+
+class InternalBatchUpdateStatusItem(BaseModel):
+    """
+    [DEPRECATED] Part of the legacy granular update flow.
+    """    
+    ticker: str
+    status: LastRefreshStatus
+    failed_stage: Optional[str] = None
+    # VCP and pivot fields for Buy Ready / Buy Alert logic
+    current_price: Optional[float] = None
+    pivot_price: Optional[float] = None
+    pivot_proximity_percent: Optional[float] = None
+    
+    # VCP freshness and pattern health
+    vcp_pass: Optional[bool] = None
+    is_pivot_good: Optional[bool] = None
+    pattern_age_days: Optional[int] = None
+    
+    # Pivot and pullback setup flags
+    has_pivot: Optional[bool] = None
+    is_at_pivot: Optional[bool] = None
+    has_pullback_setup: Optional[bool] = None
+    
+    # Volume behaviour for accumulation/distribution detection
+    vol_last: Optional[int] = None
+    vol_50d_avg: Optional[int] = None
+    vol_vs_50d_ratio: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    
+    # Leadership flag
+    is_leader: Optional[bool] = None
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "ticker": "NVDA",
+                "status": "PASS",
+                "failed_stage": None,
+                "current_price": 850.0,
+                "pivot_price": 855.0,
+                "pivot_proximity_percent": -0.58,
+                "vcp_pass": True,
+                "is_pivot_good": True,
+                "pattern_age_days": 15,
+                "has_pivot": True,
+                "is_at_pivot": True,
+                "has_pullback_setup": False,
+                "vol_last": 12000000,
+                "vol_50d_avg": 10000000,
+                "vol_vs_50d_ratio": 1.2,
+                "day_change_pct": 2.5,
+                "is_leader": True
+            }
+        }
+    )
+class InternalBatchUpdateStatusRequest(BaseModel):
+    """
+    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
+    Legacy request model for batch updating watchlist status.
+    """    
+    items: List[InternalBatchUpdateStatusItem]
+
+class InternalBatchUpdateStatusResponse(BaseModel):
+    """
+    [DEPRECATED] Legacy response model.
+    """
+    message: str = Field(
+        ...,
+        description="Summary message including updated count and sample tickers",
+    )
+    updated: StrictInt = Field(
+        ...,
+        description="Number of watchlist items whose status was updated",
+    )
+    tickers: List[str] = Field(
+        ...,
+        description="List of tickers included in this batch (normalized, unique)",
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "message": "Batch status update completed for 3 watchlist items. Sample: AAPL, MSFT",
+                "updated": 3,
+                "tickers": ["AAPL", "MSFT", "CRM"],
+            }
+        },
+    )
+
+class InternalBatchArchiveFailedItem(BaseModel):
+    """
+    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
+    Legacy request model for batch archiving failed items.
+    """
+    ticker: str
+    failed_stage: str
+
+class InternalBatchArchiveFailedRequest(BaseModel):
+    items: List[InternalBatchArchiveFailedItem]
+
+# --- Contract 15: Responses: Watchlist/Archive ---
+class WatchlistItem(BaseModel):
+    """
+    Represents a single watchlist item in GET /monitor/watchlist response
+    Aligns with Phase 2 UI interface requirements
+    """
+    ticker: str = Field(..., description="Stock symbol")
+    status: WatchlistStatus = Field(..., description="Derived status: Pending, Failed, Buy Ready, Buy Alert, Watch")
+    date_added: Optional[datetime] = Field(None, description="When ticker was added to watchlist")
+    is_favourite: bool = Field(False, description="Whether user marked as favourite")
+    last_refresh_status: LastRefreshStatus = Field(..., description="Health check status enum")
+    last_refresh_at: Optional[datetime] = Field(None, description="Last health check timestamp")
+    failed_stage: Optional[str] = Field(None, description="Stage where health check failed")
+    current_price: Optional[float] = Field(None, description="Latest price from refresh job")
+    pivot_price: Optional[float] = Field(None, description="VCP pivot price if identified")
+    pivot_proximity_percent: Optional[float] = Field(None, description="% from pivot (negative=below)")
+    is_leader: bool = Field(False, description="Whether passed leadership criteria")
+    vol_last: Optional[float] = Field(
+        None,
+        description="Most recent session's volume for this ticker"
+    )
+    vol_50d_avg: Optional[float] = Field(
+        None,
+        description="Average volume over the last 50 trading sessions"
+    )
+    vol_vs_50d_ratio: Optional[float] = Field(
+        None,
+        description="Ratio of current volume to 50D average (e.g., 2.1 = 2.1x)"
+    )
+    day_change_pct: Optional[float] = Field(
+        None,
+        description="Last session price change in percent vs prior close"
+    )
+    # VCP Pattern Fields
+    vcp_pass: Optional[bool] = Field(None, description="Overall VCP validation result")
+    vcpFootprint: Optional[str] = Field(None, description="VCP pattern signature (e.g., '10D 5.2% | 13D 5.0%')")
+    is_pivot_good: Optional[bool] = Field(None, description="Pivot quality flag from VCP analysis")
+    pattern_age_days: Optional[int] = Field(None, description="Days since VCP pattern formation")
+    
+    # Pivot Setup Flags
+    has_pivot: Optional[bool] = Field(None, description="Whether a valid pivot point exists")
+    is_at_pivot: Optional[bool] = Field(None, description="Price is at or near the pivot")
+    has_pullback_setup: Optional[bool] = Field(None, description="Controlled pullback setup detected")
+    days_since_pivot: Optional[int] = Field(None, description="Days since pivot formation (freshness counter)")
+    
+    # Freshness Check
+    fresh: Optional[bool] = Field(None, description="Passes freshness threshold (typically < 90 days)")
+    message: Optional[str] = Field(None, description="Human-readable explanation of status/freshness")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "ticker": "NVDA",
+                "status": "Buy Ready",
+                "date_added": "2025-09-20T10:00:00Z",
+                "is_favourite": False,
+                "last_refresh_status": "PASS",
+                "last_refresh_at": "2025-11-01T12:00:00Z",
+                "failed_stage": None,
+                "current_price": 850.00,
+                "pivot_price": 855.00,
+                "pivot_proximity_percent": -0.58,
+                "is_leader": True,
+                "vol_last": 317900.0,
+                "vol_50d_avg": 250000.0,
+                "vol_vs_50d_ratio": 1.27,
+                "day_change_pct": -0.35,
+                "vcp_pass": True,
+                "vcpFootprint": "10D 5.2% | 13D 5.0% | 10D 6.2%",
+                "is_pivot_good": True,
+                "pattern_age_days": 15,
+                "has_pivot": True,
+                "is_at_pivot": True,
+                "has_pullback_setup": False,
+                "days_since_pivot": 15,
+                "fresh": True,
+                "message": "Pivot is fresh (formed 15 days ago) and is not extended."
+            }
+        }
+    )
+
+class WatchlistMetadata(BaseModel):
+    """Metadata for watchlist response"""
+    count: int = Field(..., description="Total number of watchlist items returned")
+
+class WatchlistListResponse(BaseModel):
+    """
+    Response schema for GET /monitor/watchlist
+    Represents the complete watchlist with metadata
+    """
+    items: List[WatchlistItem] = Field(..., description="List of watchlist items")
+    metadata: WatchlistMetadata = Field(..., description="Response metadata")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "items": [
+                    {
+                        "ticker": "NVDA",
+                        "status": "Buy Ready",
+                        "date_added": "2025-09-20T10:00:00Z",
+                        "is_favourite": False,
+                        "last_refresh_status": "PASS",
+                        "last_refresh_at": "2025-11-01T12:00:00Z",
+                        "failed_stage": None,
+                        "current_price": 850.00,
+                        "pivot_price": 855.00,
+                        "pivot_proximity_percent": -0.58,
+                        "is_leader": True,
+                        "vol_last": 317900.0,
+                        "vol_50d_avg": 250000.0,
+                        "vol_vs_50d_ratio": 1.27,
+                        "day_change_pct": -0.35,
+                    }
+                ],
+                "metadata": {"count": 1}
+            }
+        }
+    )
+
+# generic shape (keeps service-specific fields flexible)
+
+class ArchiveListResponse(BaseModel):
+    archived_items: List[Dict[str, Any]]
+    metadata: WatchlistMetadata
+
+class WatchlistBatchRemoveResponse(BaseModel):
+    """
+    Success payload for POST /monitor/watchlist/batch/remove.
+
+    - removed: number of tickers successfully removed
+    - notfound: number of requested tickers not found in the watchlist
+    - removed_tickers: list of tickers actually removed (for UI detail)
+    - not_found_tickers: list of tickers requested but not present
+    - message: human-readable summary for UI display
+    """
+    message: str = Field(..., description="Summary message including key tickers")
+    removed: StrictInt = Field(..., description="Number of tickers successfully removed")
+    notfound: StrictInt = Field(..., description="Number of requested tickers not found")
+    removed_tickers: List[str] = Field(
+        default_factory=list,
+        description="Tickers actually removed in this batch",
+    )
+    not_found_tickers: List[str] = Field(
+        default_factory=list,
+        description="Tickers requested but not found in the watchlist",
+    )
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "message": "Removed 1 watchlist item. Not found: 0. Sample: AAPL",
+                "removed": 1,
+                "notfound": 0,
+                "removed_tickers": ["AAPL"],
+                "not_found_tickers": [],
+            }
+        },
+    )
+
+class InternalBatchAddResponse(BaseModel):
+    """
+    Success payload for POST /monitor/internal/watchlist/batch/add.
+
+    Exposes only an aggregate message and counts; internal arrays (added/ skipped
+    ticker lists, errors) remain service-internal and are not part of the contract.
+    """
+    message: str = Field(..., description="Summary message including key tickers")
+    added: StrictInt = Field(..., description="Number of tickers newly added to the watchlist")
+    skipped: StrictInt = Field(..., description="Number of tickers that already existed and were skipped")
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "message": "Batch add completed: added 2, skipped 1. Sample: AAPL, MSFT",
+                "added": 2,
+                "skipped": 1,
+            },
+        },
+    )
+
+# --- Contract 16: Freshness: Analyze batch ---
+
+class AnalyzeFreshnessBatchRequest(BaseModel):
+    tickers: List[str]
+
+class AnalyzeFreshnessBatchItem(BaseModel):
+    """
+    Freshness result from analysis-service /analyze/freshness/batch.
+
+    - Producer: analysis-service
+    - Consumer: monitoring-service, scheduler-service
+    """
+    ticker: str
+
+    # Primary boolean used by orchestrators
+    fresh: bool = Field(..., alias="passes_freshness_check")
+
+    # Richer context for status logic (all optional, extra='allow' for forward-compat)
+    vcp_detected: Optional[bool] = None
+    days_since_pivot: Optional[int] = None
+    message: Optional[str] = None
+    vcpFootprint: Optional[str] = None
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+# --- Contract 17: Ticker Validation ---
+MAX_TICKER_LEN: int = 10
+"""Maximum allowed length for stock ticker symbols in path parameters and requests."""
+
+class TickerPathParam(BaseModel):
+    """
+    Path parameter validation for ticker symbols.
+    Enforces format constraints: uppercase letters, digits, dot, hyphen only; length 1-10.
+    Case normalization is handled by service/route layers, not this contract.
+    """
+    ticker: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_TICKER_LEN,
+        pattern=r"^[A-Za-z0-9.\-]+$",
+        description="Stock ticker symbol (1-10 chars, letters/digits/dot/hyphen only)"
+    )
+# --- Contract 18: Generic Error Response ---
+class ApiError(BaseModel):
+    """
+    Standard error response envelope for all API error conditions.
+    Used for 400 Bad Request, 404 Not Found, 503 Service Unavailable, etc.
+    """
+    error: str = Field(..., description="Human-readable error message")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"error": "Invalid ticker format"},
+                {"error": "Ticker not found"},
+                {"error": "Service unavailable"}
+            ]
+        }
+    )
+# --- Contract 19: Responses: DELETE /monitor/archive/:ticker ---
+class DeleteArchiveResponse(BaseModel):
+    """
+    Success response for DELETE /monitor/archive/:ticker (Hard Delete).
+    Returns only a message string; internal fields (archived_at, reason, failed_stage) are not exposed.
+    """
+    message: str = Field(..., description="Confirmation message including the deleted ticker")
+
+    model_config = ConfigDict(
+        extra="forbid",  # Reject any additional fields to prevent internal leakage
+        json_schema_extra={
+            "example": {"message": "Archived ticker AAPL permanently deleted."}
+        }
+    )
+
+# --- Contract 19: Responses: Watchlist Favourite ---
+class WatchlistFavouriteRequest(BaseModel):
+    """
+    Request body for POST /monitor/watchlist/<ticker>/favourite
+    """
+    is_favourite: StrictBool = Field(..., alias="is_favourite")
+    model_config = ConfigDict(populate_by_name=True)
+
+# Success response must be message-only and forbid extra fields
+class WatchlistFavouriteResponse(BaseModel):
+    """
+    Success payload for POST /monitor/watchlist/<ticker>/favourite
+    """
+    message: str
+    model_config = ConfigDict(extra="forbid")
+
+# --- Contract 20: Responses: Watchlist refresh orchestrator ---
+class WatchlistRefreshStatusResponse(BaseModel):
+    """
+    Success payload for POST /monitor/internal/watchlist/refresh-status.
+
+    Exposes only an aggregate message and counts for:
+    - updated_items: number of watchlist items updated in place (List A)
+    - archived_items: number of items moved from watchlistitems to archived_watchlist_items (List B)
+    - failed_items: number of items that failed processing in this run
+    """
+
+    message: str = Field(
+        ...,
+        description="Summary message including counts and sample tickers for traceability",
+    )
+    updated_items: StrictInt = Field(
+        ...,
+        description="Number of watchlist items whose status was updated in place",
+    )
+    archived_items: StrictInt = Field(
+        ...,
+        description="Number of watchlist items moved to archive in this run",
+    )
+    failed_items: StrictInt = Field(
+        ...,
+        description="Number of items that failed to process due to downstream/service errors",
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "message": "Watchlist status refresh completed successfully.",
+                "updated_items": 32,
+                "archived_items": 5,
+                "failed_items": 0,
+            }
+        },
+    )
+
+# --- Contract 21: Responses: Watchlist Summary metrics ---
+class WatchlistMetricsItem(BaseModel):
+    """
+    Summary metrics for a watchlist ticker, computed by data-service.
+    """
+    current_price: Optional[float] = None
+    vol_last: Optional[float] = None
+    vol_50d_avg: Optional[float] = None
+    day_change_pct: Optional[float] = None  # last session % change vs prior close
+
+class WatchlistMetricsBatchResponse(BaseModel):
+    """
+    Response for POST /data/watchlist-metrics/batch.
+    Mapping of ticker -> metrics.
+    """
+    metrics: Dict[str, WatchlistMetricsItem]

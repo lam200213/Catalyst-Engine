@@ -3,7 +3,9 @@ import logging
 from pymongo import MongoClient, errors
 from datetime import datetime, timezone
 import os
-from typing import List, Any, Dict
+from urllib.parse import unquote
+import re
+from typing import List, Any, Dict, Type
 from pydantic import ValidationError, TypeAdapter
 from shared.contracts import (
     PriceDataItem, 
@@ -11,11 +13,13 @@ from shared.contracts import (
     MarketOverview,
     MarketLeaders,
     MarketHealthResponse,
+    MAX_TICKER_LEN,
 )
 import json
 
 # Use logger
 logger = logging.getLogger(__name__)
+_TICKER_PATH_PATTERN = re.compile(r"^[A-Za-z0-9.\-]+$")
 
 # A consistent structure for failure responses
 def failed_check(metric, message, **kwargs):
@@ -255,11 +259,16 @@ def validate_market_leaders(payload: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Payload that failed validation: {json.dumps(payload, indent=2)}")
         return {"leading_industries": []}
 
-def compose_market_health_response(overview: Dict[str, Any], leaders: Dict[str, Any]) -> Dict[str, Any]:
+def compose_market_health_response(
+    overview: Dict[str, Any], 
+    leaders: Dict[str, Any],
+    indices_analysis: Dict[str, Any] | None = None
+) -> Dict[str, Any]:
     try:
         obj = MarketHealthResponse(
             market_overview=MarketOverview(**overview),
             leaders_by_industry=MarketLeaders(**leaders),
+            indices_analysis=indices_analysis
         )
         return obj.model_dump(mode="json")
     except ValidationError as e:
@@ -268,4 +277,96 @@ def compose_market_health_response(overview: Dict[str, Any], leaders: Dict[str, 
         return {
             "market_overview": validate_market_overview(overview),
             "leaders_by_industry": validate_market_leaders(leaders),
+            "indices_analysis": indices_analysis
         }
+
+# shared helper for batch remove messaging
+def build_batch_remove_message(removed: int, notfound: int, tickers: List[str]) -> str:
+    """
+    Compose the standard success message for POST /monitor/watchlist/batch/remove.
+    Kept here to avoid duplicating string formatting logic in app.py and to
+    preserve a single source of truth for the UI-visible message.
+    """
+    if tickers:
+        tickers_str = ", ".join(tickers)
+        return (
+            f"Successfully removed {removed} tickers from the watchlist "
+            f"(not found: {notfound}): {tickers_str}"
+        )
+    return (
+        f"Successfully removed {removed} tickers from the watchlist "
+        f"(not found: {notfound})."
+    )
+
+def normalize_and_validate_ticker_path(raw: str) -> str:
+    """
+    Normalize and validate a ticker path segment.
+
+    Steps:
+    - Treat None as empty string.
+    - Strip whitespace.
+    - URL-decode with unquote.
+    - Enforce length <= MAX_TICKER_LEN.
+    - Enforce allowed characters (letters, digits, dot, hyphen).
+    - Return uppercase symbol.
+
+    Raises:
+        ValueError("Ticker cannot be empty") if empty after normalization.
+        ValueError("Invalid ticker format: <decoded>") if length or pattern fails.
+    """
+    # Normalize input to a decoded, stripped string
+    decoded = unquote((raw or "")).strip()
+
+    if not decoded:
+        # Matches existing PUT/DELETE watchlist behavior
+        raise ValueError("Ticker cannot be empty")
+
+    # Length check (fallback to 10 if MAX_TICKER_LEN is falsy)
+    max_len = int(MAX_TICKER_LEN or 10)
+    if len(decoded) > max_len:
+        raise ValueError(f"Invalid ticker format: {decoded}")
+
+    # Pattern check
+    if not _TICKER_PATH_PATTERN.fullmatch(decoded):
+        raise ValueError(f"Invalid ticker format: {decoded}")
+
+    # Normalization: uppercase but keep '.' and '-'
+    return decoded.upper()
+
+# generic helper for building validated orchestrator responses
+def build_validated_payload(summary: Dict[str, Any], model_cls: Type[Any]) -> Dict[str, Any]:
+    """
+    Validate and normalize a summary dict using the given Pydantic model.
+
+    This is used by app.py to keep route handlers thin while still enforcing
+    shared-contract schemas and alias-based JSON field names.
+    """
+    # Defensive default to avoid None explosions
+    summary = summary or {}
+    model = model_cls(**summary)
+    # Use aliases so JSON keys match the external contract (e.g. updated_items)
+    return model.model_dump(by_alias=True)
+
+#  generic helper for sample-based summary messages
+def build_sample_from_items(
+    items: List[Dict[str, Any]],
+    key: str = "ticker",
+    max_items: int = 3,
+) -> str:
+    """
+    Extract up to `max_items` distinct string values for `key` from a list of dicts.
+
+    Used by orchestrators to embed a small representative sample of identifiers
+    (e.g., tickers) into human-readable summary messages without duplicating
+    filtering and joining logic.
+    """
+    values: List[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            values.append(value)
+            if len(values) >= max_items:
+                break
+    return ", ".join(values)

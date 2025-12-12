@@ -333,42 +333,53 @@ class TestVCPEvaluationModes(unittest.TestCase):
         self.assertIn('vcp_pass', json_data)
         self.assertFalse(json_data['vcp_pass'])
         self.assertIn('vcp_details', json_data, "Response should contain the detailed check results.")
-        self.assertEqual(json_data['vcp_details']['is_pivot_good'], True)
-        self.assertEqual(json_data['vcp_details']['is_demand_dry'], False)
+        self.assertIn('vcp_details', json_data)
+        self.assertTrue(json_data['vcp_details']['pivot_validation']['pass'])
+        self.assertFalse(json_data['vcp_details']['volume_validation']['pass'])
 
     # Ensure that ?mode=fast stops processing on the first failure and returns a lean response.
     @patch('app.requests.get')
+    @patch('app.find_volatility_contraction_pattern')
     @patch('vcp_logic.is_pivot_good')
     @patch('vcp_logic.is_correction_deep')
-    @patch('vcp_logic.is_demand_dry') # Mock the individual checks
-    def test_analyze_fail_fast_mode_halts_on_first_failure(self, mock_is_demand_dry, mock_is_correction_deep, mock_is_pivot_good, mock_get):
-        """
-        Tests that 'fast' mode halts execution on the first check failure.
-        """
-        # --- Arrange ---
+    @patch('vcp_logic.is_demand_dry')
+    def test_analyze_fail_fast_mode_halts_on_first_failure(
+        self,
+        mock_is_demand_dry,
+        mock_is_correction_deep,
+        mock_is_pivot_good,
+        mock_find_vcp,
+        mock_get,
+    ):
+        # Arrange data-service mock
         mock_get.return_value = MagicMock(
             status_code=200,
             json=lambda: self.mock_price_data,
-            content=self.mock_price_data_content
+            content=self.mock_price_data_content,
         )
 
-        # Mock the VCP checks so the first one fails
-        mock_is_pivot_good.return_value = False # This is the first check, it will fail.
-        mock_is_correction_deep.return_value = False # Should not be called
-        mock_is_demand_dry.return_value = True # Should not be called
+        # Make detection return a 2‑contraction VCP so filtering passes
+        mock_find_vcp.return_value = [
+            (0, 100.0, 5, 90.0),
+            (6, 95.0, 10, 90.0),
+        ]
 
-        # --- Act ---
-        # Call the endpoint explicitly with mode=fast
+        # First check fails, others would pass but should not be called
+        mock_is_pivot_good.return_value = False
+        mock_is_correction_deep.return_value = False
+        mock_is_demand_dry.return_value = True
+
+        # Act
         response = self.app.get('/analyze/FAILING_TICKER?mode=fast')
         json_data = response.get_json()
 
-        # --- Assert ---
+        # Assert response
         self.assertEqual(response.status_code, 200)
         self.assertIn('vcp_pass', json_data)
         self.assertFalse(json_data['vcp_pass'])
-        self.assertNotIn('vcp_details', json_data, "Fast mode should not return detailed results.")
+        self.assertNotIn('vcp_details', json_data)
 
-        # Crucially, assert that the logic halted after the first failure
+        # Assert fail‑fast ordering
         mock_is_pivot_good.assert_called_once()
         mock_is_correction_deep.assert_not_called()
         mock_is_demand_dry.assert_not_called()
@@ -379,21 +390,34 @@ class TestBatchAnalysisEndpoint(unittest.TestCase):
         self.app = app.test_client()
         self.app.testing = True
 
+    @patch('app._process_ticker_analysis')
     @patch('app.requests.post')
-    def test_batch_analysis_success(self, mock_post):
+    def test_batch_analysis_success(self, mock_post, mock_process):
         """Business Logic: Verifies a successful batch run with mixed pass/fail tickers."""
-        # Arrange: Mock data for two tickers, one that will pass, one that will fail
+        # Arrange: Mock batch data for two tickers
         mock_post.return_value = MagicMock(
             status_code=200,
             json=lambda: {
                 "success": {
                     "VCP_PASS": generate_pivot_test_data(vcp_present=True),
-                    "VCP_FAIL": generate_pivot_test_data(vcp_present=False)
+                    "VCP_FAIL": generate_pivot_test_data(vcp_present=False),
                 }
             }
         )
+
+        # Make _process_ticker_analysis return a passing result for VCP_PASS and None for VCP_FAIL
+        mock_process.side_effect = [
+            {
+                "ticker": "VCP_PASS",
+                "vcp_pass": True,
+                "vcpFootprint": "10W-20/5-3T (10D 20.0% | 5D 5.0%)",
+                "is_pivot_good": True,
+            },
+            None,  # VCP_FAIL filtered out
+        ]
+
         payload = {"tickers": ["VCP_PASS", "VCP_FAIL"]}
-        
+
         # Act
         response = self.app.post('/analyze/batch', data=json.dumps(payload), content_type='application/json')
         json_data = response.get_json()
@@ -401,10 +425,13 @@ class TestBatchAnalysisEndpoint(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         self.assertIsInstance(json_data, list)
-        self.assertEqual(len(json_data), 1) # Only the passing ticker should be returned
+        self.assertEqual(len(json_data), 1)  # Only the passing ticker should be returned
         self.assertEqual(json_data[0]['ticker'], 'VCP_PASS')
         self.assertTrue(json_data[0]['vcp_pass'])
         self.assertIn('vcpFootprint', json_data[0])
+
+        # Optional: ensure helper was invoked twice, once per ticker
+        self.assertEqual(mock_process.call_count, 2)
 
     def test_batch_analysis_empty_ticker_list(self):
         """Edge Case: Verifies an empty ticker list returns a 200 OK with an empty list."""
@@ -471,6 +498,140 @@ class TestBatchAnalysisEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(json_data), 1) # Only the good result should be present
         self.assertEqual(json_data[0]['ticker'], "GOOD")
+
+# Integration tests for POST /analyze/freshness/batch
+class TestFreshnessBatchEndpoint(unittest.TestCase):
+    """Tests for the /analyze/freshness/batch endpoint."""
+
+    def setUp(self):
+        self.app = app.test_client()
+        self.app.testing = True
+
+    @patch('app.requests.post')
+    @patch('app._process_ticker_freshness_analysis')
+    def test_freshness_batch_mixed_results_returns_only_passers(self, mock_process, mock_post):
+        """
+        1. Business Logic: Mixed pass/fail inputs should return only those that pass freshness.
+        11. Assert both outcome and key identifier for each returned item.
+        13. Mock raw upstream batch JSON; mock internal helper for isolation.
+        """
+        # Upstream data-service returns raw historical data for three tickers; one is invalid and omitted
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "FRESH_PASS": [{"formatted_date": "2025-01-01", "close": 100, "open": 99, "high": 101, "low": 99, "volume": 1000, "adjclose": 100}],
+                    "STALE_FAIL": [{"formatted_date": "2024-01-01", "close": 50, "open": 49, "high": 51, "low": 49, "volume": 900, "adjclose": 50}],
+                    "EXTENDED_FAIL": [{"formatted_date": "2025-01-01", "close": 200, "open": 199, "high": 210, "low": 198, "volume": 1100, "adjclose": 200}],
+                },
+                "errors": {
+                    "BAD_TICKER": "not found"
+                }
+            }
+        )
+
+        # _process_ticker_freshness_analysis decides per ticker; only FRESH_PASS returns a dict
+        mock_process.side_effect = [
+            {
+                "ticker": "FRESH_PASS",
+                "passes_freshness_check": True,
+                "vcp_detected": True,
+                "days_since_pivot": 12,
+                "message": "Pivot is fresh (formed 12 days ago) and is not extended.",
+                "vcpFootprint": "12D 18.2% | 8D 7.5%"
+            },
+            None,   # STALE_FAIL filtered out
+            None    # EXTENDED_FAIL filtered out
+        ]
+
+        payload = {"tickers": ["FRESH_PASS", "STALE_FAIL", "EXTENDED_FAIL", "BAD_TICKER"]}
+        resp = self.app.post('/analyze/freshness/batch', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['ticker'], 'FRESH_PASS')
+        self.assertTrue(data[0]['passes_freshness_check'])
+        self.assertIn('vcpFootprint', data[0])
+        # Ensure _process_ticker_freshness_analysis was invoked for success tickers only
+        self.assertEqual(mock_process.call_count, 3)
+
+    def test_freshness_batch_empty_ticker_list(self):
+        """
+        2. Edge Case: Empty tickers array should return 200 with empty list.
+        """
+        resp = self.app.post('/analyze/freshness/batch', data=json.dumps({"tickers": []}), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), [])
+
+    def test_freshness_batch_invalid_payload(self):
+        """
+        3. Security & 2. Edge Case: Malformed payloads should 400; ensures input validation.
+        7. No type mismatch: 'tickers' must be a list.
+        """
+        # Missing 'tickers'
+        resp1 = self.app.post('/analyze/freshness/batch', data=json.dumps({"symbols": []}), content_type='application/json')
+        self.assertEqual(resp1.status_code, 400)
+
+        # 'tickers' not an array
+        resp2 = self.app.post('/analyze/freshness/batch', data=json.dumps({"tickers": "AAPL"}), content_type='application/json')
+        self.assertEqual(resp2.status_code, 400)
+
+        # Not JSON / wrong content-type -> request.get_json() returns None -> 400
+        resp3 = self.app.post('/analyze/freshness/batch', data="not-json", content_type='text/plain')
+        self.assertEqual(resp3.status_code, 400)
+
+    @patch('app.requests.post')
+    def test_freshness_batch_data_service_error(self, mock_post):
+        """
+        3. Security: Upstream failure should not leak internals; respond 502.
+        8. Mock data consistency: Do not assert fields when upstream fails.
+        """
+        mock_post.return_value = MagicMock(status_code=500, text="Internal Error")
+        resp = self.app.post('/analyze/freshness/batch', data=json.dumps({"tickers": ["AAPL"]}), content_type='application/json')
+        self.assertEqual(resp.status_code, 502)
+
+    @patch('app.requests.post')
+    def test_freshness_batch_data_service_connection_error(self, mock_post):
+        """
+        3. Security: Connection errors should return 503.
+        """
+        from requests.exceptions import RequestException
+        mock_post.side_effect = RequestException("Connection refused")
+        resp = self.app.post('/analyze/freshness/batch', data=json.dumps({"tickers": ["AAPL"]}), content_type='application/json')
+        self.assertEqual(resp.status_code, 503)
+
+    @patch('app.requests.post')
+    @patch('app._process_ticker_freshness_analysis')
+    def test_freshness_batch_handles_invalid_tickers_in_input(self, mock_process, mock_post):
+        """
+        1. Business Logic & 10. Data structure consistency:
+        If batch contains invalid tickers, only valid-pass results are returned;
+        ensure the endpoint ignores 'errors' and processes 'success' keys only.
+        """
+        mock_post.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {
+                "success": {
+                    "VALID_1": [{"formatted_date": "2025-01-01", "close": 100, "open": 99, "high": 101, "low": 99, "volume": 1000, "adjclose": 100}],
+                },
+                "errors": {"INVALID_XYZ": "not found"}
+            }
+        )
+        mock_process.return_value = {
+            "ticker": "VALID_1",
+            "passes_freshness_check": True,
+            "vcp_detected": True,
+            "days_since_pivot": 10,
+            "message": "Pivot is fresh (formed 10 days ago) and is not extended.",
+            "vcpFootprint": "10D 12.0%"
+        }
+        resp = self.app.post('/analyze/freshness/batch', data=json.dumps({"tickers": ["VALID_1", "INVALID_XYZ"]}), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        out = resp.get_json()
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]['ticker'], 'VALID_1')
+        self.assertTrue(out[0]['passes_freshness_check'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,24 +1,28 @@
 // frontend-app/src/components/LeadingIndustriesTable.jsx
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
     Box, Heading, Table, Thead, Tbody, Tr, Th, Td, TableContainer,
-    VStack, HStack, Text, Tag, Tooltip, Icon
+    VStack, HStack, Text, Tag, Tooltip, Icon, Button, useToast, Flex, Spacer
 } from '@chakra-ui/react';
-import { FiInfo } from 'react-icons/fi'; // Feather Icons - clean, minimal style
+import { FiInfo, FiPlusCircle } from 'react-icons/fi'; // Feather Icons - clean, minimal style
+import { addWatchlistBatch } from '../services/monitoringApi';
 
-const LeadingIndustriesTable = ({ marketLeaders }) => {
+// Default marketLeaders to empty object to prevent "undefined" prop warning
+const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
+  const toast = useToast();
+  const [isAdding, setIsAdding] = useState(false);
+
   // Normalize to an array of { industry, stocks }
   const normalizeLeaders = (leaders) => {
+    // Robust check for null/undefined even with default prop
     if (!leaders || typeof leaders !== 'object') {
-      console.warn('[LeadingIndustriesTable] Invalid marketLeaders prop:', leaders);
       return [];
     }
     const li = leaders.leading_industries;
 
     // Validate leading_industries structure
     if (!li) {
-      console.warn('[LeadingIndustriesTable] Missing leading_industries field');
       return [];
     }
 
@@ -52,9 +56,46 @@ const LeadingIndustriesTable = ({ marketLeaders }) => {
     return [];
   };
 
+  const handleBatchAdd = async (allTickers) => {
+    if (!allTickers.length) return;
+    
+    setIsAdding(true);
+    try {
+        const response = await addWatchlistBatch(allTickers);
+        // Response shape from backend: { message: str, added: int, skipped: int }
+        const { added, skipped } = response.data;
+        
+        toast({
+            title: "Watchlist Updated",
+            description: `Added ${added} new leaders (${skipped} skipped).`,
+            status: "success",
+            duration: 4000,
+            isClosable: true,
+            position: "top-right"
+        });
+    } catch (error) {
+        console.error("Batch add failed:", error);
+        toast({
+            title: "Error adding tickers",
+            description: error.response?.data?.error || "Could not add leaders to watchlist.",
+            status: "error",
+            duration: 5000,
+            isClosable: true,
+             position: "top-right"
+        });
+    } finally {
+        setIsAdding(false);
+    }
+  };
+
   // Wrap in try-catch for extra safety
   try {
       const industries = normalizeLeaders(marketLeaders);
+      
+      // Extract unique tickers from all industries
+      const allTickers = Array.from(new Set(
+        industries.flatMap(ind => ind.stocks.map(s => s.ticker))
+      ));
 
       if (!industries.length) {
         return (
@@ -67,7 +108,26 @@ const LeadingIndustriesTable = ({ marketLeaders }) => {
 
       return (
         <Box p={4} borderWidth="1px" borderRadius="md">
-          <Heading size="md" mb={4}>Leading Industries & Stocks</Heading>
+          {/* Header Flex Container */}
+          <Flex mb={4} align="center">
+            <Heading size="md">Leading Industries & Stocks</Heading>
+            <Spacer />
+            {allTickers.length > 0 && (
+                <Button
+                    leftIcon={<FiPlusCircle />}
+                    colorScheme="blue"
+                    size="sm"
+                    variant="outline"
+                    isLoading={isAdding}
+                    loadingText="Adding..."
+                    onClick={() => handleBatchAdd(allTickers)}
+                    title={`Add all ${allTickers.length} leading stocks to watchlist`}
+                >
+                    Add All ({allTickers.length})
+                </Button>
+            )}
+          </Flex>
+
           <TableContainer>
             <Table variant="simple" size="sm">
               <Thead>

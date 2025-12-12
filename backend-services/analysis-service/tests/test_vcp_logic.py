@@ -2,6 +2,7 @@
 import unittest
 import numpy as np
 from unittest.mock import patch
+from vcp_logic import check_pivot_freshness, PIVOT_FRESHNESS_DAYS, PIVOT_BREAKOUT_THRESHOLD
 
 # Temporarily add the service directory to the path to import the new logic module
 # This will be resolved by the execution environment (e.g., pytest)
@@ -136,22 +137,39 @@ class TestVcpOrchestration(unittest.TestCase):
     Test suite for the main orchestrator function `run_vcp_screening`.
     This uses mocking to isolate the orchestrator's logic.
     """
+    @patch('vcp_logic.is_volume_dry_up_at_pivot')
     @patch('vcp_logic.is_demand_dry')
     @patch('vcp_logic.is_correction_deep')
     @patch('vcp_logic.is_pivot_good')
-    def test_run_vcp_screening_pass(self, mock_is_pivot_good, mock_is_correction_deep, mock_is_demand_dry):
+    def test_run_vcp_screening_pass(
+        self,
+        mock_is_pivot_good,
+        mock_is_correction_deep,
+        mock_is_demand_dry,
+        mock_analyze_vol,
+    ):
         """Tests the case where all individual checks pass."""
-        # Arrange: All checks return a "pass" condition.
+        # Arrange: 2‑contraction VCP so structural rules pass
+        vcp_results = [
+            (0, 100.0, 5, 90.0),
+            (6, 95.0, 10, 90.0),
+        ]
+        prices = [100.0] * 15
+        volumes = [10000] * 15
+
         mock_is_pivot_good.return_value = True
-        mock_is_correction_deep.return_value = False # is_deep returns False for a pass
+        mock_is_correction_deep.return_value = False
         mock_is_demand_dry.return_value = True
+        mock_analyze_vol.return_value = (True, 0.8)
 
         # Act
-        vcp_pass_status, _, _ = run_vcp_screening([(0, 100, 10, 80)], [100], [10000])
+        vcp_pass_status, _, _ = run_vcp_screening(vcp_results, prices, volumes)
 
         # Assert
         self.assertTrue(vcp_pass_status)
-        mock_is_demand_dry.assert_called_once_with([(0, 100, 10, 80)], [100], [10000])
+        mock_is_pivot_good.assert_called_once()
+        mock_is_demand_dry.assert_called_once()
+        mock_analyze_vol.assert_called_once()
 
     @patch('vcp_logic.is_demand_dry')
     @patch('vcp_logic.is_correction_deep')
@@ -175,6 +193,102 @@ class TestVcpOrchestration(unittest.TestCase):
         self.assertFalse(vcp_pass_status)
         self.assertEqual(footprint, "")
 
+# Unit tests for pivot freshness logic
+class TestPivotFreshnessLogic(unittest.TestCase):
+    """
+    Unit tests for check_pivot_freshness covering:
+    - Pass/fail logic
+    - Boundary conditions (days and breakout)
+    - No-VCP case
+    - Minimal data length handling
+    """
+
+    def _build_prices(self, length, base=100.0):
+        # Simple monotonic list; values don't influence freshness beyond current_price
+        return [float(base + i) for i in range(length)]
+
+    def test_freshness_passes_at_threshold_days(self):
+        """
+        1. Business Logic: days_since_pivot == threshold should pass.
+        7. Types: Validate returned fields types are as expected.
+        9. Expected outcomes align with function output.
+        """
+        # vcp_results format: [(high_idx, high_price, low_idx, low_price)]
+        threshold = PIVOT_FRESHNESS_DAYS
+        total_len = 50
+        last_low_idx = total_len - 1 - threshold
+        last_high_price = 100.0
+        vcp_results = [(10, last_high_price, last_low_idx, 90.0)]
+        prices = self._build_prices(total_len, base=95.0)
+        prices[-1] = last_high_price * (PIVOT_BREAKOUT_THRESHOLD - 0.01)  # below breakout threshold
+
+        out = check_pivot_freshness(vcp_results, prices)
+        self.assertTrue(out['passes'])
+        self.assertEqual(out['days_since_pivot'], threshold)
+        self.assertIsInstance(out['message'], str)
+
+    def test_freshness_fails_when_stale_just_over_threshold(self):
+        """
+        2. Edge Case: days_since_pivot == threshold + 1 should fail as stale.
+        5. Blind spots: ensure off-by-one is caught.
+        """
+        threshold = PIVOT_FRESHNESS_DAYS + 1
+        total_len = 60
+        last_low_idx = total_len - 1 - threshold
+        last_high_price = 120.0
+        vcp_results = [(20, last_high_price, last_low_idx, 100.0)]
+        prices = self._build_prices(total_len, base=110.0)
+        prices[-1] = last_high_price  # not extended, but stale
+
+        out = check_pivot_freshness(vcp_results, prices)
+        self.assertFalse(out['passes'])
+        self.assertEqual(out['days_since_pivot'], PIVOT_FRESHNESS_DAYS + 1)
+        self.assertIn('stale', out['message'].lower())
+
+    def test_freshness_fails_when_extended_breakout(self):
+        """
+        1. Business Logic: price > high * threshold should fail as extended.
+        12. Boundary: price just beyond breakout threshold fails; just at threshold would pass upstream freshness gate.
+        """
+        total_len = 40
+        last_low_idx = total_len - 10
+        last_high_price = 50.0
+        vcp_results = [(5, last_high_price, last_low_idx, 45.0)]
+        prices = self._build_prices(total_len, base=49.0)
+        prices[-1] = last_high_price * (PIVOT_BREAKOUT_THRESHOLD + 0.001)  # just over threshold
+
+        out = check_pivot_freshness(vcp_results, prices)
+        self.assertFalse(out['passes'])
+        self.assertIn('breakout', out['message'].lower())
+
+    def test_freshness_no_vcp_detected(self):
+        """
+        2. Edge Case: No VCP results should fail gracefully with None days_since_pivot.
+        7. Type: days_since_pivot is None on no-VCP.
+        """
+        prices = self._build_prices(10)
+        out = check_pivot_freshness([], prices)
+        self.assertFalse(out['passes'])
+        self.assertIsNone(out['days_since_pivot'])
+        self.assertIn('no vcp', out['message'].lower())
+
+    def test_freshness_minimal_length_prices_graceful(self):
+        """
+        12. Length Thresholds: Provide minimal price data around last_low_idx boundary.
+        Ensure no index errors and deterministic output.
+        """
+        total_len = 2
+        last_low_idx = 0
+        last_high_price = 100.0
+        vcp_results = [(0, last_high_price, last_low_idx, 95.0)]
+        prices = self._build_prices(total_len, base=99.0)
+        prices[-1] = last_high_price  # within threshold on price, days_since_pivot = 1
+
+        out = check_pivot_freshness(vcp_results, prices)
+        # Depending on PIVOT_FRESHNESS_DAYS (default 20), with days_since_pivot=1 it should pass freshness and not be extended.
+        self.assertIn('passes', out)
+        self.assertIn('days_since_pivot', out)
+        self.assertIsInstance(out['message'], str)
 
 if __name__ == '__main__':
     unittest.main()

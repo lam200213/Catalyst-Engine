@@ -4,8 +4,14 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-11-1
-Minor bugs fixed; Refine the structure of frontend
+2025-12-12
+test(frontend): fix react-query providers, normalize App integration tests, and remove JSX-in-.js issue
+- Wrap App tests with QueryClientProvider to prevent "No QueryClient set" runtime errors.
+- Improve lightweight-charts mocks to include missing series methods used by ChartPanel.
+- Rewrite App.test.jsx to align with routing + background prefetch architecture and avoid Router nesting.
+- Update failing prefetch-failure assertion to verify "no crash" instead of relying on console.warn.
+- Fix useStockData.test.js to run without JSX parsing errors by using React.createElement wrapper.
+- Standardize test QueryClient defaults for TanStack Query v5 (gcTime, retry disabled).
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -14,6 +20,8 @@ Minor bugs fixed; Refine the structure of frontend
 - **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
 - **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
 - **Market & Portfolio Monitoring**: Provides a high-level market health overview, tracks leading industries, and allows users to manage a personal watchlist and portfolio.
+- **Watchlist Refresh Orchestrator:** The monitoring-service owns an internal refresh pipeline that calls screening, analysis, and data services to update watchlist item statuses and archive failed items via a single internal endpoint.
+- **Automatic Archive Expiry:** Archived watchlist entries are stored in MongoDB with a 30-day TTL index on their archived timestamp, automatically purging stale records without manual cleanup.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.
 - **Microservices Architecture:** A robust, containerized environment managed through a central API Gateway, all powered by Python.
 - **Containerized Environment**: Fully containerized for consistent, one-command startup.

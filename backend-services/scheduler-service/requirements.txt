@@ -5,3 +5,6 @@ pytest
 shortuuid
 apscheduler
 pydantic
+celery
+redis
+sse-starlette

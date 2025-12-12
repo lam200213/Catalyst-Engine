@@ -12,7 +12,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure
-from typing import List
+from typing import List, Dict
 import threading
 from pydantic import TypeAdapter
 
@@ -98,9 +98,9 @@ from providers.yfin import price_provider as yf_price_provider
 from providers.yfin import financials_provider as yf_financials_provider
 from providers.yfin.market_data_provider import DayGainersSource, YahooSectorIndustrySource, NewHighsScreenerSource, MarketBreadthFetcher
 # Import the logic
-from helper_functions import check_market_trend_context, validate_and_prepare_financials, cache_covers_request, plan_incremental_price_fetch, finalize_price_response, compute_returns_for_period
+from helper_functions import check_market_trend_context, validate_and_prepare_financials, compute_watchlist_metrics_from_prices, plan_incremental_price_fetch, finalize_price_response, compute_returns_for_period, validate_and_prepare_price_data
 
-from shared.contracts import ScreenerQuote
+from shared.contracts import ScreenerQuote, WatchlistMetricsBatchResponse, WatchlistMetricsItem
 
 # --- Flask-Caching Setup ---
 # Configuration for Redis Cache. The URL is provided by the environment.
@@ -911,6 +911,75 @@ def get_market_breadth():
     except Exception as e:
         app.logger.error(f"Failed to fetch market breadth: {e}", exc_info=True)
         return jsonify({"error": "Failed to fetch market breadth"}), 500
+
+@app.route('/data/watchlist-metrics/batch', methods=['POST'])
+def get_watchlist_metrics_batch():
+    """
+    Computes compact watchlist metrics for a batch of tickers.
+
+    Request JSON:
+        { "tickers": ["HG", "INTC", ...] }
+
+    Response JSON:
+        {
+          "metrics": {
+            "HG": {
+              "current_price": 18.97,
+              "vol_last": 317900,
+              "vol_50d_avg": 250000,
+              "day_change_pct": -0.35
+            },
+            ...
+          }
+        }
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        tickers = payload.get("tickers")
+
+        if not isinstance(tickers, list) or not tickers:
+            return jsonify({"error": "Invalid request. 'tickers' array is required."}), 400
+
+        # Normalize tickers to strings and uppercase
+        norm_tickers = [
+            str(t).strip().upper()
+            for t in tickers
+            if isinstance(t, str) and t.strip()
+        ]
+        if not norm_tickers:
+            return jsonify({"metrics": {}}), 200
+
+        # For simplicity and DRY, reuse the existing /price/batch planning and provider logic.
+        # Here we fetch recent history for all tickers via the yahoo price provider.
+        # You can tune period if needed (e.g., "3mo" or "6mo").
+        period = "3mo"
+        source = "yfinance"
+
+        # Use the same batch provider used by /price/batch
+        # Expected shape: { "success": { "HG": [ {formatted_date, close, volume,...}, ... ], ... }, "failed": [...] }
+        fetched = yf_price_provider.get_stock_data(norm_tickers, executor, start_date=None, period=period)
+        metrics: Dict[str, Dict[str, float | None]] = {}
+
+        for ticker in norm_tickers:
+            raw_list = fetched.get(ticker) if isinstance(fetched, dict) else None
+            if not isinstance(raw_list, list):
+                metrics[ticker] = WatchlistMetricsItem().model_dump()
+                continue
+
+            validated = validate_and_prepare_price_data(raw_list, ticker)
+            if not validated:
+                metrics[ticker] = WatchlistMetricsItem().model_dump()
+                continue
+
+            m = compute_watchlist_metrics_from_prices(validated)
+            metrics[ticker] = WatchlistMetricsItem(**m).model_dump()
+
+        response = WatchlistMetricsBatchResponse(metrics=metrics)
+        return jsonify(response.model_dump(mode="json")), 200
+
+    except Exception as e:
+        app.logger.error(f"/data/watchlist-metrics/batch failed: {e}", exc_info=True)
+        return jsonify({"error": "Failed to compute watchlist metrics"}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():

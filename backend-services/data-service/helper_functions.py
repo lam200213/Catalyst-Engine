@@ -3,7 +3,7 @@ import logging
 from pymongo import MongoClient, errors
 from datetime import datetime, timezone, date, timedelta
 import os
-from typing import List
+from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydantic import ValidationError, TypeAdapter
 from shared.contracts import (
@@ -12,6 +12,7 @@ from shared.contracts import (
 )
 from providers.yfin.market_data_provider import ReturnCalculator
 import pandas_market_calendars as mcal
+import statistics
 
 # Use logger
 logger = logging.getLogger(__name__)
@@ -546,3 +547,56 @@ def compute_returns_for_period(tickers: List[str], period: str) -> dict:
                 logging.error(f"Error fetching {period} return for {t}: {e}")
                 results[t] = None
     return results
+
+def compute_watchlist_metrics_from_prices(
+    historical: List[Dict[str, Any]]
+) -> Dict[str, Optional[float]]:
+    """
+    Compute summary watchlist metrics from validated price history.
+
+    Inputs: a list of dicts shaped like PriceDataItem (already validated).
+    Outputs:
+        - current_price: last close
+        - vol_last: last volume
+        - vol_50d_avg: avg volume over last up to 50 sessions
+        - day_change_pct: % change of last close vs previous close
+    """
+    if not historical:
+        return {
+            "current_price": None,
+            "vol_last": None,
+            "vol_50d_avg": None,
+            "day_change_pct": None,
+        }
+
+    # Ensure chronological order
+    sorted_data = sorted(
+        historical,
+        key=lambda x: x.get("formatted_date") or "",
+    )
+    last_bar = sorted_data[-1]
+    prev_bar = sorted_data[-2] if len(sorted_data) >= 2 else None
+
+    current_price = last_bar.get("close")
+    vol_last = last_bar.get("volume")
+
+    # Compute 50-day average volume from last up to 50 bars with non-null volume
+    recent = [b for b in sorted_data[-50:] if b.get("volume") is not None]
+    vol_50d_avg = statistics.mean(b["volume"] for b in recent) if recent else None
+
+    day_change_pct = None
+    if prev_bar and isinstance(prev_bar.get("close"), (int, float)) and prev_bar["close"]:
+        try:
+            day_change_pct = (
+                (float(current_price) - float(prev_bar["close"]))
+                / float(prev_bar["close"])
+            ) * 100.0 if current_price is not None else None
+        except Exception:
+            day_change_pct = None
+
+    return {
+        "current_price": float(current_price) if isinstance(current_price, (int, float)) else None,
+        "vol_last": float(vol_last) if isinstance(vol_last, (int, float)) else None,
+        "vol_50d_avg": float(vol_50d_avg) if isinstance(vol_50d_avg, (int, float)) else None,
+        "day_change_pct": float(day_change_pct) if isinstance(day_change_pct, (int, float)) else None,
+    }

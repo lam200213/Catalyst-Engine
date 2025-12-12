@@ -12,3 +12,4 @@ finnhub-python
 pytest
 curl-cffi
 pydantic
+statistics

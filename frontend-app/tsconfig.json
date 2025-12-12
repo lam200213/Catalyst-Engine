@@ -1,0 +1,20 @@
+// frontend-app/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+
+    // Recognise Vitest globals like `vi`, `describe`, `it`
+    "types": ["vitest/globals", "vite/client", "@testing-library/jest-dom"]
+  },
+  // only TS/TSX are checked 
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  // JS to be visible to the compiler but not actually checked
+  "allowJs": true,
+  "checkJs": false
+}
