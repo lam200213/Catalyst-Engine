@@ -238,6 +238,7 @@ def validate_market_overview(payload: Dict[str, Any]) -> Dict[str, Any]:
             "high_low_ratio": 0.0,
             "new_highs": 0,
             "new_lows": 0,
+            "as_of_date": datetime.now(timezone.utc).isoformat() 
         }
 
 def validate_market_leaders(payload: Dict[str, Any]) -> Dict[str, Any]:

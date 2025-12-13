@@ -5,7 +5,7 @@ import os
 from typing import Dict, List, Optional, Tuple, Union
 import pandas as pd
 import requests
-import time
+from datetime import datetime, timezone
 
 import logging
 logger = logging.getLogger(__name__)
@@ -224,7 +224,19 @@ def get_market_health() -> dict:
     market_stage = _map_stage(trend_obj.get('trend') or 'Unknown')
 
     # 3) Correction depth (^GSPC)
-    correction_depth = _compute_correction_depth(idx_dfs.get('^GSPC'))
+    spx_df = idx_dfs.get('^GSPC')
+    correction_depth = _compute_correction_depth(spx_df)
+
+    # Derive "As of" date from the actual data source (last candle date)
+    # This prevents showing "today" when data is actually from the previous close (e.g. weekends)
+    data_date = datetime.now(timezone.utc)
+    if spx_df is not None and not spx_df.empty:
+        try:
+            # Index is DatetimeIndex; take the last timestamp
+            last_timestamp = spx_df.index[-1]
+            data_date = last_timestamp.to_pydatetime()
+        except Exception as e:
+            logger.warning(f"Failed to extract date from SPX dataframe: {e}")
 
     # 4) Breadth (aggregate)
     breadth = _fetch_breadth()
@@ -237,4 +249,5 @@ def get_market_health() -> dict:
         "high_low_ratio": breadth.get("high_low_ratio", 0.0),
         "new_highs": breadth.get("new_highs", 0),
         "new_lows": breadth.get("new_lows", 0),
+        "as_of_date": data_date
     }

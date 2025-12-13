@@ -292,6 +292,10 @@ class MarketOverview(BaseModel):
     high_low_ratio: float = Field(..., description="Ratio of 52-week highs to 52-week lows.")
     new_highs: int = Field(..., description="Absolute count of stocks making new 52-week highs.")
     new_lows: int = Field(..., description="Absolute count of stocks making new 52-week lows.")
+    as_of_date: datetime = Field(
+        ..., 
+        description="The timestamp (UTC) representing when this market snapshot was valid or generated."
+    )
 
 class LeadingStock(BaseModel):
     """Represents a leading stock."""

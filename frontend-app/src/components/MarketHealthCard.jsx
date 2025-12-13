@@ -1,82 +1,127 @@
 // frontend-app/src/components/MarketHealthCard.jsx
 
 import React from 'react';
-import { Box, Heading, SimpleGrid, Text, Stat, StatLabel, StatNumber, Skeleton }  from '@chakra-ui/react';
+import { 
+    Box, 
+    SimpleGrid, 
+    Stat, 
+    StatLabel, 
+    StatNumber, 
+    StatHelpText, 
+    StatArrow, 
+    useColorModeValue,
+    Heading,
+    Flex,
+    Text,
+    Icon,
+    Tooltip
+} from '@chakra-ui/react';
+import { InfoIcon } from '@chakra-ui/icons';
 
-const MarketHealthCard = ({ marketOverview, loading = false }) => {
-    // Null safety and loading states
-    if (loading) {
-        return (
-        <Box p={6} bg="gray.700" borderRadius="lg" shadow="md">
-            <Skeleton height="24px" mb={4} />
-            <SimpleGrid columns={{ base: 2, md: 5 }} spacing={4}>
-            {[1,2,3,4,5].map(i => (
-                <Box key={i}>
-                <Skeleton height="16px" mb={2} />
-                <Skeleton height="24px" />
+const MetricStat = ({ label, value, helpText, arrow, helpIcon }) => {
+    const bg = useColorModeValue('white', 'gray.700');
+    return (
+        <Stat
+            px={{ base: 2, md: 4 }}
+            py={'5'}
+            shadow={'xl'}
+            border={'1px solid'}
+            borderColor={useColorModeValue('gray.200', 'gray.600')}
+            rounded={'lg'}
+            bg={bg}
+        >
+            <Flex justifyContent={'space-between'}>
+                <Box pl={{ base: 2, md: 4 }}>
+                    <StatLabel fontWeight={'medium'} isTruncated display="flex" alignItems="center" gap={1}>
+                        {label}
+                        {helpIcon && (
+                            <Tooltip label={helpIcon} fontSize="sm">
+                                <InfoIcon w={3} h={3} color="gray.400" />
+                            </Tooltip>
+                        )}
+                    </StatLabel>
+                    <StatNumber fontSize={'2xl'} fontWeight={'medium'}>
+                        {value}
+                    </StatNumber>
+                    {helpText && (
+                        <StatHelpText>
+                            {arrow && <StatArrow type={arrow} />}
+                            {helpText}
+                        </StatHelpText>
+                    )}
                 </Box>
-            ))}
-            </SimpleGrid>
-        </Box>
-        );
-    }
+            </Flex>
+        </Stat>
+    );
+};
 
-    // Handle missing data gracefully
-    if (!marketOverview) {
-        return (
-        <Box p={6} bg="gray.700" borderRadius="lg" shadow="md">
-            <Text color="gray.400">Market data unavailable</Text>
-        </Box>
-        );
-    }
+const MarketHealthCard = ({ marketOverview }) => {
+    if (!marketOverview) return null;
 
-    const {
-        market_stage = 'Unknown',
-        correction_depth_percent = 0,
-        new_highs = 0,
-        new_lows = 0,
-        high_low_ratio = 0,
+    const { 
+        market_stage, 
+        correction_depth_percent, 
+        new_highs, 
+        new_lows, 
+        high_low_ratio,
+        as_of_date 
     } = marketOverview;
 
-    // Dynamic color based on market stage
-    const getStageColor = (stage) => {
-        switch (stage) {
-        case 'Bullish': return 'green.400';
-        case 'Bearish': return 'red.400';
-        case 'Recovery': return 'blue.400';
-        default: return 'gray.400';
-        }
-    };
-
+    const isBullish = market_stage === 'Bullish';
+    const isBearish = market_stage === 'Bearish';
+    
+    // Formatting date
+    const formattedDate = as_of_date 
+        ? new Date(as_of_date).toLocaleDateString(undefined, { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+          }) 
+        : null;
 
     return (
-        <Box bg="gray.700" p={6} borderRadius="lg" boxShadow="xl">
-            <Heading as="h3" size="md" color="blue.300" mb={4}>
-                Market Overview
-            </Heading>
-            <SimpleGrid columns={{ base: 2, md: 3 }} spacing={6}>
-                <Stat>
-                    <StatLabel color="gray.400">Stage</StatLabel>
-                    <StatNumber color={getStageColor(market_stage)}>
-                        {market_stage}
-                    </StatNumber>
-                </Stat>
-                <Stat>
-                    <StatLabel color="gray.400">Correction Depth</StatLabel>
-                    <StatNumber>{correction_depth_percent.toFixed(1)}%</StatNumber>
-                </Stat>
-                <Stat>
-                    <StatLabel color="gray.400">Highs:Lows Ratio</StatLabel>
-                    <StatNumber>{high_low_ratio.toFixed(1)} : 1</StatNumber>
-                </Stat>
-                <Stat>
-                    <StatLabel color="gray.400">New Highs</StatLabel>
-                    <StatNumber>{new_highs}</StatNumber>
-                </Stat>
-                <Stat>
-                    <StatLabel color="gray.400">New Lows</StatLabel>
-                    <StatNumber>{new_lows}</StatNumber>
-                </Stat>
+        <Box mb={5}>
+            {/* Latest Add: Header with Date */}
+            <Flex justify="space-between" align="center" mb={4}>
+                <Heading size="md" color={useColorModeValue('gray.700', 'white')}>
+                    Market Health Overview
+                </Heading>
+                {formattedDate && (
+                    <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                        As of: {formattedDate}
+                    </Text>
+                )}
+            </Flex>
+
+            <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={{ base: 5, lg: 8 }}>
+                <MetricStat 
+                    label="Market Stage" 
+                    value={market_stage} 
+                    helpText={isBullish ? "Uptrend" : isBearish ? "Downtrend" : "Choppy"}
+                    arrow={isBullish ? 'increase' : isBearish ? 'decrease' : undefined}
+                />
+                
+                <MetricStat 
+                    label="Correction Depth" 
+                    value={`${correction_depth_percent}%`} 
+                    helpText="From 52-Week High"
+                    helpIcon="Percentage decline of the S&P 500 from its 52-week high."
+                />
+
+                <MetricStat 
+                    label="High/Low Ratio" 
+                    value={high_low_ratio?.toFixed(2)} 
+                    helpText={`${new_highs} Highs / ${new_lows} Lows`}
+                    arrow={high_low_ratio > 1 ? 'increase' : 'decrease'}
+                    helpIcon="Ratio of stocks making new 52-week highs vs lows. >1 is bullish."
+                />
+
+                <MetricStat 
+                    label="Net New Highs" 
+                    value={new_highs - new_lows}
+                    helpText="Breadth Indicator"
+                    arrow={(new_highs - new_lows) > 0 ? 'increase' : 'decrease'}
+                />
             </SimpleGrid>
         </Box>
     );
