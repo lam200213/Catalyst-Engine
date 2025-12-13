@@ -99,18 +99,18 @@ const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
 
       if (!industries.length) {
         return (
-          <Box>
-            <Heading size="md" mb={3}>Leading Industries & Stocks</Heading>
+          <Box p={4}>
+            <Heading size="md" mb={3} color="blue.400">Leading Industries</Heading>
             <Text color="gray.400">No leaders available.</Text>
           </Box>
         );
       }
 
       return (
-        <Box p={4} borderWidth="1px" borderRadius="md">
+        <Box p={4} h="100%">
           {/* Header Flex Container */}
           <Flex mb={4} align="center">
-            <Heading size="md">Leading Industries & Stocks</Heading>
+            <Heading size="md" color="blue.400">Leading Industries</Heading>
             <Spacer />
             {allTickers.length > 0 && (
                 <Button
@@ -129,12 +129,12 @@ const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
           </Flex>
 
           <TableContainer>
-            <Table variant="simple" size="sm">
+            <Table variant="simple" size="md"> {/* Increased table size to 'md' for more spacing */}
               <Thead>
                 <Tr>
-                  <Th>Industry</Th>
+                  <Th fontSize="sm">Industry</Th> {/* Increased font size */}
                   {/* Count column with tooltip */}
-                  <Th>
+                  <Th fontSize="sm">
                     <HStack spacing={1}>
                       <Text>Count</Text>
                       <Tooltip
@@ -148,11 +148,11 @@ const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
                       </Tooltip>
                     </HStack>
                   </Th>
-                  <Th>
+                  <Th fontSize="sm">
                     <HStack spacing={1}>
-                      <Text>Leading Stocks (3-Month Return)</Text>
+                      <Text>Leading Stocks (3M Rtn)</Text>
                       <Tooltip
-                        label="Selected by highest marketCap, and sorted by their 3-month returns​"
+                        label="Selected by highest marketCap, and sorted by their 3-month returns"
                         fontSize="sm"
                         hasArrow
                         placement="top"
@@ -168,22 +168,28 @@ const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
               <Tbody>
                 {industries.map((item, idx) => (
                   <Tr key={idx}>
-                    <Td fontWeight="medium">{item.industry}</Td>
+                    <Td fontWeight="medium" fontSize="md" maxW="200px" isTruncated title={item.industry}> {/* Larger font */}
+                        {item.industry}
+                    </Td>
                     {/* Display stock_count */}
                     <Td>
-                      <Tag colorScheme="blue" size="sm">
+                      <Tag colorScheme="blue" size="md" variant="subtle"> {/* Larger Tag */}
                         {item.stock_count || item.stocks.length}
                       </Tag>
                     </Td>
                     <Td>
-                      <HStack spacing={2} wrap="wrap">
-                        {item.stocks.slice(0, 5).map((stock, i) => (
-                          <Tag key={i} size="sm" colorScheme="green">
+                      <Flex wrap="wrap" gap={3}> {/* Increased gap */}
+                        {/* Display up to 8 stocks to fill vertical space better */}
+                        {item.stocks.slice(0, 8).map((stock, i) => (
+                          <Tag key={i} size="md" colorScheme="green" variant="solid"> {/* Larger Tag */}
                             {stock.ticker}
-                            {stock.percent_change_3m && ` (+${stock.percent_change_3m.toFixed(1)}%)`}
+                            {stock.percent_change_3m && ` ${stock.percent_change_3m.toFixed(0)}%`}
                           </Tag>
                         ))}
-                      </HStack>
+                        {item.stocks.length > 8 && (
+                            <Text fontSize="sm" color="gray.500" alignSelf="center">+{item.stocks.length - 8}</Text>
+                        )}
+                      </Flex>
                     </Td>
                   </Tr>
                 ))}
@@ -195,10 +201,10 @@ const LeadingIndustriesTable = ({ marketLeaders = {} }) => {
   } catch (error) {
     console.error('[LeadingIndustriesTable] Render error:', error);
     return (
-      <Box p={4} borderWidth="1px" borderRadius="md" bg="red.50">
+      <Box p={4} bg="red.50">
         <Heading size="md" mb={2} color="red.600">Unable to display industry leaders</Heading>
         <Text color="red.500" fontSize="sm">
-          An error occurred while rendering this component. Please refresh the page.
+          An error occurred while rendering this component.
         </Text>
       </Box>
     );

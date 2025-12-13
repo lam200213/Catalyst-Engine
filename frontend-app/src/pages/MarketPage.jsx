@@ -2,7 +2,7 @@
 import React from 'react';
 import { 
     Box, Grid, GridItem, Skeleton, Alert, AlertIcon, 
-    Container, VStack, useColorModeValue 
+    Container, useColorModeValue, Heading, Text
 } from '@chakra-ui/react';
 import { useMarketHealthQuery } from '../hooks/useMarketHealthQuery';
 import MarketHealthCard from '../components/MarketHealthCard';
@@ -11,66 +11,96 @@ import MarketIndicesWidget from '../components/MarketIndicesWidget';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 const MarketPage = () => {
-    // 1. Fetch Data
     const { data, isLoading, isError, error } = useMarketHealthQuery();
     
-    // 2. Destructure payload with fallbacks
     const marketOverview = data?.market_overview;
     const marketLeaders = data?.leaders_by_industry;
-    const indicesAnalysis = data?.indices_analysis; // New field
+    const indicesAnalysis = data?.indices_analysis;
 
-    // 3. Dynamic Background
-    const bg = useColorModeValue('gray.50', 'gray.900');
+    const pageBg = useColorModeValue('gray.50', 'gray.900');
 
-    // 4. Loading State
     if (isLoading) {
         return (
-            <Container maxW="container.xl" py={6}>
-                <VStack spacing={6} align="stretch">
-                    <Skeleton height="150px" borderRadius="lg" />
-                    <Skeleton height="500px" borderRadius="lg" />
-                    <Skeleton height="300px" borderRadius="lg" />
-                </VStack>
+            <Container maxW="container.2xl" py={4} px={4}>
+                <Grid templateColumns={{ base: "1fr", lg: "3fr 1fr" }} gap={4}>
+                    <GridItem colSpan={{ base: 1, lg: 2 }}>
+                        <Skeleton height="150px" borderRadius="xl" />
+                    </GridItem>
+                    <GridItem colSpan={{ base: 1, lg: 2 }}>
+                        <Skeleton height="500px" borderRadius="xl" />
+                    </GridItem>
+                </Grid>
             </Container>
         );
     }
 
-    // 5. Error State
     if (isError) {
         return (
-            <Container maxW="container.xl" py={6}>
-                <Alert status="error" borderRadius="md">
+            <Container maxW="container.2xl" py={4} px={4}>
+                <Alert status="error" borderRadius="xl">
                     <AlertIcon />
-                    Unable to load market data: {error?.message || 'Unknown error'}
+                    Unable to load market data: {error?.message}
                 </Alert>
             </Container>
         );
     }
 
     return (
-        <Box minH="100vh" bg={bg}>
-            <Container maxW="container.xl" py={6} px={{ base: 4, md: 6 }}>
-                <VStack spacing={8} align="stretch">
+        <Box minH="100vh" bg={pageBg}>
+            {/* Reduced py to 4 to match Dashboard spacing */}
+            <Container maxW="container.2xl" py={4} px={{ base: 4, md: 6 }}>
+                
+                <Grid 
+                    templateColumns={{ base: "1fr", xl: "3fr 1fr" }} 
+                    gap={4} // Tight gap
+                    alignItems="stretch"
+                >
                     
-                    {/* Top Row: Market Health Stats */}
-                    <ErrorBoundary>
-                        <MarketHealthCard marketOverview={marketOverview} />
-                    </ErrorBoundary>
+                    {/* Row 1: Market Health Hero */}
+                    <GridItem colSpan={{ base: 1, xl: 2 }}>
+                        <ErrorBoundary>
+                            <Box 
+                                bg={useColorModeValue('white', 'gray.800')} 
+                                borderRadius="xl" 
+                                boxShadow="sm"
+                                overflow="hidden"
+                            >
+                                <MarketHealthCard marketOverview={marketOverview} />
+                            </Box>
+                        </ErrorBoundary>
+                    </GridItem>
 
-                    {/* Middle Row: Major Indices Charts (The "Optimal" Addition) */}
-                    <ErrorBoundary>
-                        <MarketIndicesWidget 
-                            indicesData={indicesAnalysis} 
-                            loading={isLoading} 
-                        />
-                    </ErrorBoundary>
+                    {/* Row 2, Column 1: Indices Charts */}
+                    {/* Reduced height slightly to accommodate the top card without scrolling on 1080p */}
+                    <GridItem colSpan={1} minH="480px">
+                        <ErrorBoundary>
+                            <Box h="100%">
+                                <MarketIndicesWidget 
+                                    indicesData={indicesAnalysis} 
+                                    loading={isLoading} 
+                                />
+                            </Box>
+                        </ErrorBoundary>
+                    </GridItem>
 
-                    {/* Bottom Row: Leading Sectors */}
-                    <ErrorBoundary>
-                        <LeadingIndustriesTable marketLeaders={marketLeaders} />
-                    </ErrorBoundary>
+                    {/* Row 2, Column 2: Leading Sectors */}
+                    <GridItem colSpan={1}>
+                        <ErrorBoundary>
+                            <Box 
+                                bg={useColorModeValue('white', 'gray.800')} 
+                                borderRadius="xl" 
+                                boxShadow="xl"
+                                borderWidth="1px"
+                                borderColor={useColorModeValue('gray.200', 'gray.700')}
+                                overflow="hidden"
+                                h="100%" 
+                            >
+                                <LeadingIndustriesTable marketLeaders={marketLeaders} />
+                            </Box>
+                        </ErrorBoundary>
+                    </GridItem>
 
-                </VStack>
+                </Grid>
             </Container>
         </Box>
     );

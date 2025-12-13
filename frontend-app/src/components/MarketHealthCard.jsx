@@ -23,7 +23,7 @@ const MetricStat = ({ label, value, helpText, arrow, helpIcon }) => {
     return (
         <Stat
             px={{ base: 2, md: 4 }}
-            py={'5'}
+            py={'4'} // Reduced vertical padding
             shadow={'xl'}
             border={'1px solid'}
             borderColor={useColorModeValue('gray.200', 'gray.600')}
@@ -44,7 +44,7 @@ const MetricStat = ({ label, value, helpText, arrow, helpIcon }) => {
                         {value}
                     </StatNumber>
                     {helpText && (
-                        <StatHelpText>
+                        <StatHelpText mb="0"> {/* Remove bottom margin to tighten layout */}
                             {arrow && <StatArrow type={arrow} />}
                             {helpText}
                         </StatHelpText>
@@ -80,20 +80,25 @@ const MarketHealthCard = ({ marketOverview }) => {
         : null;
 
     return (
-        <Box mb={5}>
-            {/* Latest Add: Header with Date */}
-            <Flex justify="space-between" align="center" mb={4}>
-                <Heading size="md" color={useColorModeValue('gray.700', 'white')}>
-                    Market Health Overview
-                </Heading>
+        <Box p={4}> {/* Reduced container padding from 6 to 4 */}
+            {/* Header with Date - Aligned with Dashboard Style */}
+            <Flex justify="space-between" align="center" mb={4}> {/* Reduced margin bottom */}
+                <Box>
+                    <Heading as="h1" size="lg" color="blue.400">
+                        Market Health Overview
+                    </Heading>
+                    <Text color="gray.500" fontSize="sm" mt={1}>
+                        Key indicators and breadth analysis
+                    </Text>
+                </Box>
                 {formattedDate && (
-                    <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                    <Text fontSize="xs" color="gray.400" fontStyle="italic" bg="gray.700" px={2} py={1} borderRadius="md">
                         As of: {formattedDate}
                     </Text>
                 )}
             </Flex>
 
-            <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={{ base: 5, lg: 8 }}>
+            <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={{ base: 4, lg: 6 }}> {/* Tighter grid spacing */}
                 <MetricStat 
                     label="Market Stage" 
                     value={market_stage} 

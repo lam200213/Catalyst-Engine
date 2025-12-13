@@ -5,10 +5,10 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-12-13
-fix(monitor): derive market overview date from data source
-- Update `MarketOverview` contract to include `as_of_date`.
-- Modify `market_health_utils` to extract the timestamp from the last available SPY candle instead of using `datetime.now()`, ensuring the UI reflects the actual data vintage (e.g., Friday's close during the weekend).
-- Update `MarketHealthCard` to display the "As of" date.
+refactor(monitor): optimize market page layout
+- Update `MarketPage.jsx` layout to utilize `Grid` and `alignItems="stretch"` for consistent component heights.
+- Adjust `MarketHealthCard` padding and margin to reduce vertical offset and align with the dashboard style.
+- Modify `LeadingIndustriesTable` to increase row height and font size, improving readability and filling the vertical space more effectively.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
