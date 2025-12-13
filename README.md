@@ -5,15 +5,16 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-12-12
-Provide watchlist, market overview UI
+docs: frontend archit update
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
 - **Centralized Data Access & Caching**: The `data-service` acts as a data abstraction layer, fetching information from various external sources (e.g., Yahoo Finance, Finnhub). It provides a consistent internal API for other services and implements a Redis caching layer to minimize redundant API calls. It features a robust, centralized client for external Yahoo Finance requests, which implements an advanced retry and identity rotation policy (proxies, user agents, browser profiles) to ensure resilient and reliable data fetching. All data providers within the service route network I/O through this client for consistent behavior.
 - **Quantitative Screening**: Screens stocks based on Mark Minervini's 8 Trend Template criteria.
-- **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP).
+- **VCP Analysis**: Algorithmically analyzes a stock's Volatility Contraction Pattern (VCP), identifies Flat Base structures for strong leaders, and flags actionable Pullback (PB) setups for post-breakout entries.
 - **Leadership Screening**: Evaluates stocks against 9 "Leadership Profile" criteria, including EPS growth, market outperformance, and industry rank.
-- **Market & Portfolio Monitoring**: Provides a high-level market health overview, tracks leading industries, and allows users to manage a personal watchlist and portfolio.
+- **Market Health Dashboard:**: Visualizes overall market breadth (New Highs vs. Lows), correction depth, and tracks leading industries to determine the current market stage.
+- **Smart Watchlist & Archive**: A feature-rich management system for candidate stocks. Includes automated "Freshness" health checks, Favorites pinning to prevent auto-deletion, Batch Actions for bulk management, and a searchable Archive ("Graveyard") to audit removed tickers.
 - **Watchlist Refresh Orchestrator:** The monitoring-service owns an internal refresh pipeline that calls screening, analysis, and data services to update watchlist item statuses and archive failed items via a single internal endpoint.
 - **Automatic Archive Expiry:** Archived watchlist entries are stored in MongoDB with a 30-day TTL index on their archived timestamp, automatically purging stale records without manual cleanup.
 - **Dynamic Chart Visualization**: Displays charts with VCP trendlines, buy pivot points, and stop-loss levels.

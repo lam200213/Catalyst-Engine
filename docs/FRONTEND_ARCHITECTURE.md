@@ -24,67 +24,71 @@ frontend-app/
 ├── scripts/
 │ └── verify-structure.cjs # Directory structure verification
 ├── src/
-│ ├── components/ # Reusable, "dumb" UI components 
-│ │ ├── tests/ # Co-located component tests 
-│ │ │ ├── fixtures/ # Test fixtures
-│ │ │ │ └── watchlistFixtures.js # shared watchlist fixtures
-│ │ │ ├── ArchivedWatchlistTable.test.jsx
-│ │ │ ├── ChartLegend.test.jsx
-│ │ │ ├── ChartPanel.test.jsx
-│ │ │ ├── ScreeningPanel.test.jsx
-│ │ │ ├── TickerForm.test.jsx
-│ │ │ ├── AddWatchlistTickerForm.test.tsx
-│ │ │ └── WatchlistTable.test.jsx
-│ │ ├── ChartLegend.jsx # OHLCV + MA legend display
-│ │ ├── ChartPanel.jsx # TradingView chart wrapper
-│ │ ├── ErrorBoundary.jsx # React error boundary for crash protection
-│ │ ├── LeadingIndustriesTable.jsx # Market leaders display
-│ │ ├── MarketHealthCard.jsx # Market overview metrics
-│ │ ├── ScreeningPanel.jsx # Screening results display
-│ │ ├── Sidebar.jsx # Navigation sidebar
-│ │ ├── WatchlistTable.tsx
-│ │ ├── AddWatchlistTickerForm.tsx
-│ │ └── TickerForm.jsx # Ticker input form
-│ ├── hooks/ # Custom React hooks 
-│ │ ├── tests/ # Co-located hook tests  
-│ │ │ ├── useScreeningJobMutations.test.tsx 
-│ │ │ ├── useStockData.test.js
-│ │ │ ├── useWatchlistQuery.test.tsx
-│ │ │ └── useWatchlistRefreshJobMutation.test.tsx.skip.tsx
-│ │ ├── queryKeys.ts # Centralized React Query keys
-│ │ ├── useMarketHealthQuery.js # Market health data fetching
-│ │ ├── useScreeningJobMutations.ts # Watchlist CRUD mutations
-│ │ ├── useStockData.js # Stock screening & analysis data
-│ │ └── useWatchlistQuery.ts # Watchlist & archive queries
-│ ├── pages/ # Top-level "smart" page components 
-│ │ ├── tests/ 
-│ │ │ ├── WatchlistPage.test.jsx
-│ │ │ └── WatchlistPageRowActions.test.jsx
-│ │ ├── DashboardPage.jsx # Legacy single-stock analysis page
-│ │ ├── MarketPage.jsx # Market health & leaders
-│ │ ├── PortfolioPage.jsx # Portfolio tracking (placeholder)
-│ │ └── WatchlistPage.jsx # Watchlist management
-│ ├── services/ # API communication layer 
-│ │ ├── tests/ # Service unit tests 
-│ │ │ ├── fixtures/ # Test fixtures
-│ │ │ │ ├── httpFixtures.ts # Generic Axios response mocks
-│ │ │ │ └── monitoringFixtures.ts # Monitoring API mocks
-│ │ │ ├── monitoringApi.test.js
-│ │ │ └── screeningApi.test.js
-│ │ ├── mockData.js # Legacy mock data
-│ │ ├── monitoringApi.d.ts # TypeScript declarations for monitoring API
-│ │ ├── monitoringApi.js # Watchlist, archive, market health endpoints
-│ │ ├── schedulerApi.js # Batch job endpoints
-│ │ └── screeningApi.js # Stock screening & VCP analysis endpoints
-│ ├── types/ # TypeScript definitions 
-│ │ └── monitoring.ts # Mirrors backend Pydantic models
-│ ├── App.jsx # Main routing logic
-│ ├── App.test.jsx # App integration tests
-│ ├── main.jsx # Application entry point
-│ ├── sanity.test.js # Basic test harness verification
-│ ├── setupTests.js # Global test configuration
-│ ├── test-utils.jsx # Custom render helpers for tests
-│ └── theme.js # Chakra UI theme + chart colors
+│   ├── components/
+│   │   ├── tests/
+│   │   │   ├── fixtures/
+│   │   │   │   └── watchlistFixtures.js # shared watchlist fixtures
+│   │   │   ├── AddWatchlistTickerForm.test.tsx
+│   │   │   ├── ArchivedWatchlistTable.test.jsx
+│   │   │   ├── ChartLegend.test.jsx
+│   │   │   ├── ChartPanel.test.jsx
+│   │   │   ├── ScreeningPanel.test.jsx
+│   │   │   ├── TickerForm.test.jsx
+│   │   │   └── WatchlistTable.test.jsx
+│   │   ├── AddWatchlistTickerForm.tsx
+│   │   ├── ArchivedWatchlistTable.tsx
+│   │   ├── ChartLegend.jsx # OHLCV + MA legend display
+│   │   ├── ChartPanel.jsx # TradingView chart wrapper
+│   │   ├── ErrorBoundary.jsx # React error boundary for crash protection
+│   │   ├── LeadingIndustriesTable.jsx # Market leaders display
+│   │   ├── MarketHealthCard.jsx # Market overview metrics
+│   │   ├── MarketIndicesWidget.jsx
+│   │   ├── ScreeningPanel.jsx # Screening results display
+│   │   ├── Sidebar.jsx
+│   │   ├── TickerForm.jsx
+│   │   └── WatchlistTable.tsx
+│   ├── hooks/ # Custom React hooks 
+│   │   ├── tests/
+│   │   │   ├── useScreeningJobMutations.test.tsx
+│   │   │   ├── useStockData.test.js
+│   │   │   ├── useWatchlistQuery.test.tsx
+│   │   │   └── useWatchlistRefreshJobMutation.test.tsx
+│   │   ├── queryKeys.ts # Centralized React Query keys
+│   │   ├── useMarketHealthQuery.js # Market health data fetching
+│   │   ├── useScreeningJobMutations.ts # Watchlist CRUD mutations
+│   │   ├── useStockData.js # Stock screening & analysis data
+│   │   ├── useWatchlistArchiveQuery.ts
+│   │   ├── useWatchlistQuery.ts # Watchlist & archive queries
+│   │   └── useWatchlistRefreshJobMutation.ts
+│   ├── pages/
+│   │   ├── tests/
+│   │   │   ├── WatchlistPage.test.jsx
+│   │   │   └── WatchlistPageRowActions.test.jsx
+│   │   ├── DashboardPage.jsx
+│   │   ├── MarketPage.jsx # Market health & leaders
+│   │   ├── PortfolioPage.jsx
+│   │   └── WatchlistPage.jsx # Watchlist management
+│   ├── services/ # API communication layer 
+│   │   ├── tests/
+│   │   │   ├── fixtures/
+│   │   │   │   ├── httpFixtures.ts # Generic Axios response mocks
+│   │   │   │   └── monitoringFixtures.ts # Monitoring API mocks
+│   │   │   ├── monitoringApi.test.js
+│   │   │   └── screeningApi.test.js
+│   │   ├── mockData.js
+│   │   ├── monitoringApi.d.ts # TypeScript declarations for monitoring API
+│   │   ├── monitoringApi.js # Watchlist, archive, market health endpoints
+│   │   ├── schedulerApi.d.ts
+│   │   ├── schedulerApi.js # Batch job endpoints
+│   │   └── screeningApi.js # Stock screening & VCP analysis endpoints
+│   ├── types/ # TypeScript definitions 
+│   │   └── monitoring.ts # Mirrors backend Pydantic models
+│   ├── App.jsx # Main routing logic
+│   ├── App.test.jsx # Main routing logic
+│   ├── main.jsx  Application entry point
+│   ├── setupTests.js # Global test configuration
+│   ├── test-utils.jsx # Custom render helpers for tests
+│   └── theme.js
 ├── .dockerignore
 ├── .eslintrc.cjs # ESLint configuration
 ├── docker-entrypoint.sh # Dev container entrypoint
