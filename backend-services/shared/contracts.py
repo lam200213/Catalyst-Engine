@@ -166,7 +166,10 @@ class VCPChartData(BaseModel):
 
     buyPoints: List[Dict[str, Any]]
     sellPoints: List[Dict[str, Any]]
+    ma20: List[Dict[str, Any]]
     ma50: List[Dict[str, Any]]
+    ma150: List[Dict[str, Any]]
+    ma200: List[Dict[str, Any]] 
     historicalData: List[Dict[str, Any]]
 
 
