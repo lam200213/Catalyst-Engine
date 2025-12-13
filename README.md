@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2025-12-12
-docs: frontend archit update
+Introduce Watchlist & Archive UI, Market Health
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -68,7 +68,9 @@ graph LR
 **Screening & Data Service Communication:** The `screening-service` fetches data from the `data-service` in chunks using the `/price/batch` endpoint. This batching approach is more efficient than requesting data for each ticker individually, especially when screening a large number of stocks.
 
 ### Screenshots
-![Sample](docs/images/homepage.png)
+![dashboard](docs/images/homepage.png)
+![market-health](docs/images/market-health.png)
+![watchlist](docs/images/watchlist.png)
 
 ## Quick Start
 

@@ -25,7 +25,7 @@ frontend-app/
 │ └── verify-structure.cjs # Directory structure verification
 ├── src/
 │   ├── components/
-│   │   ├── tests/
+│   │   ├── __tests__/
 │   │   │   ├── fixtures/
 │   │   │   │   └── watchlistFixtures.js # shared watchlist fixtures
 │   │   │   ├── AddWatchlistTickerForm.test.tsx
@@ -48,7 +48,7 @@ frontend-app/
 │   │   ├── TickerForm.jsx
 │   │   └── WatchlistTable.tsx
 │   ├── hooks/ # Custom React hooks 
-│   │   ├── tests/
+│   │   ├── __tests__/
 │   │   │   ├── useScreeningJobMutations.test.tsx
 │   │   │   ├── useStockData.test.js
 │   │   │   ├── useWatchlistQuery.test.tsx
@@ -61,7 +61,7 @@ frontend-app/
 │   │   ├── useWatchlistQuery.ts # Watchlist & archive queries
 │   │   └── useWatchlistRefreshJobMutation.ts
 │   ├── pages/
-│   │   ├── tests/
+│   │   ├── __tests__/
 │   │   │   ├── WatchlistPage.test.jsx
 │   │   │   └── WatchlistPageRowActions.test.jsx
 │   │   ├── DashboardPage.jsx
@@ -69,7 +69,7 @@ frontend-app/
 │   │   ├── PortfolioPage.jsx
 │   │   └── WatchlistPage.jsx # Watchlist management
 │   ├── services/ # API communication layer 
-│   │   ├── tests/
+│   │   ├── __tests__/
 │   │   │   ├── fixtures/
 │   │   │   │   ├── httpFixtures.ts # Generic Axios response mocks
 │   │   │   │   └── monitoringFixtures.ts # Monitoring API mocks
