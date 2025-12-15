@@ -1,0 +1,57 @@
+services:
+  data-service:
+    volumes:
+      - ./backend-services/data-service:/app
+      - ./backend-services/shared:/app/shared
+
+  screening-service:
+    volumes:
+      - ./backend-services/screening-service:/app 
+      - ./backend-services/shared:/app/shared    
+
+  analysis-service:
+    volumes:
+      - ./backend-services/analysis-service:/app 
+      - ./backend-services/shared:/app/shared
+ 
+  scheduler-service:
+    volumes:
+      - ./backend-services/scheduler-service:/app
+      - ./backend-services/shared:/app/shared
+
+  scheduler-worker:
+    volumes:
+      - ./backend-services/scheduler-service:/app
+      - ./backend-services/shared:/app/shared
+
+  leadership-service:
+    volumes:
+      - ./backend-services/leadership-service:/app
+      - ./backend-services/shared:/app/shared
+
+  monitoring-service:
+    volumes:
+      - ./backend-services/monitoring-service:/app
+      - ./backend-services/shared:/app/shared
+
+  ticker-service:
+    volumes:
+      - ./backend-services/ticker-service:/app 
+      - ./backend-services/shared:/app/shared
+
+  api-gateway:
+    volumes:
+      - ./backend-services/api-gateway:/app 
+      - ./backend-services/shared:/app/shared
+
+  frontend-app:
+    build:
+      context: ./frontend-app
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173" # Vite dev server
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3000
+    volumes:
+      - ./frontend-app:/app
+      - frontend_node_modules:/app/node_modules

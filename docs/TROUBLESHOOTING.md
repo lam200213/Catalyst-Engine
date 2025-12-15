@@ -24,6 +24,26 @@ Error response from daemon: Conflict. The container name "/some-service" is alre
    ```Bash  
    docker-compose up --build -d
 
+### **`docker-compose down` fails: `frontend-app has neither an image nor a build context specified`**
+
+**Error:**
+`service "frontend-app" has neither an image nor a build context specified: invalid compose project`
+
+**Cause:**
+The base `docker-compose.yml` intentionally leaves the frontend build/ports to the overlay files (`docker-compose.dev.yml` and `docker-compose.prod.yml`).
+If you run `docker-compose down` (legacy v1) or run `docker compose down` without the same `-f` overrides used for `up`, Compose only reads the base file and sees `frontend-app` without `build` or `image`.
+
+**Fix:**
+Always bring stacks down using the same compose files you used to bring them up:
+
+Dev:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml down`
+
+Prod:
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml down`
+
+**Tip:**
+You can also set `COMPOSE_FILE` to avoid repeating `-f` flags.
 
 ### **API Rate limited**
 

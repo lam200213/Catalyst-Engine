@@ -7,12 +7,15 @@ WORKDIR /app
 # Create a non-root user for security
 RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
 
-# Copy and install dependencies
-COPY requirements.txt .
+# 1) Copy and install service deps (from service subfolder)
+COPY ticker-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
-COPY . .
+# 2) Copy shared contracts package
+COPY shared ./shared
+
+# 3) Copy the service code into /app (so app.py stays at /app/app.py like today)
+COPY ticker-service/ ./
 
 # Change ownership of the app directory
 RUN chown -R appuser:appgroup /app

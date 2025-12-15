@@ -12,7 +12,6 @@ services:
   redis:
     image: redis:7.2-alpine
     container_name: redis_cache
-    restart: always
     ports:
       - "6379:6379"
     volumes:
@@ -21,7 +20,9 @@ services:
       - app-network
 
   data-service:
-    build: ./backend-services/data-service
+    build:
+      context: ./backend-services
+      dockerfile: data-service/Dockerfile
     container_name: data-service
     ports:
       - "3001:3001"
@@ -32,10 +33,9 @@ services:
       CACHE_REDIS_URL: ${CACHE_REDIS_URL}
       PORT: 3001
       LOG_LEVEL: ${LOG_LEVEL}
-    # Add a DNS configuration for network stability
     dns:
-      - 1.1.1.1  # Cloudflare DNS
-      - 8.8.8.8  # Google DNS
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       - mongodb
       - redis
@@ -47,13 +47,11 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
-    volumes:
-      - ./backend-services/data-service:/app
-      # for development: Mount local directory to container's /app (Live Code Reloading)
-      - ./backend-services/shared:/app/shared
 
   screening-service:
-    build: ./backend-services/screening-service
+    build:
+      context: ./backend-services
+      dockerfile: screening-service/Dockerfile
     container_name: screening-service
     ports:
       - "3002:3002"
@@ -65,13 +63,11 @@ services:
       - data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/screening-service:/app 
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared    
 
   analysis-service:
-    build: ./backend-services/analysis-service
+    build:
+      context: ./backend-services
+      dockerfile: analysis-service/Dockerfile
     container_name: analysis-service
     ports:
       - "3003:3003"
@@ -83,13 +79,11 @@ services:
       - data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/analysis-service:/app 
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
  
   scheduler-service:
-    build: ./backend-services/scheduler-service
+    build:
+      context: ./backend-services
+      dockerfile: scheduler-service/Dockerfile
     container_name: scheduler-service
     ports:
       - "3004:3004"
@@ -111,14 +105,11 @@ services:
       - leadership-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/scheduler-service:/app
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
   scheduler-worker:
     build:
-      context: ./backend-services/scheduler-service
+      context: ./backend-services
+      dockerfile: scheduler-service/Dockerfile
     container_name: scheduler-worker
     command: celery -A app.celery worker --loglevel=info
     environment:
@@ -134,13 +125,11 @@ services:
       - redis
     networks:
       - app-network
-    volumes:
-      - ./backend-services/scheduler-service:/app
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
   leadership-service:
-    build: ./backend-services/leadership-service
+    build:
+      context: ./backend-services
+      dockerfile: leadership-service/Dockerfile
     container_name: leadership-service
     ports:
       - "3005:3005"
@@ -152,15 +141,12 @@ services:
       - data-service
     networks:
       - app-network
-    volumes:
-      - ./backend-services/leadership-service:/app
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
   monitoring-service:
-    build: ./backend-services/monitoring-service
+    build:
+      context: ./backend-services
+      dockerfile: monitoring-service/Dockerfile
     container_name: monitoring-service
-    restart: unless-stopped
     ports:
       - "3006:3006"
     environment:
@@ -181,13 +167,11 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    volumes:
-      - ./backend-services/monitoring-service:/app
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
   ticker-service:
-    build: ./backend-services/ticker-service
+    build:
+      context: ./backend-services
+      dockerfile: ticker-service/Dockerfile
     container_name: ticker-service
     ports:
       - "5001:5001"
@@ -196,13 +180,11 @@ services:
       LOG_LEVEL: INFO
     networks:
       - app-network
-    volumes:
-      - ./backend-services/ticker-service:/app 
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
   api-gateway:
-    build: ./backend-services/api-gateway
+    build:
+      context: ./backend-services
+      dockerfile: api-gateway/Dockerfile
     container_name: api-gateway
     ports:
       - "3000:3000"
@@ -227,47 +209,20 @@ services:
       - redis
     networks:
       - app-network
-    volumes:
-      - ./backend-services/api-gateway:/app 
-      # for development: Mount local directory to container's /app
-      - ./backend-services/shared:/app/shared
 
-  # for production build with static Nginx server
-  # frontend-app:
-  #   build: ./frontend-app
-  #   container_name: frontend-app
-  #   ports:
-  #     - "5173:80"
-  #   environment:
-  #     VITE_API_BASE_URL: http://localhost:3000
-  #   depends_on:
-  #     - api-gateway
-  #   networks:
-  #     - app-network
-
-  # Development configuration for local development
   frontend-app:
-    build:
-      context: ./frontend-app
-      dockerfile: Dockerfile.dev
+    # Base configuration for frontend
     container_name: frontend-app
-    ports:
-      - "5173:5173" # Vite dev server runs on 5173
-    environment:
-      - VITE_API_BASE_URL=http://localhost:3000
     depends_on:
       - api-gateway
     networks:
       - app-network
-    volumes:
-      - ./frontend-app:/app
-      # Use a named volume for node_modules to keep it inside the container.
-      - frontend_node_modules:/app/node_modules
+    # Build context and Ports are defined in overrides (dev vs prod)
 
 volumes:
   mongodb_data:
   redis-data:
-  frontend_node_modules: # Declare the named volume.
+  frontend_node_modules:
 
 networks:
   app-network:

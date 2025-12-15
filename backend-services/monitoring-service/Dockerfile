@@ -9,14 +9,15 @@ WORKDIR /app
 RUN addgroup --system appgroup && \
     adduser --system --ingroup appgroup --home /home/appuser --shell /sbin/nologin appuser
 
-# Copy the dependencies file to the working directory
-COPY requirements.txt .
-
-# Install any needed packages specified in requirements.txt
+# 1) Copy and install service deps (from service subfolder)
+COPY monitoring-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the content of the local src directory to the working directory
-COPY . .
+# 2) Copy shared contracts package
+COPY shared ./shared
+
+# 3) Copy the service code into /app (so app.py stays at /app/app.py like today)
+COPY monitoring-service/ ./
 
 # Make port 3006 available to the world outside this container
 EXPOSE 3006

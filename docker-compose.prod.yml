@@ -1,0 +1,42 @@
+services:
+  mongodb:
+    restart: always
+
+  redis:
+    restart: always
+
+  data-service:
+    restart: unless-stopped
+
+  screening-service:
+    restart: unless-stopped
+
+  analysis-service:
+    restart: unless-stopped
+ 
+  scheduler-service:
+    restart: unless-stopped
+
+  scheduler-worker:
+    restart: unless-stopped
+
+  leadership-service:
+    restart: unless-stopped
+
+  monitoring-service:
+    restart: unless-stopped
+
+  ticker-service:
+    restart: unless-stopped
+
+  api-gateway:
+    restart: unless-stopped
+
+  frontend-app:
+    # Use default Dockerfile which builds Nginx static site
+    build: ./frontend-app
+    restart: unless-stopped
+    ports:
+      - "5173:80" # Mapping host 5173 to container 80 (Nginx)
+    environment:
+      VITE_API_BASE_URL: http://localhost:3000

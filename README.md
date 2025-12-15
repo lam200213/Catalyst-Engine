@@ -4,11 +4,12 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2025-12-13
-refactor(monitor): optimize market page layout
-- Update `MarketPage.jsx` layout to utilize `Grid` and `alignItems="stretch"` for consistent component heights.
-- Adjust `MarketHealthCard` padding and margin to reduce vertical offset and align with the dashboard style.
-- Modify `LeadingIndustriesTable` to increase row height and font size, improving readability and filling the vertical space more effectively.
+2025-12-15
+build(docker): refactor compose workflow to use base-plus-override pattern
+- Split monolithic `docker-compose.yml` into a clean base file and environment-specific overrides (`docker-compose.dev.yml`, `docker-compose.prod.yml`).
+- Move development-specific configurations (bind mounts, Vite dev server, exposed ports) to `docker-compose.dev.yml`.
+- Move production-specific configurations (restart policies, Nginx frontend build) to `docker-compose.prod.yml`.
+- Update README.md with new setup instructions using the override strategy for both dev and prod environments.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -104,12 +105,38 @@ Follow these steps to set up and run the application locally:
    Copy-Item .env.example .env
    ```
 
-   Open `.env` and replace `YOUR_FINNHUB_API_KEY` and `YOUR_MARKETAUX_API_KEY` with your actual key if have. (Finnhub API key is only needed if you specifically request it as a data source; MARKETAUX API key is necessary for the news-fetching feature)
+   Open `.env` and replace `YOUR_FINNHUB_API_KEY`, `YOUR_MARKETAUX_API_KEY`, `WEBSHARE_API_KEY` with your actual key if have. (Finnhub API key is only needed if you specifically request it as a data source; MARKETAUX API key is necessary for the news-fetching feature; WEBSHARE API key or other proxies are required for smooth pipeline screening experience)
 
 3. **Run the application**:
-   Build and start all services using Docker Compose.
+   We use a Base + Override strategy for Docker Compose. Choose the command that fits your needs:
+   - **Production Mode (Default)**:
+   Uses static Nginx build for Frontend, no hot-reloading, restart policies enabled.
    ```bash
-   docker-compose up --build -d
+   # Method 1: Automatic Override (Recommended)
+   # First time only: Create the override file to make prod mode the default
+   cp docker-compose.prod.yml docker-compose.override.yml
+
+   # Later on: Simply run this command for all future builds
+   docker compose up --build -d
+
+   # Method 2: Explicit File Selection
+   # Use this if you prefer not to create an override file
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+   ```
+
+   - **Development Mode (Default)**:
+   Includes hot-reloading (volumes) and runs the Frontend via Vite dev server.
+   ```bash
+   # Method 1: Automatic Override (Recommended)
+   # First time only: Create the override file to make dev mode the default
+   cp docker-compose.dev.yml docker-compose.override.yml
+
+   # Later on: Simply run this command for all future builds
+   docker compose up --build -d
+
+   # Method 2: Explicit File Selection
+   # Use this if you prefer not to create an override file
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
    ```
    This command builds Docker images for each service and starts all containers.
 
@@ -117,6 +144,21 @@ Follow these steps to set up and run the application locally:
    - **Frontend UI**: [http://localhost:5173](http://localhost:5173) (default port: 5173)
    - **API Gateway**: [http://localhost:3000](http://localhost:3000) (all API requests from the frontend are sent here)
 
+5. **Stop the application**:
+   To shut down the containers safely, use the command corresponding to your startup method:
+   - **Method 1: Automatic Override**: 
+   ```bash
+   docker compose down
+   ```
+   - **Method 2: Explicit File Selection**: 
+   If running in Development:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+   ```
+   If running in Production:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+   ```
 ## Learn More
 - [🔗 Detailed Architecture & Tech Stack](./docs/ARCHITECTURE.md)
 - [📖 API Reference Guide](./docs/API_REFERENCE.md)
