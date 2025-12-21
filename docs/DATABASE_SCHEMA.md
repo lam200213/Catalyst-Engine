@@ -132,7 +132,7 @@ Stores the stock positions for the user's portfolio. In the current phase, it op
   "ticker": "string",
   "buy_price": "float",
   "buy_date": "ISODate",
-  "first_bottom_date": "ISODate", // Determined automatically by the analysis-service
+  "first_base_date": "ISODate", // Determined automatically by the analysis-service
   "initial_pe": "float",
   "stop_loss_percent": "float",
   "last_updated": "ISODate"
