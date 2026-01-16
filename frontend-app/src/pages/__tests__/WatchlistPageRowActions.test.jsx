@@ -11,7 +11,7 @@ import WatchlistPage from '../WatchlistPage';
 import {
   baseWatchlistItem,
   baseArchivedWatchlistItem,
-} from '../../components/__tests__/fixtures/watchlistFixtures';
+} from '../../testing/fixtures/watchlistFixtures';
 
 import { useWatchlistQuery } from '../../hooks/useWatchlistQuery';
 import { useWatchlistArchiveQuery } from '../../hooks/useWatchlistArchiveQuery';

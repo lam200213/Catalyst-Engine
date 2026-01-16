@@ -151,7 +151,8 @@ def test_market_overview_market_stage_literal_enforced():
         correction_depth_percent=0.0,
         high_low_ratio=1.0,
         new_highs=0,
-        new_lows=0
+        new_lows=0,
+        as_of_date=datetime.now()  
     )
     # Invalid should raise
     with pytest.raises(Exception):

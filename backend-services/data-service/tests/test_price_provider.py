@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from providers.yfin import price_provider
+from .test_fixtures import make_chart_payload
 
 class TestYFinancePriceProvider(unittest.TestCase):
     """Tests for the yfinance price data provider."""
@@ -164,3 +165,27 @@ class TestYFinancePriceProvider(unittest.TestCase):
         self.assertIsNone(results['FAIL'])
         self.assertIn('NONE', results)
         self.assertIsNone(results['NONE'])
+
+    def test_transform_yahoo_response_missing_timestamp_returns_none(self):
+        """
+        Week 9 Plan 1: chart.result[0].timestamp may be missing for delisted/stale tickers.
+        Expected: transform returns None (no exception).
+        """
+        bad = make_chart_payload(include_timestamp=False)
+        out = price_provider._transform_yahoo_response(bad, "NOTS")
+        self.assertIsNone(out)
+
+    @patch("providers.yfin.price_provider.yahoo_client.execute_request")
+    def test_get_single_ticker_data_missing_timestamp_returns_none(self, mock_execute_request):
+        """
+        Week 9 Plan 1: _get_single_ticker_data should not crash on missing timestamp.
+        Expected: returns None, does not mark delisted (not a 404).
+        """
+        mock_execute_request.return_value = make_chart_payload(include_timestamp=False)
+        out = price_provider._get_single_ticker_data("NOTS", period="1y")
+        self.assertIsNone(out)
+
+    def test_transform_yahoo_response_missing_result_returns_none(self):
+        bad = {"chart": {"result": []}}
+        out = price_provider._transform_yahoo_response(bad, "EMPTY")
+        self.assertIsNone(out)

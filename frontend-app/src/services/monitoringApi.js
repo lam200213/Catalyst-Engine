@@ -89,7 +89,7 @@ export const addWatchlistBatch = (tickers) => {
  * DELETE /monitor/watchlist/{TICKER}
  *
  * - Removes a ticker from the active watchlist and archives it
- * with reason MANUALDELETE.
+ * with reason MANUAL_DELETE.
  *
  * @param {string} ticker
  * @returns {Promise<import('axios').AxiosResponse<ApiMessage>>}
@@ -119,7 +119,7 @@ export const setFavouriteStatus = (ticker, is_favourite) => {
 /**
  * POST /monitor/watchlist/batch/remove
  *
- * - Batch remove tickers from the watchlist, archiving them as MANUALDELETE.
+ * - Batch remove tickers from the watchlist, archiving them as MANUAL_DELETE.
  * - Tickers are normalized to uppercase before sending.
  *
  * @param {string[]} tickers

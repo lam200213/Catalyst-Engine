@@ -139,12 +139,12 @@ Stores the stock positions for the user's portfolio. In the current phase, it op
 }
 ```
 
-## 7. watchlist_items
+## 7. watchlistitems
 
 Stores the user's active watchlist. Tickers in this collection are actively monitored and periodically re-validated by scheduled health checks.
 
 - **Primary Service**: `monitoring-service`
-- **Collection Name**: `watchlist_items`
+- **Collection Name**: `watchlistitems`
 - **Indexes**: 
   - Unique compound index on `(user_id, ticker)` to prevent duplicates per user.
   - Index on `user_id` for efficient user-scoped queries.

@@ -22,8 +22,6 @@ try:
         ArchiveReason,  # expected: Enum with MANUAL_DELETE, FAILED_HEALTH_CHECK
         InternalBatchAddRequest,  # expected: { tickers: List[str] }
         InternalBatchAddResponse,  # expected: { message: str, added: int, skipped: int }
-        InternalBatchUpdateStatusItem,
-        InternalBatchUpdateStatusRequest,  
         WatchlistRefreshStatusResponse,
         LastRefreshStatus, 
         ArchiveReason
@@ -40,8 +38,6 @@ except Exception:
     ArchiveReason = None
     InternalBatchAddRequest = None
     InternalBatchAddResponse = None
-    InternalBatchUpdateStatusItem = None
-    InternalBatchUpdateStatusRequest = None
     WatchlistRefreshStatusResponse = None
     LastRefreshStatus = None
     ArchiveReason = None
@@ -623,88 +619,6 @@ class TestInternalBatchAddContracts:
 
         with pytest.raises(ValidationError):
             InternalBatchAddResponse(message=123, added=2, skipped=0)
-
-class TestInternalBatchUpdateStatusContracts:
-    """Validate request models for POST /monitor/internal/watchlist/batch/update-status."""
-
-    def test_internal_batch_update_status_item_shape_and_validation(self):
-        """
-        Request items must expose:
-        - ticker: str
-        - status: LastRefreshStatus enum (accepts valid strings)
-        - failed_stage: Optional[str]
-        """
-        if InternalBatchUpdateStatusItem is None:
-            pytest.fail(
-                "InternalBatchUpdateStatusItem must be defined in shared.contracts "
-                "per Phase 2 technical design."
-            )
-
-        # Happy path
-        payload: Dict[str, Any] = {
-            "ticker": "MSFT",
-            "status": "PASS",  # should coerce to LastRefreshStatus
-            "failed_stage": None,
-        }
-        m = InternalBatchUpdateStatusItem(**payload)
-
-        assert isinstance(m.ticker, str)
-        # Enum-like object with value attribute
-        assert hasattr(m.status, "value")
-        assert m.status.value == "PASS"
-        assert m.failed_stage is None
-
-        # Missing ticker
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusItem(**{"status": "PASS"})
-
-        # Invalid status must fail validation
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusItem(**{"ticker": "MSFT", "status": "BAD_STATUS"})
-
-        # Non-string ticker must fail
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusItem(**{"ticker": 123, "status": "PASS"})
-
-    def test_internal_batch_update_status_request_shape_and_validation(self):
-        """
-        The request wrapper must enforce:
-        - items: List[InternalBatchUpdateStatusItem]
-        - Non-list or non-object items must fail validation.
-        """
-        if InternalBatchUpdateStatusRequest is None:
-            pytest.fail(
-                "InternalBatchUpdateStatusRequest must be defined in shared.contracts "
-                "per Phase 2 technical design."
-            )
-
-        # Happy path
-        payload: Dict[str, Any] = {
-            "items": [
-                {"ticker": "MSFT", "status": "PASS", "failed_stage": None},
-                {"ticker": "CRM", "status": "FAIL", "failed_stage": "vcp"},
-            ]
-        }
-        req_model = InternalBatchUpdateStatusRequest(**payload)
-
-        assert isinstance(req_model.items, list)
-        assert len(req_model.items) == 2
-        assert req_model.items[0].ticker == "MSFT"
-        assert req_model.items[1].ticker == "CRM"
-
-        # Malformed: items is not a list
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusRequest(**{"items": "not-a-list"})
-
-        # Malformed: non-object item
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusRequest(**{"items": ["MSFT", "AAPL"]})
-
-        # Malformed: item missing required status
-        with pytest.raises(ValidationError):
-            InternalBatchUpdateStatusRequest(
-                **{"items": [{"ticker": "MSFT"}]}
-            )
 
 class TestRefreshOrchestratorContracts:
     def test_watchlist_refresh_status_response_schema_matches_data_contracts(self):

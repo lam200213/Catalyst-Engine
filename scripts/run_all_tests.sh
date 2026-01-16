@@ -20,8 +20,8 @@ SERVICES=(
 # Check for a --fail-fast argument
 STOP_ON_FAILURE=false
 if [[ "$1" == "--fail-fast" ]]; then
-  STOP_ON_FAILURE=true
-  echo "Running in --fail-fast mode. The script will stop on the first failure."
+    STOP_ON_FAILURE=true
+    echo "Running in --fail-fast mode. The script will stop on the first failure."
 fi
 
 # Arrays to hold the names of services that pass or fail
@@ -35,14 +35,17 @@ echo "------------------------------------"
 for service in "${SERVICES[@]}"; do
     echo ""
     echo "--> Running tests for: $service"
-    # The -T flag disables pseudo-tty allocation, which is best practice for automated scripts
-    docker-compose exec -T "$service" python -m pytest
+    
+    # Use docker exec to bypass compose validation
+    docker exec "$service" python -m pytest
+    
     status=$?
-
+    
     if [ $status -ne 0 ]; then
         echo "❌ Tests FAILED for: $service"
         failed_services+=("$service")
         overall_status=1 # Mark the overall run as failed
+        
         if [ "$STOP_ON_FAILURE" = true ]; then
             echo "------------------------------------"
             echo "Stopping execution due to --fail-fast."
@@ -52,6 +55,7 @@ for service in "${SERVICES[@]}"; do
         echo "✅ Tests PASSED for: $service"
         passed_services+=("$service")
     fi
+    
     echo "------------------------------------"
 done
 
@@ -65,6 +69,7 @@ echo "PASSED services: (${#passed_services[@]})"
 for service in "${passed_services[@]}"; do
     echo "  - ✅ $service"
 done
+
 echo ""
 echo "FAILED services: (${#failed_services[@]})"
 if [ ${#failed_services[@]} -eq 0 ]; then
@@ -74,6 +79,7 @@ else
         echo "  - ❌ $service"
     done
 fi
+
 echo ""
 echo "===================================="
 

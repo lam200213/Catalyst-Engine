@@ -680,5 +680,27 @@ class TestSystemEndpoints(BaseDataServiceTest):
         self.assertIn('error', response.json)
         self.assertIn("Invalid cache type 'invalid_type'", response.json['error'])
 
+class TestipelineResilience(BaseDataServiceTest):
+
+    @patch("app.yf_price_provider.get_stock_data")
+    def test_price_batch_provider_none_returns_failed_not_500(self, mock_get_stock_data):
+        """
+        Week 9 Plan 1: one bad ticker should not crash the batch.
+        Provider returns None for that ticker (e.g., missing timestamp).
+        Expected: HTTP 200, ticker is listed in failed.
+        """
+        self.mock_cache.get.return_value = None
+        mock_get_stock_data.return_value = {"BADTICK": None}
+
+        resp = self.client.post("/price/batch", json={
+            "tickers": ["BADTICK"],
+            "source": "yfinance",
+            "period": "1y",
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("BADTICK", resp.json.get("failed", []))
+        self.assertNotIn("BADTICK", resp.json.get("success", {}))
+
 if __name__ == '__main__':
     unittest.main()

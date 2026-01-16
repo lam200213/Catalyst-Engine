@@ -37,10 +37,10 @@ export type LastRefreshStatus = 'PENDING' | 'PASS' | 'FAIL' | 'UNKNOWN';
  * ArchiveReason matches the backend ArchiveReason enum used for archived items.
  *
  * Backend enum values:
- * - "MANUALDELETE"       // user explicitly removed the item
- * - "FAILEDHEALTHCHECK"  // auto-archived by health check orchestrator
+ * - "MANUAL_DELETE"       // user explicitly removed the item
+ * - "FAILED_HEALTH_CHECK"  // auto-archived by health check orchestrator
  */
-export type ArchiveReason = 'MANUALDELETE' | 'FAILEDHEALTHCHECK';
+export type ArchiveReason = 'MANUAL_DELETE' | 'FAILED_HEALTH_CHECK';
 
 /**
  * WatchlistItem mirrors the GET /monitorwatchlist response item shape.
@@ -202,13 +202,13 @@ export interface ArchivedWatchlistItem {
 
   /**
    * Reason the item was archived:
-   * - "MANUALDELETE"      -> user-triggered removal
-   * - "FAILEDHEALTHCHECK" -> auto-archived by health check
+   * - "MANUAL_DELETE"      -> user-triggered removal
+   * - "FAILED_HEALTH_CHECK" -> auto-archived by health check
    */
   reason: ArchiveReason;
 
   /**
-   * Pipeline stage where the item failed when reason is FAILEDHEALTHCHECK
+   * Pipeline stage where the item failed when reason is FAILED_HEALTH_CHECK
    * (e.g., "screen", "vcp", "freshness"), or null for manual deletions.
    */
   failed_stage: string | null;

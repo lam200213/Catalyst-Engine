@@ -9,7 +9,7 @@ import { WatchlistTable } from '../WatchlistTable';
 import {
   baseWatchlistItem,
   makeWatchlistItem,
-} from './fixtures/watchlistFixtures';
+} from '../../testing/fixtures/watchlistFixtures';
 
 // Shared sample items matching frontend WatchlistItem interface shape.
 const baseItems = [

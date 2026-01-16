@@ -1,4 +1,4 @@
-// frontend-app/src/components/__tests__/fixtures/watchlistFixtures.js
+// frontend-app/src/testing/fixtures/watchlistFixtures.js
 // shared watchlist fixtures for watchlist-related component and page tests.
 
 // Base WatchlistItem fixture matching src/types/monitoring.ts (snake_case fields).
@@ -32,7 +32,7 @@ export const makeWatchlistItem = (overrides = {}) => ({
 export const baseArchivedWatchlistItem = {
   ticker: 'CRM',
   archived_at: '2025-09-21T10:00:00Z',
-  reason: 'FAILEDHEALTHCHECK',
+  reason: 'FAILED_HEALTH_CHECK',
   failed_stage: 'vcp',
 };
 

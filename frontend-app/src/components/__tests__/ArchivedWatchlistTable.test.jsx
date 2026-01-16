@@ -8,7 +8,7 @@ import { ArchivedWatchlistTable } from '../ArchivedWatchlistTable';
 import {
   baseArchivedWatchlistItem,
   makeArchivedWatchlistItem,
-} from './fixtures/watchlistFixtures';
+} from '../../testing/fixtures/watchlistFixtures';
 
 describe('ArchivedWatchlistTable', () => {
   it('renders columns for ticker, archived at, reason, failed stage', () => {
@@ -63,12 +63,12 @@ describe('ArchivedWatchlistTable', () => {
     const items = [
       makeArchivedWatchlistItem({
         ticker: 'CRM',
-        reason: 'MANUALDELETE',
+        reason: 'MANUAL_DELETE',
         failed_stage: null,
       }),
       makeArchivedWatchlistItem({
         ticker: 'NET',
-        reason: 'FAILEDHEALTHCHECK',
+        reason: 'FAILED_HEALTH_CHECK',
         failed_stage: 'vcp',
       }),
     ];
@@ -95,7 +95,7 @@ describe('ArchivedWatchlistTable', () => {
     const items = [
       makeArchivedWatchlistItem({
         ticker: 'CRM',
-        reason: 'MANUALDELETE',
+        reason: 'MANUAL_DELETE',
         failed_stage: null,
       }),
     ];
@@ -120,7 +120,7 @@ describe('ArchivedWatchlistTable', () => {
     const items = [
       makeArchivedWatchlistItem({
         ticker: 'CRM',
-        reason: 'MANUALDELETE',
+        reason: 'MANUAL_DELETE',
         failed_stage: null,
       }),
     ];

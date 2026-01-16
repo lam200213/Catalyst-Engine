@@ -4,8 +4,7 @@ import requests
 import time 
 import shortuuid
 from datetime import datetime, timezone
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
+from celery import Celery
 import requests
 from flask import Flask, jsonify
 from pymongo import MongoClient, errors
@@ -31,6 +30,18 @@ ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-servic
 LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:3001")
 SCHEDULER_TIME = os.getenv("SCHEDULER_TIME", "05:00")
+
+# Redis/Celery configuration
+CACHE_REDIS_URL = os.getenv("CACHE_REDIS_URL", "redis://redis:6379/0")
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", CACHE_REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CACHE_REDIS_URL)
+
+# Celery app (used by scheduler-worker / scheduler-beat containers)
+celery = Celery(__name__, broker=CELERY_BROKER_URL, backend=CELERY_RESULT_BACKEND)
+celery.conf.update(
+    task_track_started=True,
+    timezone="UTC",
+)
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -448,16 +459,6 @@ def run_screening_pipeline():
         "message": "Screening job completed successfully.",
         **response_data
     }, 200
-
-# Initialize the scheduler
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-# Schedule the job to run daily at the configured time
-scheduler.add_job(
-    run_screening_pipeline,
-    CronTrigger(hour=int(SCHEDULER_TIME.split(':')[0]), minute=int(SCHEDULER_TIME.split(':')[1]))
-)
 
 # --- API Endpoint ---
 @app.route('/jobs/screening/start', methods=['POST'])

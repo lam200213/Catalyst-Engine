@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from providers.yfin import financials_provider
+from .test_fixtures import make_quote_summary_payload
 
 class TestYFinanceFinancialsProvider(unittest.TestCase):
     """Consolidated tests for the yfinance financials data provider."""
@@ -235,3 +236,51 @@ class TestYFinanceFinancialsProvider(unittest.TestCase):
         # --- Assert ---
         self.assertIsNone(result)
         mock_mark_delisted.assert_not_called()
+
+    @patch("providers.yfin.financials_provider.yahoo_client.execute_request")
+    def test_fallback_handles_null_income_statement_histories(self, mock_execute_request):
+        """
+        Week 9 Plan 1: incomeStatementHistory / incomeStatementHistoryQuarterly can be None.
+        Expected: fallback returns empty earnings lists and does not raise.
+        """
+        mock_execute_request.return_value = make_quote_summary_payload(
+            annual_block=None,
+            quarterly_block=None,
+            market_cap=2e12,
+            ipo_fmt="2020-01-01",
+        )
+
+        out = financials_provider._fetch_financials_with_fallback("NULLHIST", dt.datetime.now().timestamp())
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("marketCap"), 2e12)
+        self.assertEqual(out.get("ipoDate"), "2020-01-01")
+        self.assertEqual(out.get("annual_earnings"), [])
+        self.assertEqual(out.get("quarterly_earnings"), [])
+
+    @patch("providers.yfin.financials_provider.yahoo_client.execute_request")
+    def test_fallback_handles_income_statement_block_present_but_nested_none(self, mock_execute_request):
+        """
+        Task 9.1: block exists but nested incomeStatementHistory is None.
+        This is the exact shape that causes: AttributeError or NoneType iteration in many parsers.
+        """
+        mock_execute_request.return_value = make_quote_summary_payload(
+            annual_block={"incomeStatementHistory": None},
+            quarterly_block={"incomeStatementHistory": None},
+            market_cap=2e12,
+            ipo_fmt="2020-01-01",
+        )
+
+        out = financials_provider._fetch_financials_with_fallback(
+            "NESTEDNONE", dt.datetime.now().timestamp()
+        )
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("annual_earnings"), [])
+        self.assertEqual(out.get("quarterly_earnings"), [])
+
+    def test_transform_income_statements_accepts_none(self):
+        """
+        Week 9 Plan 1: transformer must accept None and return [] (no crash).
+        """
+        out = financials_provider._transform_income_statements(None, 1000)
+        self.assertEqual(out, [])

@@ -31,7 +31,19 @@ YF_HEADER_ROW_CLASS = 'yf-1yyu1pc'
 def _transform_income_statements(statements, shares_outstanding):
     """Helper to extract raw values and manually calculate EPS if not provided."""
     transformed = []
+
+    # Defensive guard for missing/null statement lists
+    if not statements:
+        return transformed
+
+    # If it's not a list/tuple, treat as empty (Yahoo sometimes returns None)
+    if not isinstance(statements, (list, tuple)):
+        return transformed
+
     for s in statements:
+        # Skip unexpected non-dict entries safely
+        if not isinstance(s, dict):
+            continue
         net_income = s.get('netIncome', {}).get('raw')
         total_revenue = s.get('totalRevenue', {}).get('raw')
         
@@ -223,8 +235,21 @@ def _fetch_financials_with_fallback(ticker_symbol, start_time):
         
         shares_outstanding = (default_key_stats.get('sharesOutstanding') or {}).get('raw')
 
-        annual_history = info.get('incomeStatementHistory', {}).get('incomeStatementHistory', [])
-        quarterly_history = info.get('incomeStatementHistoryQuarterly', {}).get('incomeStatementHistory', [])
+        # income statement blocks can be None or non-dict
+        annual_block = info.get("incomeStatementHistory")
+        quarterly_block = info.get("incomeStatementHistoryQuarterly")
+
+        annual_block = annual_block if isinstance(annual_block, dict) else {}
+        quarterly_block = quarterly_block if isinstance(quarterly_block, dict) else {}
+
+        annual_history = annual_block.get("incomeStatementHistory") or []
+        quarterly_history = quarterly_block.get("incomeStatementHistory") or []
+
+        # nested history can still be None or malformed
+        if not isinstance(annual_history, list):
+            annual_history = []
+        if not isinstance(quarterly_history, list):
+            quarterly_history = []
 
         annual_earnings_list = _transform_income_statements(annual_history, shares_outstanding)
         quarterly_earnings_list = _transform_income_statements(quarterly_history, shares_outstanding)

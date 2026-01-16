@@ -23,6 +23,12 @@ services:
     volumes:
       - ./backend-services/scheduler-service:/app
       - ./backend-services/shared:/app/shared
+      
+  # Keep dev parity for Celery Beat code changes (hot reload via bind mounts)
+  scheduler-beat:
+    volumes:
+      - ./backend-services/scheduler-service:/app
+      - ./backend-services/shared:/app/shared
 
   leadership-service:
     volumes:

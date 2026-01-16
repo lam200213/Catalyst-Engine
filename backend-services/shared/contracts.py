@@ -352,11 +352,6 @@ ScreenerQuoteList: TypeAlias = List[ScreenerQuote]
 
 # --- Contract 14: Requests: Watchlist/Archive ---
 
-class FavouriteToggleRequest(BaseModel):
-    ticker: str
-    is_favourite: bool = Field(..., alias="is_favourite")
-    model_config = ConfigDict(populate_by_name=True)
-
 class BatchRemoveRequest(BaseModel):
     tickers: List[str]
 
@@ -371,108 +366,6 @@ class WatchlistBatchRemoveRequest(BatchRemoveRequest):
 class InternalBatchAddRequest(BaseModel):
     tickers: List[str]
 
-class InternalBatchUpdateStatusItem(BaseModel):
-    """
-    [DEPRECATED] Part of the legacy granular update flow.
-    """    
-    ticker: str
-    status: LastRefreshStatus
-    failed_stage: Optional[str] = None
-    # VCP and pivot fields for Buy Ready / Buy Alert logic
-    current_price: Optional[float] = None
-    pivot_price: Optional[float] = None
-    pivot_proximity_percent: Optional[float] = None
-    
-    # VCP freshness and pattern health
-    vcp_pass: Optional[bool] = None
-    is_pivot_good: Optional[bool] = None
-    pattern_age_days: Optional[int] = None
-    
-    # Pivot and pullback setup flags
-    has_pivot: Optional[bool] = None
-    is_at_pivot: Optional[bool] = None
-    has_pullback_setup: Optional[bool] = None
-    
-    # Volume behaviour for accumulation/distribution detection
-    vol_last: Optional[int] = None
-    vol_50d_avg: Optional[int] = None
-    vol_vs_50d_ratio: Optional[float] = None
-    day_change_pct: Optional[float] = None
-    
-    # Leadership flag
-    is_leader: Optional[bool] = None
-
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "example": {
-                "ticker": "NVDA",
-                "status": "PASS",
-                "failed_stage": None,
-                "current_price": 850.0,
-                "pivot_price": 855.0,
-                "pivot_proximity_percent": -0.58,
-                "vcp_pass": True,
-                "is_pivot_good": True,
-                "pattern_age_days": 15,
-                "has_pivot": True,
-                "is_at_pivot": True,
-                "has_pullback_setup": False,
-                "vol_last": 12000000,
-                "vol_50d_avg": 10000000,
-                "vol_vs_50d_ratio": 1.2,
-                "day_change_pct": 2.5,
-                "is_leader": True
-            }
-        }
-    )
-class InternalBatchUpdateStatusRequest(BaseModel):
-    """
-    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
-    Legacy request model for batch updating watchlist status.
-    """    
-    items: List[InternalBatchUpdateStatusItem]
-
-class InternalBatchUpdateStatusResponse(BaseModel):
-    """
-    [DEPRECATED] Legacy response model.
-    """
-    message: str = Field(
-        ...,
-        description="Summary message including updated count and sample tickers",
-    )
-    updated: StrictInt = Field(
-        ...,
-        description="Number of watchlist items whose status was updated",
-    )
-    tickers: List[str] = Field(
-        ...,
-        description="List of tickers included in this batch (normalized, unique)",
-    )
-
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "example": {
-                "message": "Batch status update completed for 3 watchlist items. Sample: AAPL, MSFT",
-                "updated": 3,
-                "tickers": ["AAPL", "MSFT", "CRM"],
-            }
-        },
-    )
-
-class InternalBatchArchiveFailedItem(BaseModel):
-    """
-    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
-    Legacy request model for batch archiving failed items.
-    """
-    ticker: str
-    failed_stage: str
-
-class InternalBatchArchiveFailedRequest(BaseModel):
-    items: List[InternalBatchArchiveFailedItem]
-
-# --- Contract 15: Responses: Watchlist/Archive ---
 class WatchlistItem(BaseModel):
     """
     Represents a single watchlist item in GET /monitor/watchlist response
