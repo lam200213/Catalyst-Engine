@@ -2,6 +2,7 @@ Flask
 requests
 pymongo
 pytest
+pytest-mock
 shortuuid
 pydantic
 celery

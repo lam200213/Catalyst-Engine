@@ -109,12 +109,18 @@ services:
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
       LOG_LEVEL: INFO
     depends_on:
-      - mongodb
-      - redis
-      - ticker-service
-      - screening-service
-      - analysis-service
-      - leadership-service
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      ticker-service:
+        condition: service_started
+      screening-service:
+        condition: service_started
+      analysis-service:
+        condition: service_started
+      leadership-service:
+        condition: service_started
     networks:
       - app-network
 
@@ -137,8 +143,11 @@ services:
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
     depends_on:
-      - scheduler-service
-      - redis
+      scheduler-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
     networks:
       - app-network
 
@@ -161,8 +170,10 @@ services:
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
       LOG_LEVEL: INFO
     depends_on:
-      - redis
-      - scheduler-worker
+      scheduler-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - app-network
 
@@ -239,14 +250,22 @@ services:
       TICKER_SERVICE_URL: http://ticker-service:5001
       LOG_LEVEL: INFO
     depends_on:
-      - data-service
-      - screening-service
-      - analysis-service
-      - leadership-service
-      - scheduler-service
-      - ticker-service
-      - monitoring-service
-      - redis
+      data-service:
+        condition: service_started
+      screening-service:
+        condition: service_started
+      analysis-service:
+        condition: service_started
+      leadership-service:
+        condition: service_started
+      scheduler-service:
+        condition: service_started
+      ticker-service:
+        condition: service_started
+      monitoring-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - app-network
 

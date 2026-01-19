@@ -28,4 +28,4 @@ USER appuser
 
 # Command to run the application: one image, three modes (api | worker | beat)
 # Use gunicorn+gevent for API mode to support concurrent SSE streams.
-CMD ["sh", "-c", "if [ \"$SCHEDULER_MODE\" = \"worker\" ]; then celery -A app.celery worker --loglevel=info; elif [ \"$SCHEDULER_MODE\" = \"beat\" ]; then celery -A app.celery beat --loglevel=info; else gunicorn -k gevent --workers 1 --bind 0.0.0.0:$PORT app:app; fi"]
+CMD ["sh", "-c", "if [ \"$SCHEDULER_MODE\" = \"worker\" ]; then celery -A celery_app.celery worker --loglevel=info; elif [ \"$SCHEDULER_MODE\" = \"beat\" ]; then celery -A celery_app.celery beat --loglevel=info; else gunicorn -k gevent --workers 1 --bind 0.0.0.0:$PORT app:app; fi"]

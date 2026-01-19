@@ -4,18 +4,15 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2026-1-16
-fix(week9): harden yfin financials parsing and cleanup contracts/tests
+2026-1-19
+feat(scheduler): add redis + celery runtime scaffolding +  contracts, and service layer for async pipeline
 
-- Guard yfin financials transforms against null incomeStatementHistory fields (Task 9.1)
-- Prune unused internal batch/archiving contract models and reorganize API_REFERENCE.md by public vs internal routes (Task 9.5)
-- Centralize frontend watchlist test fixtures under src/testing/fixtures and update imports (Task 9.6)
-- minor test cases updates in data-service, monitoring-service
-- run_all_test script update to align with the current docker env setting
-- DATABASE_SCHEMA.md update
-- some week 10 stuffs
-
-Refs: Week 9 (9.1, 9.5, 9.6)
+- Add Redis service with healthcheck for Celery broker/backend
+- Split scheduler into api/worker/beat containers via SCHEDULER_MODE
+- Mount scheduler-beat code in dev compose for parity
+- Extend shared contracts with ScreeningJobRunRecord and JobProgressEvent (SSE snake_case + Z-suffix datetime serialization) plus unit tests
+- Extract job persistence into services/job_service.py with unit tests (create_job + history pagination)
+- Add services/progress_emitter.py with unit tests (append + cap progress log at 100)
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
