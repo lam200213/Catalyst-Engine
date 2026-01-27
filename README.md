@@ -5,35 +5,15 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-28
-feat(scheduler): implement async core logic, worker tasks, and sse api
+fix(api-gateway): resolve SSE buffering hangs and connection leaks
 
-Implements the core business logic, Celery worker tasks, and Flask API endpoints
-for the Week 10 asynchronous migration. This commit transitions the service
-from a synchronous runner to a robust orchestration engine and enables SSE
-streaming through the API Gateway.
+The SSE proxy implementation previously buffered 1024 bytes before yielding, causing clients to hang waiting for headers when the upstream service emitted small initial events (e.g., heartbeats). Additionally, upstream connections were not being closed explicitly, leading to potential pool exhaustion.
 
-Phase 2: Core Logic (Service Layer)
-- Add services/job_service.py for centralized job CRUD and status management
-- Add services/progress_emitter.py for standardized SSE snapshots
-- Add unit tests for service layer logic (test_job_service.py, test_progress_emitter.py)
-
-Phase 3: Worker Layer (The Engine)
-- Add tasks.py with run_full_pipeline and refresh_watchlist_task
-- Implement Celery chaining logic for Screening -> Batch Add -> Refresh
-- Add integration tests for task execution and failure propagation
-
-Phase 4: API Layer (The Interface)
-- Update app.py to expose async trigger endpoints (POST /start, POST /refresh)
-- Implement history endpoints with pagination and summary/detail separation
-- Update 202 Accepted response contracts
-
-Phase 5: Streaming & E2E (The Experience)
-- Implement SSE generator in app.py with strict header compliance
-- Add GET /stream endpoints backed by MongoDB polling
-- Update api-gateway/app.py to support SSE proxying with `stream=True` and disabled buffering
-- Add E2E tests for full pipeline execution using real Redis/Mongo containers
-
-Refs: Week-10-SDD-Tasks-2.1-4.1
+Changes:
+- Disable buffering in `iter_content` (set `chunk_size=None`) to ensure events are forwarded immediately.
+- Wrap the streaming generator in a `try/finally` block to strictly call `resp.close()` on the upstream response, preventing connection leaks.
+- Remove manual injection of the `Connection` header to allow the WSGI server to manage connection lifecycle.
+- Update `test_gateway.py` to assert correct cleanup, non-buffered chunking, and header management.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

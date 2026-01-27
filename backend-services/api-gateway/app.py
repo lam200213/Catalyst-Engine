@@ -54,7 +54,6 @@ def gateway(service, path=""):
 
         if request.method == 'POST':
             post_data = request.get_json() if request.is_json else None
-            # Increase timeout for synchronous job triggering if needed, though they should be async
             timeout = 60 if service == 'jobs' else 45
             resp = requests.post(target_url, json=post_data, timeout=timeout)
         
@@ -94,22 +93,26 @@ def gateway(service, path=""):
 
             if resp.status_code == 200 and 'text/event-stream' in c_type:
                 def generate():
-                    # Iterate with a reasonable chunk size, not 1 byte, to reduce CPU overhead
-                    # But small enough to allow immediate flushes of small events
-                    for chunk in resp.iter_content(chunk_size=1024):
-                        if chunk:
-                            yield chunk
+                    # Ensure upstream cleanup with try...finally
+                    try:
+                        # Disable buffering (chunk_size=None) for SSE
+                        # This ensures bytes are yielded as soon as they arrive from the socket.
+                        for chunk in resp.iter_content(chunk_size=None):
+                            if chunk:
+                                yield chunk
+                    finally:
+                        resp.close()
 
+                # Do not manually set 'Connection' header. Let WSGI server handle it.
                 headers = {
                     'Content-Type': 'text/event-stream',
                     'Cache-Control': 'no-cache',
                     'X-Accel-Buffering': 'no',
-                    'Connection': 'keep-alive'
                 }
                 return Response(stream_with_context(generate()), status=200, headers=headers)
             
             # GUARD RAIL: If we expected a stream but got something else (e.g. error HTML/JSON),
-            # DO NOT fall through to json() buffering if it might be an infinite malformed stream.
+            # DO NOT fall through to json() buffering.
             if resp.status_code != 200:
                  return Response(resp.content, status=resp.status_code, mimetype=c_type)
 
