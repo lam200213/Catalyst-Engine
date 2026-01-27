@@ -5,15 +5,12 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-28
-fix(api-gateway): resolve SSE buffering hangs and connection leaks
+docs(scheduler): align schema and architecture with week 10 async implementation
 
-The SSE proxy implementation previously buffered 1024 bytes before yielding, causing clients to hang waiting for headers when the upstream service emitted small initial events (e.g., heartbeats). Additionally, upstream connections were not being closed explicitly, leading to potential pool exhaustion.
-
-Changes:
-- Disable buffering in `iter_content` (set `chunk_size=None`) to ensure events are forwarded immediately.
-- Wrap the streaming generator in a `try/finally` block to strictly call `resp.close()` on the upstream response, preventing connection leaks.
-- Remove manual injection of the `Connection` header to allow the WSGI server to manage connection lifecycle.
-- Update `test_gateway.py` to assert correct cleanup, non-buffered chunking, and header management.
+- Flatten `screening_jobs` progress fields in DATABASE_SCHEMA.md to match DB storage.
+- Update API_REFERENCE.md to match exact JSON responses in `app.py` (removed monitor_url, fixed messages).
+- Update ARCHITECTURE.md to reflect DB Polling strategy for SSE instead of Redis Pub/Sub.
+- Ensure Split Persistence structure is consistent across all definitions.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

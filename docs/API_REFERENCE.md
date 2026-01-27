@@ -628,9 +628,19 @@ These endpoints are intended for frontend consumption and are accessible via the
 
 ## Scheduler Service Routes
 
+**Base Path:** `/jobs`
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/jobs/screening/start` | `POST` | **Async.** Initiates a full market screening pipeline. Returns a Job ID immediately. |
+| `/jobs/screening/stream/:job_id` | `GET` | **Stream.** Connects to a Server-Sent Events (SSE) stream to track job progress in real-time. |
+| `/jobs/screening/history` | `GET` | Retrieves a paginated list of past screening jobs (summary only). |
+| `/jobs/screening/history/:job_id` | `GET` | Retrieves the full details (including survivor lists) for a specific job. |
+| `/jobs/watchlist/refresh` | `POST` | **Async.** Initiates a health check on all watchlist items. Returns a Job ID immediately. |
+| `/jobs/watchlist/stream/:job_id` | `GET` | **Stream.** Connects to an SSE stream to track watchlist refresh progress. |
+
 ### **POST `/jobs/screening/start`**
 - **Proxies to:** scheduler-service (port 3004)
-- **Purpose:** Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.
+- **Purpose:** Initiates an asynchronous screening pipeline job. Returns immediately with a job ID for tracking.
 - **Data Contract:** Produces [`ScreeningJobResult`](./DATA_CONTRACTS.md#9-screeningjobresult).
 - **Example Usage:**
   ```bash
@@ -638,31 +648,36 @@ These endpoints are intended for frontend consumption and are accessible via the
   ```
 - **Example Success Response:**
   ```json
-  {
-    "message": "Screening job completed successfully.",
-    "job_id": "20250720-064530-AbcDE123",
-    "processed_at": "2025-07-20T06:45:30.123456Z",
-    "total_tickers_fetched": 8123,
-    "trend_screen_survivors_count": 157,
-    "vcp_survivors_count": 45,
-    "final_candidates_count": 12,
-    "industry_diversity": {
-      "unique_industries_count": 8
-    },
-    "final_candidates": [
-      {
-        "ticker": "NVDA",
-        "vcp_pass": true,
-        "vcpFootprint": "10D 5.2% | 13D 5.0%",
-        "leadership_results": {...}
-      }
-    ]
-  }
+    {
+      "job_id": "string",
+      "status": "PENDING",
+      "message": "Screening job submitted successfully",
+      "monitor_url": "/jobs/screening/stream/{job_id}"
+    }
+    ```
+
+### **GET `/jobs/screening/stream/:job_id`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Streams real-time progress updates for a specific screening job using Server-Sent Events (SSE).
+- **Content-Type:** `text/event-stream`
+- **Data Contract:** Emits events matching [`JobProgressEvent`](./DATA_CONTRACTS.md#32-async-job-models), [`JobCompleteEvent`](./DATA_CONTRACTS.md#32-async-job-models), or [`JobErrorEvent`](./DATA_CONTRACTS.md#32-async-job-models).
+- **Example Usage:**
+  ```bash
+  curl -N http://localhost:3000/jobs/screening/stream/20251015-123000-ABC123DE
+  ```
+- **Event Stream Example:**
+  ```text
+  data: {"job_id": "...", "status": "RUNNING", "step_current": 1, "step_total": 5, "message": "Fetching tickers...", "updated_at": "2025-10-15T12:30:05Z"}
+  
+  data: {"job_id": "...", "status": "RUNNING", "step_current": 2, "step_total": 5, "message": "Running Trend Scan...", "updated_at": "2025-10-15T12:30:10Z"}
+  
+  event: complete
+  data: {"job_id": "...", "status": "SUCCESS", "summary_counts": {"final_candidates": 12}, "completed_at": "2025-10-15T12:35:00Z"}
   ```
 
 ### **POST `/jobs/watchlist/refresh`**
 - **Proxies to:** scheduler-service (port 3004)
-- **Purpose:** Triggers a new watchlist health check job. The scheduler enqueues a Celery task (`refresh_watchlist_task`) which calls monitoring-service's **internal orchestrator endpoint** `POST /monitor/internal/watchlist/refresh-status` to perform the full refresh pipeline.
+- **Purpose:** TInitiates an asynchronous watchlist health check job. Returns immediately with a job ID.
 - **Example Usage:**
   ```bash
   curl -X POST http://localhost:3000/jobs/watchlist/refresh
@@ -670,13 +685,19 @@ These endpoints are intended for frontend consumption and are accessible via the
 - **Example Success Response:**
   ```json
   {
-    "message": "Watchlist refresh job completed",
-    "job_id": "20251120-123456-AbcDE123",
-    "updated_items": 32,
-    "archived_items": 5,
-    "failed_items": 0
+    "job_id": "string",
+    "status": "PENDING",
+    "message": "Watchlist refresh job submitted successfully",
+    "monitor_url": "/jobs/watchlist/stream/{job_id}"
   }
   ```
+
+### **GET `/jobs/screening/stream/:job_id`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Streams real-time progress updates via SSE.
+- **Implementation Detail:** Polls database state every 1s; emits heartbeats every 15s.
+- **Response Headers:** `X-Accel-Buffering: no`, `Cache-Control: no-cache`
+- **Data Contract:** Emits [`JobProgressEvent`](./DATA_CONTRACTS.md#32-async-job-models).
 
 ***
 

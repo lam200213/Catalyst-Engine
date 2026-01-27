@@ -8,29 +8,65 @@ This document outlines the schema for each collection used in the MongoDB `stock
 - **Caching**: The `data-service` utilizes Redis for application-level caching of API responses (prices, financials, news). MongoDB is used for persistent storage only.
 
 ## 1. screening_jobs
-
-Stores a summary document for each completed screening pipeline run, providing a high-level overview of the job's outcome.
+Stores the full lifecycle record for screening and maintenance jobs. This collection uses a "Split Persistence" pattern where high-level metrics are stored in `result_summary` for quick listing, while heavy datasets (survivor lists) are stored in `results`.
 
 - **Primary Service**: `scheduler-service`
-- **Schema**: Based on the `ScreeningJobResult` Pydantic model.
+- **Schema**: Maps to `ScreeningJobRunRecord` (application layer) but stores progress flatly.
 
 ```json
 {
-  "job_id": "string", // Unique identifier for the job (e.g., "20251015-123000-ABC123DE")
-  "processed_at": "ISODate", // Timestamp when the job was completed
-  "total_process_time": "float", // Total execution time in seconds
-  "total_tickers_fetched": "integer", // Total tickers from ticker-service
-  "trend_screen_survivors_count": "integer",
-  "vcp_survivors_count": "integer",
-  "final_candidates_count": "integer",
-  "industry_diversity": {
-    "unique_industries_count": "integer"
+  "_id": "ObjectId",
+  "job_id": "string",       // Unique identifier (UUID)
+  "job_type": "string",     // Enum: "SCREENING", "WATCHLIST_REFRESH"
+  "status": "string",       // Enum: "PENDING", "RUNNING", "SUCCESS", "FAILED"
+  "created_at": "ISODate",
+  "started_at": "ISODate",
+  "completed_at": "ISODate",
+  
+  // Configuration
+  "options": {
+    "mode": "string" // e.g., "full", "fast"
   },
-  "final_candidates": [
-    // This array is stored in the document but is often large.
-    // Individual candidates are also stored in the `screening_results` collection for easier querying.
-    // See the schema for 'screening_results' for the structure of each item.
-  ]
+
+  // Error tracking
+  "error_message": "string",
+  "error_step": "string",
+
+  // Progress Tracking (Flattened)
+  "step_current": "integer",
+  "step_total": "integer",
+  "step_name": "string",
+  "message": "string",
+  "percent_complete": "float",
+  "updated_at": "ISODate",
+
+  "progress_log": [
+    {
+      "step": "string",
+      "status": "string",
+      "timestamp": "ISODate",
+      "message": "string"
+    }
+  ],
+
+  // SPLIT PERSISTENCE: Heavy Data
+  "results": {
+    "trend_survivors": ["string"], 
+    "vcp_survivors": ["string"],
+    "final_candidates": ["string"]
+  },
+
+  // SPLIT PERSISTENCE: Metrics & Summaries
+  "result_summary": {
+    "total_process_time": "float",
+    "total_tickers_fetched": "integer",
+    "trend_screen_survivors_count": "integer",
+    "vcp_survivors_count": "integer",
+    "final_candidates_count": "integer",
+    "industry_diversity": {
+      "unique_industries_count": "integer"
+    }
+  }
 }
 ```
 

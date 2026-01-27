@@ -187,9 +187,9 @@
 | **Data Service** | Python, Flask, PyMongo, yfinance, finnhub-python, curl-cffi |
 | **Analysis & Screening Services** | Python, Flask, NumPy, Requests |
 | **Leadership Service** | Python, Flask, Pandas, NumPy, Requests |
-| **Scheduler Service** | Python, Flask, Requests, APScheduler |
+| **Scheduler Service** | Python, Flask, Celery, Redis, APScheduler |
 | **Ticker Service** | Python, Flask, Pandas, Requests |
-| **Data Caching** | Redis |
+| **Data Caching & Message Broker** | Redis |
 | **Data Persistence** | MongoDB |
 | **Frontend UI & Charting** | React (Vite), TradingView Lightweight Charts, Chakra UI |
 | **Asynchronous Tasks** | Celery |
@@ -235,6 +235,17 @@ This batching mechanism significantly reduces the number of HTTP requests betwee
    - Performs bulk updates (`watchlistitems`) and bulk archiving (`archived_watchlist_items` with `ArchiveReason.FAILED_HEALTH_CHECK`)
 5. Returns `WatchlistRefreshStatusResponse` with `updated_items`, `archived_items`, `failed_items`
 6. Scheduler persists summary in job metadata and updates job status
+
+### Asynchronous Job Orchestration (Command/Query Pattern)
+
+The system now employs an asynchronous pattern for long-running processes (Screening, Watchlist Refresh):
+
+1.  **Command (Trigger):** The `frontend-app` sends a `POST` request to the `scheduler-service` (e.g., `/jobs/screening/start`).
+2.  **Queueing:** The `scheduler-service` creates a generic job record in MongoDB (`PENDING`), pushes a task to the **Redis** message broker via **Celery**, and immediately returns `202 Accepted` with the `job_id`.
+3.  **Execution:** A Celery Worker (part of `scheduler-service`) picks up the task and executes the pipeline logic.
+4.  **Query (Stream):** The `frontend-app` connects to an SSE endpoint (`GET /jobs/.../stream/{job_id}`).
+5.  **Progress Updates:** As the worker proceeds through steps (Trend, VCP, Leadership), it emits progress events to Redis Pub/Sub. The Flask application consumes these events and pushes them to the connected frontend client in real-time.
+6.  **Completion:** Upon finishing, the worker updates the MongoDB record with "Split Persistence" (results nested separately from metrics) and emits a final `JobCompleteEvent`.
 
 ### Frontend and Monitoring-Service Communication
 

@@ -1759,4 +1759,100 @@ Compact price and volume summary metrics for watchlist items, computed by `data-
     - Failed tickers return all-null metrics rather than being excluded from the response, allowing orchestrator to distinguish "no data" from "ticker not requested".
     - This endpoint is internal-only (not exposed via `api-gateway`) and is called exclusively by `monitoring-service`'s `POST /monitor/internal/watchlist/refresh-status` orchestrator.
 
-**Last updated**: 2025-12-14
+---
+
+## 32. Async Job Models
+
+These contracts define the data structures for asynchronous job orchestration, persistence, and Server-Sent Events (SSE) streaming.
+
+- **Producer:** `scheduler-service`
+- **Consumer:** `frontend-app` (via SSE), MongoDB `screening_jobs` collection
+
+### JobProgressEvent
+Used for SSE payloads to update the frontend on job status.
+**JSON Schema:**
+```json
+{
+  "title": "JobProgressEvent",
+  "type": "object",
+  "properties": {
+    "job_id": { "type": "string" },
+    "job_type": { "type": "string" },
+    "status": { "type": "string", "enum": ["PENDING", "RUNNING", "SUCCESS", "FAILED"] },
+    "step_current": { "type": "integer" },
+    "step_total": { "type": "integer" },
+    "step_name": { "type": "string" },
+    "message": { "type": "string" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["job_id", "status", "step_current", "step_total", "updated_at"]
+}
+```
+
+### ScreeningJobRunRecord
+The persistence model for the `screening_jobs` collection. Implements "Split Persistence" where results are nested.
+**JSON Schema:**
+```json
+{
+  "title": "ScreeningJobRunRecord",
+  "type": "object",
+  "properties": {
+    "job_id": { "type": "string" },
+    "job_type": { "type": "string", "default": "SCREENING" },
+    "status": { "type": "string", "default": "PENDING" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "started_at": { "type": ["string", "null"], "format": "date-time" },
+    "completed_at": { "type": ["string", "null"], "format": "date-time" },
+    "options": { "type": "object" },
+    "error_message": { "type": ["string", "null"] },
+    "progress_log": { "type": "array", "items": { "type": "object" } },
+    "results": {
+      "type": ["object", "null"],
+      "description": "Nested object containing lists of survivors (trend, vcp, etc.)"
+    },
+    "result_summary": {
+      "type": ["object", "null"],
+      "description": "Nested ScreeningJobResult object containing counts and metrics"
+    }
+  },
+  "required": ["job_id", "created_at"]
+}
+```
+
+### JobCompleteEvent
+SSE payload emitted when a job finishes successfully.
+**JSON Schema:**
+```json
+{
+  "title": "JobCompleteEvent",
+  "type": "object",
+  "properties": {
+    "job_id": { "type": "string" },
+    "job_type": { "type": "string" },
+    "status": { "type": "string", "const": "SUCCESS" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "summary_counts": { "type": ["object", "null"], "additionalProperties": { "type": "integer" } }
+  },
+  "required": ["job_id", "status", "completed_at"]
+}
+```
+
+### JobErrorEvent
+SSE payload emitted when a job fails.
+**JSON Schema:**
+```json
+{
+  "title": "JobErrorEvent",
+  "type": "object",
+  "properties": {
+    "job_id": { "type": "string" },
+    "job_type": { "type": "string" },
+    "status": { "type": "string", "const": "FAILED" },
+    "error_message": { "type": "string" },
+    "completed_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["job_id", "status", "error_message", "completed_at"]
+}
+```
+
+**Last updated**: 2026-01-27
