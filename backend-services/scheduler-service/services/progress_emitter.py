@@ -24,14 +24,29 @@ def emit_progress(
     - Atomicity: Uses $set (state) and $push (log) in one call.
     - Capping: Uses $slice to keep only the last 100 log entries to prevent document bloat.
     - Consistency: Always updates 'updated_at' to the current UTC time.
+    - Writes to 'progress_snapshot' to align with SSE generator expectations.
     """
     _, jobs_col, _, _, _, _ = get_db_collections()
     
     now = datetime.now(timezone.utc)
     
-    # 1. Build the $set fields (State Snapshot)
+    # 1. Build the Snapshot Data
+    # This structure must match what app.py's _sse_generator expects to read.
+    snapshot_data = {
+        "updated_at": now,
+        "step_current": step_current,
+        "step_total": step_total,
+        "step_name": step_name,
+        "message": message
+    }
+
+    # 2. Build the $set fields
     set_fields = {
         "updated_at": now,
+        # Explicitly set progress_snapshot so the API can read it
+        "progress_snapshot": snapshot_data,
+        
+        # Keep top-level fields for legacy compatibility / easy querying
         "step_current": step_current,
         "step_total": step_total,
         "step_name": step_name
@@ -48,7 +63,7 @@ def emit_progress(
         # Default to RUNNING if not specified, to ensure "PENDING" moves to "RUNNING"
         set_fields["status"] = JobStatus.RUNNING
 
-    # 2. Build the $push fields (Log History)
+    # 3. Build the $push fields (Log History)
     # We use $each and $slice to append and cap in one go.
     log_entry = {
         "timestamp": now,
@@ -71,5 +86,5 @@ def emit_progress(
             }
         )
     except Exception as e:
-        # We log but do not raise, as progress emission failure shouldn't crash the pipeline
+        # We log but do not raise, as progress emission failure shouldn't crash the job
         logger.error(f"Failed to emit progress for job {job_id}: {e}")

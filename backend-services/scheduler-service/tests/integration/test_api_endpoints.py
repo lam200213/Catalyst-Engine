@@ -1,213 +1,426 @@
-# backend-services/scheduler-service/tests/test_app.py
-import unittest
-from unittest.mock import patch, MagicMock
-import os
-import sys
-from pymongo import errors
+# backend-services/scheduler-service/tests/integration/test_api_endpoints.py
+
+import pytest
+import json
 from datetime import datetime, timezone
+from unittest.mock import patch, Mock, call
+from shared.contracts import JobType, ScreeningJobRunRecord, JobStatus
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app import app
-from shared.contracts import ScreeningJobResult, FinalCandidate, IndustryDiversity, VCPAnalysisBatchItem, LeadershipProfileBatch, LeadershipProfileForBatch
+# Try importing the real Celery/Kombu exception. 
+# If not available (e.g. in a minimal test env), define a dummy to allow tests to run.
+try:
+    from kombu.exceptions import OperationalError
+except ImportError:
+    class OperationalError(Exception):
+        pass
 
-class TestScheduler(unittest.TestCase):
-    def setUp(self):
-        self.app = app.test_client()
-        self.app.testing = True
+# -----------------------------------------------------------------------------
+# Test Utilities & Custom Assertions
+# -----------------------------------------------------------------------------
 
-    # Test suite for the scheduler pipeline.
-    @patch('app._store_results')
-    @patch('app._run_leadership_screening')
-    @patch('app._run_vcp_analysis')
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_full_pipeline_success(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        mock_vcp_analysis,
-        mock_leadership_screen,
-        mock_store_results
-    ):
-        """
-        Test the successful execution of the entire screening pipeline from start to finish.
-        Ensures data flows correctly between mocked stages and the final results are stored.
-        """
-        # --- Arrange: Mock the return values for each stage of the screening funnel ---
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.return_value = [] # No delisted tickers to remove
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+def parse_json_or_fail(response):
+    """
+    Helper to safely parse JSON from a response.
+    Fails the test with a clear message if the response is HTML (e.g., Flask 404/500 default).
+    """
+    if response.content_type != "application/json":
+        pytest.fail(
+            f"Expected JSON response but got {response.content_type}. "
+            f"Status: {response.status_code}. "
+            f"Body snippet: {response.data[:200]}"
+        )
+    return json.loads(response.data)
 
-        mock_get_tickers.return_value = (['TICKER_A', 'TICKER_B', 'TICKER_C'], None)
-        mock_trend_screen.return_value = (['TICKER_A', 'TICKER_B'], None)
+def assert_valid_async_response(response, expected_job_id):
+    """
+    Validates the strict API Contract for Async Triggers (202 Accepted).
+    Rules:
+    1. Status must be 202.
+    2. Payload must contain exact keys: {job_id, status, message}.
+    3. job_id must match the expected (DB-generated) ID.
+    4. status must be 'PENDING'.
+    """
+    assert response.status_code == 202, f"Expected 202 Accepted, got {response.status_code}"
+    data = parse_json_or_fail(response)
+    
+    # 1. Check Data Integrity
+    assert data['job_id'] == expected_job_id, f"Expected job_id {expected_job_id}, got {data['job_id']}"
+    assert data.get('status') == 'PENDING', f"Expected status PENDING, got {data.get('status')}"
+    assert "queued" in data.get('message', '').lower()
+    
+    # 2. Check Schema Strictness (No extra keys allowed)
+    allowed_keys = {"job_id", "status", "message"}
+    assert set(data.keys()) == allowed_keys, f"Response keys mismatch. Expected {allowed_keys}, got {set(data.keys())}"
+
+def assert_valid_error_response(response, expected_codes):
+    """
+    Validates the strict API Contract for Errors.
+    Rules:
+    1. Status code must be in the expected list.
+    2. Payload must be JSON and contain an 'error' key.
+    """
+    if not isinstance(expected_codes, list):
+        expected_codes = [expected_codes]
         
-        mock_vcp_survivors = [
-            VCPAnalysisBatchItem(ticker='TICKER_A', vcp_pass=True, vcpFootprint="10W 20/2 3T"),
-            VCPAnalysisBatchItem(ticker='TICKER_B', vcp_pass=False, vcpFootprint=""),
-        ]
-        # The _run_vcp_analysis function will filter this list down to only passing candidates before returning.
-        mock_vcp_analysis.return_value = [v for v in mock_vcp_survivors if v.vcp_pass]
+    assert response.status_code in expected_codes, \
+        f"Expected status in {expected_codes}, got {response.status_code}"
+    
+    data = parse_json_or_fail(response)
+    assert "error" in data, "Error response must contain an 'error' key"
+    assert len(data["error"]) > 0, "Error message should not be empty"
+
+# -----------------------------------------------------------------------------
+# Test Configuration & Fixtures
+# -----------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_app_dependencies():
+    """
+    Patches dependencies within app.py to isolate the controller logic.
+    
+    TDD STRATEGY:
+    1. Patch 'app.run_full_pipeline' (Legacy) with create=True.
+       This prevents AttributeError if app.py has already removed this import,
+       making the test suite resilient during refactoring.
+    2. Patch 'app.job_service' etc. with create=True.
+       This allows testing against the current app.py state while guiding
+       implementation of new dependencies.
+    """
+    with patch("app.run_full_pipeline", create=True) as mock_legacy_pipeline, \
+         patch("app.job_service", create=True) as mock_js, \
+         patch("app.enqueue_full_pipeline", create=True) as mock_enqueue, \
+         patch("app.refresh_watchlist_task", create=True) as mock_refresh:
         
-        mock_final_candidates = [
-            FinalCandidate(
-                ticker='TICKER_A', 
-                vcp_pass=True, 
-                vcpFootprint="10W 20/2 3T", 
-                leadership_results={'passes': True, 'details': {}}
-            )
-        ]
-        mock_leadership_screen.return_value = (mock_final_candidates, 1) # (candidates, industry_count)
+        # 1. Setup New Logic Mocks (The Target Behavior)
+        # Default behavior: Success
+        mock_js.create_job.return_value = "new-api-uuid-123"
         
-        mock_store_results.return_value = (True, None)
+        mock_async = Mock()
+        mock_async.id = "celery-task-id" 
+        mock_enqueue.return_value = mock_async
+        mock_refresh.delay.return_value = mock_async
 
-        # --- Act: Trigger the screening job via the API endpoint ---
-        response = self.app.post('/jobs/screening/start')
-        json_data = response.get_json()
-
-        # --- Assert: Verify the response and the interactions between pipeline stages ---
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json_data['message'], "Screening job completed successfully.")
-        self.assertEqual(json_data['total_tickers_fetched'], 3)
-        self.assertEqual(json_data['trend_screen_survivors_count'], 2)
-        self.assertEqual(json_data['vcp_survivors_count'], 1)
-        self.assertEqual(json_data['final_candidates_count'], 1)
-        self.assertEqual(json_data['industry_diversity']['unique_industries_count'], 1) 
-        self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
-
-        # Verify that each stage was called with the output of the previous stage
-        mock_get_tickers.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        self.assertCountEqual(call_args[1], ['TICKER_A', 'TICKER_B', 'TICKER_C'])
-
-        mock_vcp_analysis.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B'])
-        mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, mock_vcp_analysis.return_value)
+        # 2. Setup Legacy Logic Mock (To be deprecated)
+        mock_legacy_pipeline.delay.return_value = mock_async
         
-        # Verify the final results were stored correctly
-        mock_store_results.assert_called_once()
-        call_args = mock_store_results.call_args[0]
+        yield {
+            "job_service": mock_js,
+            "enqueue_pipeline": mock_enqueue,
+            "refresh_task": mock_refresh,
+            "legacy_pipeline": mock_legacy_pipeline
+        }
 
-        summary_doc_arg = call_args[1]
-        self.assertIsInstance(summary_doc_arg, ScreeningJobResult)
-        self.assertEqual(summary_doc_arg.final_candidates_count, 1)
-        
-        final_candidates_arg = call_args[5]
-        self.assertEqual(len(final_candidates_arg), 1)
-        self.assertIsInstance(final_candidates_arg[0], FinalCandidate)
-        self.assertEqual(final_candidates_arg[0].ticker, 'TICKER_A')
+# -----------------------------------------------------------------------------
+# Step 4.1: Trigger Endpoints (Async, Resilience, Contracts)
+# -----------------------------------------------------------------------------
 
-    @patch('app._get_all_tickers')
-    def test_service_failure_ticker_service(self, mock_get_tickers):
-        # --- Arrange: Ticker service returns an error tuple ---
-        mock_get_tickers.return_value = (None, ({"error": "Failed to connect"}, 503))
+def test_post_screening_start_order_of_operations(client, mock_app_dependencies):
+    """
+    SDD Task 3.1: Strict verification that DB persistence occurs BEFORE Celery enqueue.
+    """
+    # Arrange
+    mock_js = mock_app_dependencies["job_service"]
+    mock_enqueue = mock_app_dependencies["enqueue_pipeline"]
+    mock_legacy = mock_app_dependencies["legacy_pipeline"]
+    
+    expected_job_id = "new-api-uuid-123"
+    mock_js.create_job.return_value = expected_job_id
+    
+    manager = Mock()
+    manager.attach_mock(mock_js, 'job_service')
+    manager.attach_mock(mock_enqueue, 'enqueue')
 
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
+    # Input Payload
+    payload = {"use_vcp_freshness_check": True}
+    
+    # Expected Options (Payload + Default values applied by Pydantic in app.py)
+    # Since ScreeningRunOptions has mode='full' by default, the app will pass this downstream.
+    expected_options = {"use_vcp_freshness_check": True, "mode": "full"}
 
-        # --- Assert ---
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("Failed to connect", response.get_json()['error'])
+    # Act
+    response = client.post(
+        "/jobs/screening/start",
+        data=json.dumps(payload),
+        content_type='application/json'
+    )
+
+    # Assert 1: Strict Response Contract
+    assert_valid_async_response(response, expected_job_id)
+
+    # Assert 2: Strict Order of Operations (DB -> Queue)
+    expected_calls = [
+        call.job_service.create_job(
+            job_type=JobType.SCREENING,
+            options=expected_options, # Updated to match Pydantic normalization
+            trigger_source="API"
+        ),
+        call.enqueue(
+            job_id=expected_job_id,  # Must pass the API-generated ID
+            options=expected_options # Updated to match Pydantic normalization
+        )
+    ]
+    manager.assert_has_calls(expected_calls, any_order=False)
+
+    # Assert 3: Legacy code should NOT be called
+    mock_legacy.delay.assert_not_called()
 
 
-    @patch('app._store_results')
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening', return_value=([], None))
-    @patch('app._get_all_tickers')
-    def test_database_failure_on_store(self, mock_get_tickers, *args):
-        # --- Arrange: Mock a DB failure during the final step ---
-        mock_get_tickers.return_value = (['DB_FAIL_TICKER'], None)
-        # The first patched arg is _store_results
-        mock_store_results = args[-1]
-        mock_store_results.return_value = (False, ({"error": "DB connection lost"}, 500))
-        
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
+def test_post_screening_distinct_ids(client, mock_app_dependencies):
+    """
+    Requirement: Each request must generate a unique job_id.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    mock_js.create_job.side_effect = ["uuid-1", "uuid-2"]
 
-        # --- Assert ---
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("DB connection lost", response.get_json()['error'])
-        mock_store_results.assert_called_once()
+    resp1 = client.post("/jobs/screening/start", json={})
+    resp2 = client.post("/jobs/screening/start", json={})
 
-    @patch('app._store_results', return_value=(True, None))
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_pipeline_filters_delisted_tickers_before_screening(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        *other_mocks
-    ):
-        """
-        Goal: Verify the core pre-filtering logic in the orchestration pipeline.
-        """
-        # --- Arrange ---
-        # 1. Mock the full list of tickers
-        mock_get_tickers.return_value = (['AAPL', 'GOOG', 'ATVI'], None)
+    assert_valid_async_response(resp1, "uuid-1")
+    assert_valid_async_response(resp2, "uuid-2")
 
-        # 2. Mock the DB collection for delisted tickers
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.return_value = [{'ticker': 'ATVI'}]
-        # get_db_collections returns a tuple, we only care about the last one (ticker_status)
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
 
-        # 3. Mock the trend screening function to act as a spy
-        mock_trend_screen.return_value = (['AAPL', 'GOOG'], None)
+def test_post_screening_start_db_failure(client, mock_app_dependencies):
+    """
+    Security/Resilience: If DB creation fails, return 500 and do NOT enqueue.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    mock_enqueue = mock_app_dependencies["enqueue_pipeline"]
+    
+    mock_js.create_job.side_effect = Exception("Mongo Connection Failure")
 
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
+    response = client.post("/jobs/screening/start", json={})
 
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        # Assert that the trend screening stage was called with the FILTERED list
-        mock_trend_screen.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        # The list might be in a different order, so compare content ignoring order
-        self.assertCountEqual(call_args[1], ['AAPL', 'GOOG'])
+    assert_valid_error_response(response, 500)
+    
+    data = parse_json_or_fail(response)
+    # Security: Ensure raw exception details are stripped
+    assert "Mongo Connection Failure" not in data.get("error", "")
+    
+    mock_enqueue.assert_not_called()
 
-    @patch('app._store_results', return_value=(True, None))
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_pipeline_proceeds_with_unfiltered_list_on_db_error(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        *other_mocks
-    ):
-        """
-        Goal: Ensure the pipeline doesn't fail if the ticker_status collection can't be queried.
-        """
-        # --- Arrange ---
-        # 1. Mock the full list of tickers
-        full_ticker_list = ['AAPL', 'GOOG', 'ATVI']
-        mock_get_tickers.return_value = (full_ticker_list, None)
 
-        # 2. Mock the DB collection to raise an error
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.side_effect = errors.PyMongoError("Connection failed")
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+def test_post_screening_start_broker_failure(client, mock_app_dependencies):
+    """
+    Resilience: If Celery enqueue fails (OperationalError), return 503.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    mock_enqueue = mock_app_dependencies["enqueue_pipeline"]
+    
+    mock_js.create_job.return_value = "uuid-123"
+    mock_enqueue.side_effect = OperationalError("Connection refused")
 
-        # 3. Mock the trend screening function
-        mock_trend_screen.return_value = ([], None) # Return value doesn't matter much here
+    response = client.post("/jobs/screening/start", json={})
 
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
+    assert_valid_error_response(response, 503)
+    
+    data = parse_json_or_fail(response)
+    assert "Service Unavailable" in data.get("error", "") or "Failed" in data.get("error", "")
 
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        # Assert that the trend screening stage was called with the COMPLETE, UNFILTERED list
-        mock_trend_screen.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        self.assertCountEqual(call_args[1], full_ticker_list)
 
-if __name__ == '__main__':
-    unittest.main()
+def test_post_screening_malformed_json(client, mock_app_dependencies):
+    """
+    Validation: Broken JSON syntax should result in 400 Bad Request with error envelope.
+    """
+    response = client.post(
+        "/jobs/screening/start", 
+        data="[Invalid JSON}", 
+        content_type='application/json'
+    )
+    assert_valid_error_response(response, 400)
+
+
+def test_post_screening_option_type_mismatch(client, mock_app_dependencies):
+    """
+    Validation: Wrong value types (e.g. string vs bool) -> 400/422 with error envelope.
+    """
+    bad_payload = {"use_vcp_freshness_check": "true"} # String is not Bool
+
+    response = client.post(
+        "/jobs/screening/start", 
+        data=json.dumps(bad_payload), 
+        content_type='application/json'
+    )
+    assert_valid_error_response(response, [400, 422])
+
+
+def test_post_screening_unknown_option(client, mock_app_dependencies):
+    """
+    Validation: Extra/Unknown fields -> 400/422 with error envelope.
+    """
+    bad_payload = {"unexpected_field_xyz": 123}
+
+    response = client.post(
+        "/jobs/screening/start", 
+        data=json.dumps(bad_payload), 
+        content_type='application/json'
+    )
+    assert_valid_error_response(response, [400, 422])
+
+
+def test_post_watchlist_refresh_happy_path(client, mock_app_dependencies):
+    """
+    SDD Task 3.1: Trigger Watchlist Refresh.
+    """
+    # Arrange
+    mock_js = mock_app_dependencies["job_service"]
+    mock_refresh = mock_app_dependencies["refresh_task"]
+    
+    expected_job_id = "refresh-uuid-999"
+    mock_js.create_job.return_value = expected_job_id
+
+    # Act
+    response = client.post("/jobs/watchlist/refresh")
+
+    # Assert 1: Use shared helper to ensure strict contract consistency
+    assert_valid_async_response(response, expected_job_id)
+
+    # Assert 2: Logic checks
+    mock_js.create_job.assert_called_once_with(
+        job_type=JobType.WATCHLIST_REFRESH,
+        options={},
+        trigger_source="API"
+    )
+    
+    mock_refresh.delay.assert_called_once_with(
+        job_id=expected_job_id
+    )
+
+# -----------------------------------------------------------------------------
+# Step 4.2: History Endpoints (Structure Verification)
+# -----------------------------------------------------------------------------
+
+def test_get_history_list_structure(client, mock_app_dependencies):
+    """
+    SDD Task 3.2: Verify History List Structure.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    
+    # FIX: Use Pydantic model instead of dict, because app.py calls .model_dump()
+    mock_record = ScreeningJobRunRecord(
+        job_id="job-1",
+        job_type=JobType.SCREENING,
+        status="SUCCESS",
+        created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        result_summary={"vcp_survivors_count": 5}
+    )
+    mock_js.get_job_history.return_value = [mock_record]
+
+    response = client.get("/jobs/screening/history?limit=10")
+
+    assert response.status_code == 200
+    data = parse_json_or_fail(response)
+    
+    assert "jobs" in data
+    assert len(data["jobs"]) == 1
+    assert data["jobs"][0]["job_id"] == "job-1"
+    
+    # Assert call includes default skip=0 parameter
+    mock_js.get_job_history.assert_called_once_with(limit=10, skip=0)
+
+# -----------------------------------------------------------------------------
+# Step 4.2: History Endpoints (Structure & Data)
+# -----------------------------------------------------------------------------
+
+def test_get_history_list_structure(client, mock_app_dependencies):
+    """
+    SDD Task 3.2: Verify History List returns correct schema and metadata.
+    """
+    # Arrange
+    mock_js = mock_app_dependencies["job_service"]
+    
+    # Mock data strictly adhering to ScreeningJobRunRecord
+    mock_records = [
+        ScreeningJobRunRecord(
+            job_id="job-1",
+            job_type=JobType.SCREENING,
+            status=JobStatus.SUCCESS,
+            created_at=datetime.now(timezone.utc),
+            result_summary={"vcp_survivors_count": 5}
+        )
+    ]
+    mock_js.get_job_history.return_value = mock_records
+
+    # Act
+    response = client.get("/jobs/screening/history")
+
+    # Assert
+    assert response.status_code == 200
+    data = parse_json_or_fail(response)
+    
+    # Verify Top Level Structure
+    assert "jobs" in data
+    assert "metadata" in data
+    assert data["metadata"]["count"] == 1
+    
+    # Verify Item Structure
+    assert data["jobs"][0]["job_id"] == "job-1"
+    assert data["jobs"][0]["status"] == "SUCCESS"
+    
+    # Verify default pagination args
+    mock_js.get_job_history.assert_called_once_with(limit=20, skip=0)
+
+def test_get_history_list_pagination(client, mock_app_dependencies):
+    """
+    SDD Task 3.2: Verify pagination parameters are passed to service.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    mock_js.get_job_history.return_value = []
+
+    # Act
+    client.get("/jobs/screening/history?limit=5&skip=10")
+
+    # Assert
+    mock_js.get_job_history.assert_called_once_with(limit=5, skip=10)
+
+def test_get_history_list_invalid_params(client, mock_app_dependencies):
+    """
+    Edge Case: Invalid pagination parameters should return 400 Bad Request.
+    """
+    # Act: Send string where int is expected
+    response = client.get("/jobs/screening/history?limit=invalid")
+
+    # Assert
+    assert_valid_error_response(response, 400)
+
+def test_get_history_detail_found(client, mock_app_dependencies):
+    """
+    SDD Task 3.2: Verify History Detail Structure.
+    """
+    mock_js = mock_app_dependencies["job_service"]
+    job_id = "job-123"
+    
+    # FIX: Use Pydantic model
+    mock_detail = ScreeningJobRunRecord(
+        job_id=job_id,
+        job_type=JobType.SCREENING,
+        status=JobStatus.SUCCESS,
+        created_at=datetime.now(timezone.utc),
+        results={"vcp_survivors": ["AAPL"]}
+    )
+    mock_js.get_job_detail.return_value = mock_detail
+
+    response = client.get(f"/jobs/screening/history/{job_id}")
+
+    assert response.status_code == 200
+    data = parse_json_or_fail(response)
+    assert data["job_id"] == job_id
+    assert "results" in data
+    assert data["results"]["vcp_survivors"] == ["AAPL"]
+
+def test_get_history_detail_not_found(client, mock_app_dependencies):
+    """
+    SDD Task 3.2: Verify History Detail 404 behavior.
+    """
+    # Arrange
+    mock_js = mock_app_dependencies["job_service"]
+    job_id = "job-999-missing"
+    
+    mock_js.get_job_detail.return_value = None
+
+    # Act
+    response = client.get(f"/jobs/screening/history/{job_id}")
+
+    # Assert
+    assert_valid_error_response(response, 404)
+    data = parse_json_or_fail(response)
+    assert "not found" in data["error"].lower()

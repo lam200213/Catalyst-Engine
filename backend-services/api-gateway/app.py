@@ -1,17 +1,18 @@
 # backend-services/api-gateway/app.py
 import os
-from flask import Flask, request, jsonify
+import sys
+import time
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS 
 import requests
 
 app = Flask(__name__)
 PORT = int(os.getenv("PORT", 3000))
 
-# Secure CORS Configuration: Only allow requests from the frontend's origin
+# Secure CORS Configuration
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-# Service URLs are now managed via environment variables
-# These point to the internal Docker service names
+# Service URLs
 SERVICES = {
     "price": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
     "news": os.getenv("DATA_SERVICE_URL", "http://data-service:3001"),
@@ -30,49 +31,89 @@ SERVICES = {
 @app.route('/<service>', methods=['GET', 'POST', 'DELETE', 'PUT'])
 def gateway(service, path=""):
     """
-    A simple gateway to forward requests to the appropriate backend service.
+    A gateway to forward requests. Supports JSON payloads and SSE streaming.
     """
     if service not in SERVICES:
         return jsonify({"error": "Service not found"}), 404
 
-    # Security check to prevent path traversal
+    # Security check
     if '..' in path:
         return jsonify({"error": "Malicious path detected"}), 400
 
     base_url = SERVICES[service]
-    # Special handling for different routing patterns
+    
+    # Preserve full path for most services, special case for tickers
     if service == 'tickers':
         target_url = f"{SERVICES[service]}/tickers"
     else:
-        # The full path is the service name + the path
-        # e.g., /screen/AAPL -> http://screening-service:3002/screen/AAPL
-        # e.g., /cache/clear -> http://data-service:3001/cache/clear
         target_url = f"{base_url.rstrip('/')}{request.path}"
+
     try:
-        # Conditional logic to handle different HTTP requests
+        # --- 1. Identify Streaming Requests ---
+        is_streaming_request = '/stream/' in request.path
+
         if request.method == 'POST':
-            # Only attempt to forward a JSON body if one is present in the request.
             post_data = request.get_json() if request.is_json else None
-            # Set a much longer timeout specifically for the 'jobs' service
-            timeout = 6000 if service == 'jobs' else 45
+            # Increase timeout for synchronous job triggering if needed, though they should be async
+            timeout = 60 if service == 'jobs' else 45
             resp = requests.post(target_url, json=post_data, timeout=timeout)
+        
         elif request.method == 'DELETE':
             resp = requests.delete(target_url, timeout=45)
+            
         elif request.method == 'PUT':
             put_data = request.get_json() if request.is_json else None
             resp = requests.put(target_url, json=put_data, timeout=45)
+            
         else:  # Default to GET
-            # Convert Flask's ImmutableMultiDict to a standard dict for consistent mocking and forwarding.
             query_params = dict(request.args)
-
-            # elevate timeout for /monitor/market-health
+            
             if service == 'monitor' and request.path.startswith('/monitor/market-health'):
                 get_timeout = 60 
             else:
                 get_timeout = 45  
-            resp = requests.get(target_url, params=query_params, timeout=get_timeout)
 
-        # Safely handle JSON decoding
+            # --- 2. Forward Request (Conditional Streaming) ---
+            req_kwargs = {'params': query_params, 'timeout': get_timeout}
+            
+            if is_streaming_request:
+                req_kwargs['stream'] = True
+                print(f"[Gateway] Forwarding STREAM request to {target_url} with timeout={get_timeout}", file=sys.stdout)
+
+            start_time = time.time()
+            resp = requests.get(target_url, **req_kwargs)
+            
+            if is_streaming_request:
+                print(f"[Gateway] Connection established in {time.time() - start_time:.2f}s", file=sys.stdout)
+
+        # --- 3. Handle Streaming Responses ---
+        if is_streaming_request:
+            # DEBUG: Log what we actually got from upstream
+            c_type = resp.headers.get('Content-Type', '').lower()
+            print(f"[Gateway] Stream Response: Status={resp.status_code}, Type={c_type}", file=sys.stdout)
+
+            if resp.status_code == 200 and 'text/event-stream' in c_type:
+                def generate():
+                    # Iterate with a reasonable chunk size, not 1 byte, to reduce CPU overhead
+                    # But small enough to allow immediate flushes of small events
+                    for chunk in resp.iter_content(chunk_size=1024):
+                        if chunk:
+                            yield chunk
+
+                headers = {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'X-Accel-Buffering': 'no',
+                    'Connection': 'keep-alive'
+                }
+                return Response(stream_with_context(generate()), status=200, headers=headers)
+            
+            # GUARD RAIL: If we expected a stream but got something else (e.g. error HTML/JSON),
+            # DO NOT fall through to json() buffering if it might be an infinite malformed stream.
+            if resp.status_code != 200:
+                 return Response(resp.content, status=resp.status_code, mimetype=c_type)
+
+        # --- 4. Handle Standard JSON Responses ---
         try:
             json_data = resp.json()
         except requests.exceptions.JSONDecodeError:
@@ -81,18 +122,16 @@ def gateway(service, path=""):
         return jsonify(json_data), resp.status_code
 
     except requests.exceptions.Timeout:
-        print(f"Timeout connecting to {service}")
-        return jsonify({"error": f"Timeout connecting to {service}"}), 504 # Gateway Timeout
+        print(f"Timeout connecting to {service} (Limit reached)", file=sys.stderr)
+        return jsonify({"error": f"Timeout connecting to {service}"}), 504
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error to {service}: {e}")
-        return jsonify({"error": f"Service unavailable: {service}", "details": str(e)}), 503 # Service Unavailable
+        print(f"Connection error to {service}: {e}", file=sys.stderr)
+        return jsonify({"error": f"Service unavailable: {service}", "details": str(e)}), 503
     except requests.exceptions.RequestException as e:
-        # Catch any other request-related errors
-        print(f"Error forwarding request to {service}: {e}")
-        return jsonify({"error": f"Error in {service} communication", "details": str(e)}), 502 # Bad Gateway
+        print(f"Error forwarding request to {service}: {e}", file=sys.stderr)
+        return jsonify({"error": f"Error in {service} communication", "details": str(e)}), 502
     except Exception as e:
-        # Catch any other unexpected errors in the gateway itself
-        print(f"An unexpected internal error occurred in the gateway: {e}")
+        print(f"An unexpected internal error occurred in the gateway: {e}", file=sys.stderr)
         return jsonify({"error": "An unexpected internal error occurred in the gateway", "details": str(e)}), 500
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ shortuuid
 pydantic
 celery
 redis
+watchdog
 # WSGI server + cooperative concurrency for SSE streaming in Docker
 gunicorn
 gevent

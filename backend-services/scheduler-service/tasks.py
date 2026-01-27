@@ -1,359 +1,312 @@
 # backend-services/scheduler-service/tasks.py
 
 import os
-import time
 import logging
-from datetime import datetime, timezone
-
 import requests
-import shortuuid
-from pymongo import errors
-from pydantic import ValidationError
+import time
+from datetime import datetime, timezone
+from typing import List, Tuple, Any, Optional, Dict
 
+from celery import chain
+from pydantic import ValidationError, TypeAdapter
+
+# Import Shared Contracts & Services
 from shared.contracts import (
     ScreeningJobResult,
     FinalCandidate,
     IndustryDiversity,
     VCPAnalysisBatchItem,
     LeadershipProfileBatch,
+    JobStatus
 )
-
 from celery_app import celery
-from db import get_db_collections
+from services.progress_emitter import emit_progress
 
+# Importing the module allows tests to patch 'tasks.job_service' reliably
+import services.job_service as job_service
+from db import get_db_collections
 
 logger = logging.getLogger(__name__)
 
+# --- Configuration ---
 TICKER_SERVICE_URL = os.getenv("TICKER_SERVICE_URL", "http://ticker-service:5001")
 SCREENING_SERVICE_URL = os.getenv("SCREENING_SERVICE_URL", "http://screening-service:3002")
 ANALYSIS_SERVICE_URL = os.getenv("ANALYSIS_SERVICE_URL", "http://analysis-service:3003")
 LEADERSHIP_SERVICE_URL = os.getenv("LEADERSHIP_SERVICE_URL", "http://leadership-service:3005")
+MONITORING_SERVICE_URL = os.getenv("MONITORING_SERVICE_URL", "http://monitoring-service:3006")
 
+# --- Helper Functions (Private / Testable) ---
 
-def _get_all_tickers(job_id: str):
+def _get_all_tickers(job_id: str) -> Tuple[List[str], Any]:
     try:
         resp = requests.get(f"{TICKER_SERVICE_URL}/tickers", timeout=15)
         resp.raise_for_status()
-
-        try:
-            tickers = resp.json()
-        except requests.exceptions.JSONDecodeError:
-            logger.warning(
-                f"Job {job_id}: Could not decode JSON from ticker-service. Skipping ticker fetching.",
-                exc_info=True,
-            )
-            return list(), None
-
+        tickers = resp.json()
         if not isinstance(tickers, list):
-            logger.warning(f"Job {job_id}: Ticker service returned non-list format. Skipping ticker fetching.")
-            return list(), None
-
-        logger.info(f"Job {job_id}: Fetched {len(tickers)} total tickers.")
+            return [], "Invalid format"
         return tickers, None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Job {job_id}: Failed to connect to ticker-service.", exc_info=True)
-        return None, ({"error": "Failed to connect to ticker-service", "details": str(e)}, 503)
+    except Exception as e:
+        logger.error(f"Job {job_id}: Failed to fetch tickers: {e}")
+        return [], str(e)
 
-
-def _filter_delisted_tickers(job_id: str, tickers):
-    _, _, _, _, _, ticker_status_coll = get_db_collections()
-    if ticker_status_coll is None:
-        logger.warning(f"Job {job_id}: ticker_status collection not available. Proceeding unfiltered.")
-        return tickers
-
-    try:
-        delisted_docs = ticker_status_coll.find({"status": "delisted"}, {"ticker": 1, "_id": 0})
-        delisted_set = set()
-        for doc in delisted_docs:
-            if isinstance(doc, dict) and doc.get("ticker"):
-                delisted_set.add(doc.get("ticker"))
-
-        if not delisted_set:
-            return tickers
-
-        active = list()
-        for t in tickers:
-            if t not in delisted_set:
-                active.append(t)
-
-        logger.info(
-            f"Job {job_id}: Pre-screening filter removed {len(tickers) - len(active)} delisted tickers. "
-            f"Proceeding with {len(active)} active tickers."
-        )
-        return active
-    except errors.PyMongoError as e:
-        logger.error(f"Job {job_id}: Failed to query delisted tickers. Proceeding unfiltered. Error: {e}")
-        return tickers
-
-
-def _run_trend_screening(job_id: str, tickers):
+def _run_trend_screening(job_id: str, tickers: List[str]) -> Tuple[List[str], Any]:
     if not tickers:
-        logger.info(f"Job {job_id}: Skipping trend screen, no tickers to process.")
-        return list(), None
-
+        return [], None
     try:
-        resp = requests.post(
-            f"{SCREENING_SERVICE_URL}/screen/batch",
-            json={"tickers": tickers},
-            timeout=5999,
-        )
+        resp = requests.post(f"{SCREENING_SERVICE_URL}/screen/batch", json={"tickers": tickers}, timeout=5999)
         resp.raise_for_status()
+        return resp.json(), None
+    except Exception as e:
+        logger.error(f"Job {job_id}: Trend screen failed: {e}")
+        return [], str(e)
 
-        try:
-            trend_survivors = resp.json()
-        except requests.exceptions.JSONDecodeError:
-            logger.warning(
-                f"Job {job_id}: Could not decode JSON from screening-service. Skipping trend screening.",
-                exc_info=True,
-            )
-            return list(), None
-
-        if not isinstance(trend_survivors, list):
-            logger.warning(f"Job {job_id}: screening-service returned non-list survivors. Treating as empty.")
-            return list(), None
-
-        logger.info(f"Job {job_id}: Stage 1 (Trend Screen) passed: {len(trend_survivors)} tickers.")
-        return trend_survivors, None
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Job {job_id}: Failed to connect to screening-service.", exc_info=True)
-        return None, ({"error": "Failed to connect to screening-service", "details": str(e)}, 503)
-
-
-def _run_vcp_analysis(job_id: str, tickers):
+def _run_vcp_analysis(job_id: str, tickers: List[str]) -> List[VCPAnalysisBatchItem]:
     if not tickers:
-        logger.info(f"Job {job_id}: Skipping VCP analysis, no trend survivors.")
-        return list()
-
-    logger.info(f"Job {job_id}: Sending {len(tickers)} trend survivors to analysis-service for batch VCP screening.")
-
+        return []
     try:
+        # Note: 'mode': 'fast' is hardcoded here for analysis, but this only affects the VCP step,
+        # not the number of tickers sent TO this step.
         resp = requests.post(
             f"{ANALYSIS_SERVICE_URL}/analyze/batch",
             json={"tickers": tickers, "mode": "fast"},
             timeout=1200,
         )
+        if resp.status_code == 200:
+            return TypeAdapter(List[VCPAnalysisBatchItem]).validate_python(resp.json())
+        return []
+    except Exception as e:
+        logger.error(f"Job {job_id}: VCP analysis failed: {e}")
+        return []
 
-        if resp.status_code != 200:
-            logger.error(
-                f"Job {job_id}: VCP analysis batch request failed with status {resp.status_code}. Details: {resp.text}"
-            )
-            return list()
-
-        try:
-            raw = resp.json()
-        except requests.exceptions.JSONDecodeError:
-            logger.warning(
-                f"Job {job_id}: Could not decode JSON from analysis-service. Treating VCP survivors as empty.",
-                exc_info=True,
-            )
-            return list()
-
-        survivors = list()
-        if isinstance(raw, list):
-            for item in raw:
-                try:
-                    survivors.append(VCPAnalysisBatchItem.model_validate(item))
-                except ValidationError:
-                    continue
-
-        logger.info(f"Job {job_id}: Stage 2 (VCP Screen) passed: {len(survivors)} tickers.")
-        return survivors
-    except requests.exceptions.RequestException:
-        logger.error(f"Job {job_id}: Could not connect to analysis-service for batch VCP.", exc_info=True)
-        return list()
-
-
-def _run_leadership_screening(job_id: str, vcp_survivors):
+def _run_leadership_screening(job_id: str, vcp_survivors: List[VCPAnalysisBatchItem]) -> Tuple[List[FinalCandidate], int]:
     if not vcp_survivors:
-        logger.info(f"Job {job_id}: Skipping leadership screening, no VCP survivors.")
-        return list(), 0
-
-    vcp_tickers = list()
-    for candidate in vcp_survivors:
-        if getattr(candidate, "ticker", None):
-            vcp_tickers.append(candidate.ticker)
-
-    if not vcp_tickers:
-        logger.warning(f"Job {job_id}: No valid tickers found in VCP survivors list.")
-        return list(), 0
-
-    logger.info(f"Job {job_id}: Sending {len(vcp_tickers)} tickers to leadership-service for batch screening.")
-
+        return [], 0
+    
+    tickers = [c.ticker for c in vcp_survivors]
     try:
         resp = requests.post(
             f"{LEADERSHIP_SERVICE_URL}/leadership/batch",
-            json={"tickers": vcp_tickers},
-            timeout=3600,
+            json={"tickers": tickers},
+            timeout=3600
         )
         resp.raise_for_status()
-
-        try:
-            result = LeadershipProfileBatch.model_validate_json(resp.content)
-        except ValidationError as e:
-            logger.error(
-                f"Job {job_id}: Could not validate JSON from leadership-service against LeadershipProfileBatch. Error: {e}",
-                exc_info=True,
-            )
-            return list(), 0
-
-        leadership_results_map = dict()
-        for item in result.passing_candidates:
-            leadership_results_map[item.ticker] = item.model_dump()
-
-        final_candidates = list()
-        for candidate in vcp_survivors:
-            if candidate.ticker in leadership_results_map:
-                final_candidates.append(
-                    FinalCandidate(
-                        ticker=candidate.ticker,
-                        vcp_pass=candidate.vcp_pass,
-                        vcpFootprint=candidate.vcpFootprint,
-                        leadership_results=leadership_results_map.get(candidate.ticker),
-                    )
+        
+        batch_result = LeadershipProfileBatch.model_validate_json(resp.content)
+        leadership_map = {item.ticker: item.model_dump() for item in batch_result.passing_candidates}
+        
+        final_candidates = []
+        for vcp_item in vcp_survivors:
+            if vcp_item.ticker in leadership_map:
+                final = FinalCandidate(
+                    ticker=vcp_item.ticker,
+                    vcp_pass=vcp_item.vcp_pass,
+                    vcpFootprint=vcp_item.vcpFootprint,
+                    leadership_results=leadership_map[vcp_item.ticker]
                 )
+                final_candidates.append(final)
+                
+        return final_candidates, batch_result.unique_industries_count
+    except Exception as e:
+        logger.error(f"Job {job_id}: Leadership screen failed: {e}")
+        return [], 0
 
-        logger.info(f"Job {job_id}: Stage 3 (Leadership Screen) passed: {len(final_candidates)} tickers.")
-        return final_candidates, result.unique_industries_count
-    except requests.exceptions.RequestException:
-        logger.error(f"Job {job_id}: Failed to connect to leadership-service for batch screening.", exc_info=True)
-        return list(), 0
-
-
-def _store_stage_survivors(job_id: str, collection, survivors, stage_name: str) -> bool:
-    if collection is None:
-        logger.error(f"Job {job_id}: Cannot store {stage_name} survivors, DB collection not available.")
-        return False
-
-    if not survivors:
-        logger.info(f"Job {job_id}: No {stage_name} survivors to store.")
-        return True
+def _batch_add_to_watchlist(job_id: str, tickers: List[str]) -> None:
+    """
+    Step 5: Calls Monitoring Service to batch add final survivors to the watchlist.
+    This corresponds to the 'Re-introduction' step in the SDD.
+    """
+    if not tickers:
+        return
 
     try:
-        docs = list()
-        for ticker in survivors:
-            docs.append({"job_id": job_id, "ticker": ticker})
+        # Internal endpoint expects {"tickers": [...]}
+        resp = requests.post(
+            f"{MONITORING_SERVICE_URL}/monitor/internal/watchlist/batch/add",
+            json={"tickers": tickers},
+            timeout=30 
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        logger.error(f"Job {job_id}: Failed to batch add survivors to watchlist: {e}")
+        raise e
 
-        if docs:
-            collection.insert_many(docs)
+# --- Celery Tasks ---
 
-        logger.info(f"Job {job_id}: Inserted {len(docs)} {stage_name} survivors.")
-        return True
-    except errors.PyMongoError:
-        logger.exception(f"Job {job_id}: Failed to write {stage_name} survivors to database.")
-        return False
-
-
-def _store_results(job_id: str, summary_doc, trend_survivors, vcp_survivors, leadership_survivors, final_candidates):
-    results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll, _ = get_db_collections()
-    if any(coll is None for coll in (results_coll, jobs_coll, trend_coll, vcp_coll, leadership_coll)):
-        return False, ({"error": "Database client not available or collections missing"}, 500)
-
+@celery.task(bind=True, name="scheduler.refresh_watchlist_task")
+def refresh_watchlist_task(self, job_id: Optional[str] = None, parent_job_id: Optional[str] = None):
+    """
+    Triggers the Monitoring Service to refresh watchlist statuses.
+    """
+    job_id = job_id or self.request.id or "auto-refresh"
+    emit_progress(job_id, "Starting watchlist refresh...", 0, 1, "watchlist_refresh")
+    
     try:
-        jobs_coll.update_one({"job_id": job_id}, {"$set": summary_doc.model_dump()}, upsert=True)
-    except errors.PyMongoError as e:
-        logger.exception(f"Job {job_id}: Failed to write job summary to database.")
-        return False, ({"error": "Failed to write job summary to database", "details": str(e)}, 500)
-
-    if not _store_stage_survivors(job_id, trend_coll, trend_survivors, "trend"):
-        return False, ({"error": "DB error"}, 500)
-
-    vcp_tickers = list()
-    for item in vcp_survivors:
-        if getattr(item, "ticker", None):
-            vcp_tickers.append(item.ticker)
-
-    if not _store_stage_survivors(job_id, vcp_coll, vcp_tickers, "vcp"):
-        return False, ({"error": "DB error"}, 500)
-
-    leadership_tickers = list()
-    for item in leadership_survivors:
-        if getattr(item, "ticker", None):
-            leadership_tickers.append(item.ticker)
-
-    if not _store_stage_survivors(job_id, leadership_coll, leadership_tickers, "leadership"):
-        return False, ({"error": "DB error"}, 500)
-
-    if not final_candidates:
-        return True, None
-
-    try:
-        processed_time = datetime.now(timezone.utc)
-        docs = list()
-        for candidate in final_candidates:
-            d = candidate.model_dump()
-            d["job_id"] = job_id
-            d["processed_at"] = processed_time
-            docs.append(d)
-
-        if docs:
-            results_coll.insert_many(docs)
-
-        return True, None
-    except errors.PyMongoError as e:
-        logger.exception(f"Job {job_id}: Failed to write candidate results to database.")
-        return False, ({"error": "Failed to write candidate results to database", "details": str(e)}, 500)
-
-
-def run_screening_pipeline():
-    start_time = time.time()
-
-    now = datetime.now(timezone.utc)
-    timestamp_str = now.strftime("%Y%m%d-%H%M%S")
-    unique_part = shortuuid.uuid()[:8]
-    job_id = f"{timestamp_str}-{unique_part}"
-
-    logger.info(f"Starting screening job ID: {job_id}")
-
-    all_tickers, error = _get_all_tickers(job_id)
-    if error:
-        return error
-
-    active_tickers = _filter_delisted_tickers(job_id, all_tickers)
-
-    trend_survivors, error = _run_trend_screening(job_id, active_tickers)
-    if error:
-        return error
-
-    vcp_survivors = _run_vcp_analysis(job_id, trend_survivors)
-    leadership_survivors, unique_industries_count = _run_leadership_screening(job_id, vcp_survivors)
-
-    end_time = time.time()
-    total_process_time = round(end_time - start_time, 2)
-
-    try:
-        job_summary = ScreeningJobResult(
+        # Added timeout=300 to satisfy security/NFR test requirements
+        resp = requests.post(
+            f"{MONITORING_SERVICE_URL}/monitor/internal/watchlist/refresh-status",
+            timeout=300
+        )
+        resp.raise_for_status()
+        
+        if not resp.content:
+             raise ValueError("Empty response from monitoring service")
+             
+        data = resp.json()
+        
+        job_service.complete_job(
             job_id=job_id,
-            processed_at=now,
-            total_process_time=total_process_time,
+            summary=data
+        )
+        
+        emit_progress(job_id, "Watchlist refresh complete.", 1, 1, "complete", status=JobStatus.SUCCESS)
+        return data
+        
+    except Exception as e:
+        logger.error(f"Job {job_id}: Watchlist refresh failed: {e}")
+        error_msg = str(e)
+        
+        job_service.fail_job(job_id=job_id, error_message=error_msg, error_step="refresh")
+        
+        if parent_job_id:
+            logger.error(f"Marking parent job {parent_job_id} failed due to child failure.")
+            job_service.fail_job(
+                job_id=parent_job_id,
+                error_message=f"Child task refresh failed: {error_msg}",
+                error_step="refresh_watchlist_task"
+            )
+            
+        emit_progress(job_id, f"Watchlist refresh failed: {e}", 1, 1, "error", status=JobStatus.FAILED)
+        raise e
+
+@celery.task(
+    bind=True, 
+    name="scheduler.run_full_pipeline",
+    # Soft Limit: 100 mins (6000s) - Worker raises SoftTimeLimitExceeded, allowing cleanup
+    soft_time_limit=6000,
+    # Hard Limit: 110 mins (6600s) - Worker sends SIGKILL
+    time_limit=6600
+)
+def run_full_pipeline(self, job_id: Optional[str] = None, options: Optional[Dict[str, Any]] = None):
+    """
+    The main screening pipeline.
+    Respects options['mode']='fast' to enable rapid E2E testing.
+    """
+    job_id = job_id or self.request.id
+    start_time = time.time()
+    options = options or {}
+    
+    try:
+        # 1. Fetch Tickers
+        emit_progress(job_id, "Fetching tickers from Ticker Service...", 5, 100, "fetch_tickers")
+        all_tickers, error = _get_all_tickers(job_id)
+        if error:
+            raise Exception(f"Failed to fetch tickers: {error}")
+            
+        # 1b. Filter Delisted
+        _, _, _, _, _, ticker_status_coll = get_db_collections()
+        active_tickers = all_tickers
+        if ticker_status_coll is not None:
+            try:
+                delisted_docs = ticker_status_coll.find({"status": "delisted"}, {"ticker": 1, "_id": 0})
+                delisted_set = {doc['ticker'] for doc in delisted_docs}
+                if delisted_set:
+                    active_set = set(all_tickers) - delisted_set
+                    active_tickers = list(active_set)
+                    logger.info(f"Job {job_id}: Filtered {len(delisted_set)} delisted tickers. {len(active_tickers)} remaining.")
+            except Exception as db_e:
+                logger.warning(f"Job {job_id}: Failed to filter delisted tickers: {db_e}")
+
+        # --- Fast Mode Implementation ---
+        # If mode is 'fast', slice the list to the first 50 tickers.
+        if options.get("mode") == "fast":
+            logger.info(f"Job {job_id}: FAST MODE enabled. Limiting analysis to first 50 tickers.")
+            active_tickers = active_tickers[:50]
+        # -------------------------------------
+
+        emit_progress(job_id, f"Fetched {len(all_tickers)} tickers ({len(active_tickers)} active).", 10, 100, "fetch_tickers")
+
+        # 2. Trend Screening
+        emit_progress(job_id, "Running Trend Screening...", 20, 100, "trend_screening")
+        trend_survivors_raw, error = _run_trend_screening(job_id, active_tickers)
+        if error:
+             raise Exception(f"Trend screening failed: {error}")
+        
+        trend_survivors = []
+        if trend_survivors_raw:
+            trend_survivors = [t['ticker'] if isinstance(t, dict) else t for t in trend_survivors_raw]
+
+        # 3. VCP Analysis
+        emit_progress(job_id, f"Running VCP Analysis on {len(trend_survivors)} survivors...", 40, 100, "vcp_analysis")
+        
+        # Filter results to only include PASSING items
+        vcp_analysis_results = _run_vcp_analysis(job_id, trend_survivors)
+        vcp_survivors_objs = [item for item in vcp_analysis_results if item.vcp_pass]
+        vcp_survivors = [item.ticker for item in vcp_survivors_objs]
+
+        # 4. Leadership Screening
+        emit_progress(job_id, f"Running Leadership Screening on {len(vcp_survivors)} candidates...", 70, 100, "leadership_screening")
+        final_candidates_objs, unique_industries = _run_leadership_screening(job_id, vcp_survivors_objs)
+        final_candidates = [item.ticker for item in final_candidates_objs]
+
+        # 5. Batch Add to Watchlist (Monitoring Service Integration)
+        emit_progress(job_id, f"Adding {len(final_candidates)} survivors to watchlist...", 80, 100, "persist_results")
+        _batch_add_to_watchlist(job_id, final_candidates)
+
+        # 6. Persist Results
+        emit_progress(job_id, "Finalizing results...", 90, 100, "persist_results")
+        
+        total_time = round(time.time() - start_time, 2)
+        
+        summary = ScreeningJobResult(
+            job_id=job_id,
+            processed_at=datetime.now(timezone.utc),
+            total_process_time=total_time,
             total_tickers_fetched=len(all_tickers),
             trend_screen_survivors_count=len(trend_survivors),
             vcp_survivors_count=len(vcp_survivors),
-            final_candidates_count=len(leadership_survivors),
-            industry_diversity=IndustryDiversity(unique_industries_count=unique_industries_count),
-            final_candidates=leadership_survivors,
+            final_candidates_count=len(final_candidates),
+            industry_diversity=IndustryDiversity(unique_industries_count=unique_industries),
+            final_candidates=final_candidates_objs
         )
-    except ValidationError as e:
-        logger.error(f"Job {job_id}: Failed to create job summary due to validation error: {e}")
-        return ({"error": "Internal data validation failed when creating job summary.", "details": str(e)}, 500)
+        
+        results_payload = {
+            "trend_survivors": trend_survivors,
+            "vcp_survivors": vcp_survivors,
+            "final_candidates": final_candidates,
+            "leadership_survivors": final_candidates
+        }
 
-    success, error_info = _store_results(
-        job_id=job_id,
-        summary_doc=job_summary,
-        trend_survivors=trend_survivors,
-        vcp_survivors=vcp_survivors,
-        leadership_survivors=leadership_survivors,
-        final_candidates=leadership_survivors,
+        job_service.complete_job(
+            job_id=job_id,
+            results=results_payload,
+            summary=summary.model_dump()
+        )
+        
+        emit_progress(
+            job_id, 
+            f"Job completed successfully. Found {len(final_candidates)} candidates.", 
+            100, 100, "complete", 
+            status=JobStatus.SUCCESS
+        )
+        
+        return summary.model_dump()
+
+    except Exception as e:
+        logger.error(f"Job {job_id}: Pipeline failed: {e}", exc_info=True)
+        job_service.fail_job(
+            job_id=job_id,
+            error_message=str(e),
+            error_step="pipeline_execution"
+        )
+        emit_progress(job_id, f"Job failed: {e}", 0, 100, "failed", status=JobStatus.FAILED)
+        raise e
+
+def enqueue_full_pipeline(job_id: str, options: Optional[Dict[str, Any]] = None):
+    """
+    Orchestrates the pipeline + watchlist refresh chain.
+    """
+    workflow = chain(
+        run_full_pipeline.s(job_id=job_id, options=options),
+        refresh_watchlist_task.si(job_id=f"{job_id}-refresh", parent_job_id=job_id)
     )
-    if not success:
-        return error_info
-
-    response_data = job_summary.model_dump()
-    logger.info(f"Screening job {job_id} completed successfully.")
-
-    return ({"message": "Screening job completed successfully.", **response_data}, 200)
-
-
-@celery.task(name="scheduler.run_screening_pipeline_task")
-def run_screening_pipeline_task():
-    result, status_code = run_screening_pipeline()
-    return {"status_code": status_code, "result": result}
+    return workflow.apply_async()

@@ -4,15 +4,36 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2026-1-19
-feat(scheduler): add redis + celery runtime scaffolding +  contracts, and service layer for async pipeline
+2026-1-28
+feat(scheduler): implement async core logic, worker tasks, and sse api
 
-- Add Redis service with healthcheck for Celery broker/backend
-- Split scheduler into api/worker/beat containers via SCHEDULER_MODE
-- Mount scheduler-beat code in dev compose for parity
-- Extend shared contracts with ScreeningJobRunRecord and JobProgressEvent (SSE snake_case + Z-suffix datetime serialization) plus unit tests
-- Extract job persistence into services/job_service.py with unit tests (create_job + history pagination)
-- Add services/progress_emitter.py with unit tests (append + cap progress log at 100)
+Implements the core business logic, Celery worker tasks, and Flask API endpoints
+for the Week 10 asynchronous migration. This commit transitions the service
+from a synchronous runner to a robust orchestration engine and enables SSE
+streaming through the API Gateway.
+
+Phase 2: Core Logic (Service Layer)
+- Add services/job_service.py for centralized job CRUD and status management
+- Add services/progress_emitter.py for standardized SSE snapshots
+- Add unit tests for service layer logic (test_job_service.py, test_progress_emitter.py)
+
+Phase 3: Worker Layer (The Engine)
+- Add tasks.py with run_full_pipeline and refresh_watchlist_task
+- Implement Celery chaining logic for Screening -> Batch Add -> Refresh
+- Add integration tests for task execution and failure propagation
+
+Phase 4: API Layer (The Interface)
+- Update app.py to expose async trigger endpoints (POST /start, POST /refresh)
+- Implement history endpoints with pagination and summary/detail separation
+- Update 202 Accepted response contracts
+
+Phase 5: Streaming & E2E (The Experience)
+- Implement SSE generator in app.py with strict header compliance
+- Add GET /stream endpoints backed by MongoDB polling
+- Update api-gateway/app.py to support SSE proxying with `stream=True` and disabled buffering
+- Add E2E tests for full pipeline execution using real Redis/Mongo containers
+
+Refs: Week-10-SDD-Tasks-2.1-4.1
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

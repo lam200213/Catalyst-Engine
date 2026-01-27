@@ -30,6 +30,11 @@ celery.conf.update(
     task_track_started=True,
     timezone="UTC",
     enable_utc=True,
+    # [Time Limits]
+    # Global default: Soft limit 10 mins, Hard limit 15 mins
+    # This protects against zombie processes in standard tasks like watchlist refresh.
+    task_soft_time_limit=600, 
+    task_time_limit=900,
     beat_schedule={
         "scheduler.refresh_watchlist_task": {
             "task": "scheduler.refresh_watchlist_task",

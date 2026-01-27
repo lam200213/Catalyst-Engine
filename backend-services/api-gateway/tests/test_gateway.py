@@ -3,7 +3,7 @@ import unittest
 import os
 import json
 from flask import Flask, jsonify
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, Mock
 import requests
 
 # Set environment variables before importing the app
@@ -93,7 +93,7 @@ class TestGateway(unittest.TestCase):
         mock_post.assert_called_once_with(
             'http://scheduler-service:3004/jobs/screening/start',
             json={},
-            timeout=6000
+            timeout=60
         )
 
     # Test for gateway timeout handling

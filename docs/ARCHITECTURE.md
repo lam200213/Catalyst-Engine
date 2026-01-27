@@ -59,10 +59,25 @@
 │   │   └── requirements.txt
 │   ├── scheduler-service/  # Python/Flask - Orchestrator
 │   │   ├── tests/
-│   │   │   ├── test_app.py
-│   │   │   ├── test_watchlist_refresh.py
-│   │   │   └── test_refresh_watchlist_task.py
+│   │   │   ├── conftest.py             # Shared fixtures
+│   │   │   ├── unit/                   # Fast, mocked tests
+│   │   │   │   ├── test_job_service.py
+│   │   │   │   ├── test_progress_emitter.py
+│   │   │   │   └── test_contracts.py
+│   │   │   ├── integration/            # Real DB/Celery tests
+│   │   │   │   ├── test_api_endpoints.py
+│   │   │   │   ├── test_celery_tasks.py
+│   │   │   │   └── test_sse_streaming.py
+│   │   │   ├── e2e/
+│   │   │   │   └── test_screening_pipeline.py
+│   │   ├── services/                   # Shared Business Logic
+│   │   │   ├── job_service.py          # Job lifecycle (CRUD, State transitions)
+│   │   │   ├── progress_emitter.py     # Progress event helpers
+│   │   │   └── __init__.py
 │   │   ├── app.py
+│   │   ├── celery_app.py               # Celery config & Beat schedule
+│   │   ├── tasks.py                    # Celery tasks (Worker entrypoint)
+│   │   ├── db.py                       # Singleton DB connection
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── monitoring-service/

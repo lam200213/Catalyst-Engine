@@ -29,14 +29,14 @@ def test_job_progress_event_serializes_snake_case_keys():
 
     # Using snake_case arguments as required by SDD
     event = JobProgressEvent(
-        job_id="job-123",           # Fixed: jobid -> job_id
-        job_type="SCREENING",       # Fixed: jobtype -> job_type
+        job_id="job-123",           
+        job_type="SCREENING",       
         status="RUNNING",
-        step_current=1,             # Fixed: stepcurrent -> step_current
-        step_total=4,               # Fixed: steptotal -> step_total
+        step_current=1,             
+        step_total=4,               
         step_name="trend",
         message="Trend screening started",
-        updated_at=datetime(2026, 1, 18, 12, 0, 0, tzinfo=timezone.utc), # Fixed: updatedat -> updated_at
+        updated_at=datetime(2026, 1, 18, 12, 0, 0, tzinfo=timezone.utc), 
     )
 
     payload = json.loads(_model_dump_json(event))

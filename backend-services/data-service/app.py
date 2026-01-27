@@ -706,7 +706,7 @@ def calculate_market_trend():
                     "trend": trend_result.get("trend"),
                     "pass": trend_result.get("pass"),
                     "details": trend_result.get("index_trends"),
-                    "createdAt": datetime.now(timezone.utc)
+                    "created_at": datetime.now(timezone.utc)
                 }
                 db.market_trends.update_one({'date': date_str}, {'$set': document}, upsert=True)
                 calculated_trends.append(document)

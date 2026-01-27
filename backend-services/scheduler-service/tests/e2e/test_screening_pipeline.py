@@ -1,213 +1,117 @@
-# backend-services/scheduler-service/tests/test_app.py
-import unittest
-from unittest.mock import patch, MagicMock
-import os
-import sys
-from pymongo import errors
-from datetime import datetime, timezone
+# backend-services/scheduler-service/tests/e2e/test_screening_pipeline.py
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from app import app
-from shared.contracts import ScreeningJobResult, FinalCandidate, IndustryDiversity, VCPAnalysisBatchItem, LeadershipProfileBatch, LeadershipProfileForBatch
+import pytest
+import json
+import time
+from shared.contracts import (
+    JobProgressEvent, 
+    JobCompleteEvent, 
+    JobStatus
+)
 
-class TestScheduler(unittest.TestCase):
-    def setUp(self):
-        self.app = app.test_client()
-        self.app.testing = True
+@pytest.mark.e2e
+def test_gateway_proxy_streaming_behavior(gateway_base_url, api_session, sse_parser):
+    """
+    Verifies the full Screening Pipeline via the API Gateway.
+    Focus: Async 202 -> SSE Stream (No Buffering) -> Final History
+    Uses robust incremental parsing to handle network fragmentation.
+    """
 
-    # Test suite for the scheduler pipeline.
-    @patch('app._store_results')
-    @patch('app._run_leadership_screening')
-    @patch('app._run_vcp_analysis')
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_full_pipeline_success(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        mock_vcp_analysis,
-        mock_leadership_screen,
-        mock_store_results
-    ):
-        """
-        Test the successful execution of the entire screening pipeline from start to finish.
-        Ensures data flows correctly between mocked stages and the final results are stored.
-        """
-        # --- Arrange: Mock the return values for each stage of the screening funnel ---
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.return_value = [] # No delisted tickers to remove
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
+    # 1. Trigger the Job
+    # We use 'fast' mode (if supported by app.py) or just standard run
+    start_url = f"{gateway_base_url}/jobs/screening/start"
+    payload = {"mode": "fast", "use_vcp_freshness_check": True}
 
-        mock_get_tickers.return_value = (['TICKER_A', 'TICKER_B', 'TICKER_C'], None)
-        mock_trend_screen.return_value = (['TICKER_A', 'TICKER_B'], None)
+    print(f"[E2E] Starting job via {start_url}")
+    start_resp = api_session.post(start_url, json=payload, timeout=5)
+
+    assert start_resp.status_code == 202, f"Job start failed: {start_resp.text}"
+    job_id = start_resp.json().get("job_id")
+    assert job_id, "Job ID not returned"
+
+    # 2. Stream Progress (SSE)
+    stream_url = f"{gateway_base_url}/jobs/screening/stream/{job_id}"
+    print(f"[E2E] Connecting to stream: {stream_url}")
+
+    progress_events = []
+    complete_event = None
+
+    # Measure time to first byte/event
+    req_start = time.time()
+
+    with api_session.get(stream_url, stream=True, timeout=60) as response:
+        # A. Verify Protocol Headers
+        assert response.headers.get("Content-Type") == "text/event-stream"
+        assert response.headers.get("Cache-Control") == "no-cache"
         
-        mock_vcp_survivors = [
-            VCPAnalysisBatchItem(ticker='TICKER_A', vcp_pass=True, vcpFootprint="10W 20/2 3T"),
-            VCPAnalysisBatchItem(ticker='TICKER_B', vcp_pass=False, vcpFootprint=""),
-        ]
-        # The _run_vcp_analysis function will filter this list down to only passing candidates before returning.
-        mock_vcp_analysis.return_value = [v for v in mock_vcp_survivors if v.vcp_pass]
+        # B. Consume Stream using robust fixture
+        # sse_parser handles buffering across chunks automatically
+        event_iterator = sse_parser(response.iter_content(chunk_size=None))
+
+        for item in event_iterator:
+            # Skip comments/heartbeats
+            if 'event' not in item:
+                continue
+
+            event_type = item['event']
+            data = item['data']
+
+            if event_type == 'progress':
+                try:
+                    evt = JobProgressEvent(**data)
+                    progress_events.append(evt)
+                except Exception as e:
+                    pytest.fail(f"Progress contract mismatch: {e}")
+
+            elif event_type == 'complete':
+                try:
+                    complete_event = JobCompleteEvent(**data)
+                    # [CRITICAL FIX] Break loop immediately on completion.
+                    # Do not wait for server to close connection, as it might keep 
+                    # the socket open for heartbeats or timeouts.
+                    break 
+                except Exception as e:
+                    pytest.fail(f"Complete contract mismatch: {e}")
+
+            elif event_type == 'error':
+                pytest.fail(f"Job failed with error: {data}")
+
+    # 3. Assertions
+    assert len(progress_events) > 0, "No progress events received (Stream might be buffered or job failed silently)"
+    assert complete_event is not None, "Stream ended without 'complete' event"
+    assert complete_event.status == "SUCCESS"
+    assert complete_event.job_id == job_id
+
+    # 4. Verify Persistence (History)
+    history_url = f"{gateway_base_url}/jobs/screening/history/{job_id}"
+    hist_resp = api_session.get(history_url)
+    assert hist_resp.status_code == 200
+    
+    hist_data = hist_resp.json()
+    assert hist_data['status'] == "SUCCESS"
+    assert 'results' in hist_data, "Detailed results not persisted"
+    assert 'result_summary' in hist_data, "Summary not persisted"
+
+@pytest.mark.e2e
+def test_job_not_found_stream(gateway_base_url, api_session, sse_parser):
+    """Ensure accessing a non-existent stream returns an error event, not 404."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    url = f"{gateway_base_url}/jobs/screening/stream/{fake_id}"
+    
+    with api_session.get(url, stream=True, timeout=5) as response:
+        assert response.status_code == 200
         
-        mock_final_candidates = [
-            FinalCandidate(
-                ticker='TICKER_A', 
-                vcp_pass=True, 
-                vcpFootprint="10W 20/2 3T", 
-                leadership_results={'passes': True, 'details': {}}
-            )
-        ]
-        mock_leadership_screen.return_value = (mock_final_candidates, 1) # (candidates, industry_count)
+        # Use valid parser here too
+        iterator = sse_parser(response.iter_content(chunk_size=None))
         
-        mock_store_results.return_value = (True, None)
-
-        # --- Act: Trigger the screening job via the API endpoint ---
-        response = self.app.post('/jobs/screening/start')
-        json_data = response.get_json()
-
-        # --- Assert: Verify the response and the interactions between pipeline stages ---
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(json_data['message'], "Screening job completed successfully.")
-        self.assertEqual(json_data['total_tickers_fetched'], 3)
-        self.assertEqual(json_data['trend_screen_survivors_count'], 2)
-        self.assertEqual(json_data['vcp_survivors_count'], 1)
-        self.assertEqual(json_data['final_candidates_count'], 1)
-        self.assertEqual(json_data['industry_diversity']['unique_industries_count'], 1) 
-        self.assertIn(datetime.now(timezone.utc).strftime('%Y%m%d'), json_data['job_id'])
-
-        # Verify that each stage was called with the output of the previous stage
-        mock_get_tickers.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        self.assertCountEqual(call_args[1], ['TICKER_A', 'TICKER_B', 'TICKER_C'])
-
-        mock_vcp_analysis.assert_called_once_with(unittest.mock.ANY, ['TICKER_A', 'TICKER_B'])
-        mock_leadership_screen.assert_called_once_with(unittest.mock.ANY, mock_vcp_analysis.return_value)
+        events = []
+        for item in iterator:
+            if 'event' in item:
+                events.append(item)
+                # Break on error to avoid hanging
+                if item['event'] == 'error':
+                    break
         
-        # Verify the final results were stored correctly
-        mock_store_results.assert_called_once()
-        call_args = mock_store_results.call_args[0]
-
-        summary_doc_arg = call_args[1]
-        self.assertIsInstance(summary_doc_arg, ScreeningJobResult)
-        self.assertEqual(summary_doc_arg.final_candidates_count, 1)
-        
-        final_candidates_arg = call_args[5]
-        self.assertEqual(len(final_candidates_arg), 1)
-        self.assertIsInstance(final_candidates_arg[0], FinalCandidate)
-        self.assertEqual(final_candidates_arg[0].ticker, 'TICKER_A')
-
-    @patch('app._get_all_tickers')
-    def test_service_failure_ticker_service(self, mock_get_tickers):
-        # --- Arrange: Ticker service returns an error tuple ---
-        mock_get_tickers.return_value = (None, ({"error": "Failed to connect"}, 503))
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("Failed to connect", response.get_json()['error'])
-
-
-    @patch('app._store_results')
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening', return_value=([], None))
-    @patch('app._get_all_tickers')
-    def test_database_failure_on_store(self, mock_get_tickers, *args):
-        # --- Arrange: Mock a DB failure during the final step ---
-        mock_get_tickers.return_value = (['DB_FAIL_TICKER'], None)
-        # The first patched arg is _store_results
-        mock_store_results = args[-1]
-        mock_store_results.return_value = (False, ({"error": "DB connection lost"}, 500))
-        
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 500)
-        self.assertIn("DB connection lost", response.get_json()['error'])
-        mock_store_results.assert_called_once()
-
-    @patch('app._store_results', return_value=(True, None))
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_pipeline_filters_delisted_tickers_before_screening(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        *other_mocks
-    ):
-        """
-        Goal: Verify the core pre-filtering logic in the orchestration pipeline.
-        """
-        # --- Arrange ---
-        # 1. Mock the full list of tickers
-        mock_get_tickers.return_value = (['AAPL', 'GOOG', 'ATVI'], None)
-
-        # 2. Mock the DB collection for delisted tickers
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.return_value = [{'ticker': 'ATVI'}]
-        # get_db_collections returns a tuple, we only care about the last one (ticker_status)
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
-
-        # 3. Mock the trend screening function to act as a spy
-        mock_trend_screen.return_value = (['AAPL', 'GOOG'], None)
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        # Assert that the trend screening stage was called with the FILTERED list
-        mock_trend_screen.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        # The list might be in a different order, so compare content ignoring order
-        self.assertCountEqual(call_args[1], ['AAPL', 'GOOG'])
-
-    @patch('app._store_results', return_value=(True, None))
-    @patch('app._run_leadership_screening', return_value=([], 0))
-    @patch('app._run_vcp_analysis', return_value=[])
-    @patch('app._run_trend_screening')
-    @patch('app.get_db_collections')
-    @patch('app._get_all_tickers')
-    def test_pipeline_proceeds_with_unfiltered_list_on_db_error(
-        self,
-        mock_get_tickers,
-        mock_get_db,
-        mock_trend_screen,
-        *other_mocks
-    ):
-        """
-        Goal: Ensure the pipeline doesn't fail if the ticker_status collection can't be queried.
-        """
-        # --- Arrange ---
-        # 1. Mock the full list of tickers
-        full_ticker_list = ['AAPL', 'GOOG', 'ATVI']
-        mock_get_tickers.return_value = (full_ticker_list, None)
-
-        # 2. Mock the DB collection to raise an error
-        mock_ticker_status_coll = MagicMock()
-        mock_ticker_status_coll.find.side_effect = errors.PyMongoError("Connection failed")
-        mock_get_db.return_value = (None, None, None, None, None, mock_ticker_status_coll)
-
-        # 3. Mock the trend screening function
-        mock_trend_screen.return_value = ([], None) # Return value doesn't matter much here
-
-        # --- Act ---
-        response = self.app.post('/jobs/screening/start')
-
-        # --- Assert ---
-        self.assertEqual(response.status_code, 200)
-        # Assert that the trend screening stage was called with the COMPLETE, UNFILTERED list
-        mock_trend_screen.assert_called_once()
-        call_args, _ = mock_trend_screen.call_args
-        self.assertCountEqual(call_args[1], full_ticker_list)
-
-if __name__ == '__main__':
-    unittest.main()
+        assert len(events) > 0
+        assert events[0]['event'] == 'error'
+        assert "not found" in str(events[0]['data']).lower()

@@ -115,7 +115,7 @@ Stores the calculated market trend context for specific dates, preventing recalc
     "^DJI": "string",  // Trend for Dow Jones
     "^IXIC": "string"  // Trend for NASDAQ
   },
-  "createdAt": "ISODate"
+  "created_at": "ISODate"
 }
 ```
 

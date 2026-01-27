@@ -15,7 +15,7 @@ const INDICES = [
 const MarketIndicesWidget = ({ indicesData, loading }) => {
     const bg = useColorModeValue('white', 'gray.800');
     const borderColor = useColorModeValue('gray.200', 'gray.700');
-    // Latest Add: Move hook to top level to prevent "Rendered fewer hooks than expected" error
+    // Move hook to top level to prevent "Rendered fewer hooks than expected" error
     const tabListBg = useColorModeValue('gray.50', 'gray.900');
 
     if (loading) {
