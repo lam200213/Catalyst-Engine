@@ -6,6 +6,7 @@ import os
 import sys
 from curl_cffi.requests import errors as cffi_errors
 from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
 
 # Add the project root to the path to allow absolute imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -188,4 +189,258 @@ class TestYFinancePriceProvider(unittest.TestCase):
     def test_transform_yahoo_response_missing_result_returns_none(self):
         bad = {"chart": {"result": []}}
         out = price_provider._transform_yahoo_response(bad, "EMPTY")
+        self.assertIsNone(out)
+
+    # Test for the "No Market Sessions" symptom (empty timestamp)
+    def test_transform_yahoo_response_handles_missing_timestamp_gracefully(self):
+        """
+        Simulates the scenario where a query window covers only non-trading days (e.g., Sat-Sun).
+        Yahoo often returns a valid structure but without the 'timestamp' key.
+        The provider should catch the KeyError and return None.
+        """
+        # A payload structure often seen when no data is available in the range
+        empty_window_payload = {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"currency": "USD", "symbol": "NTLA"},
+                        "indicators": {
+                            "quote": [{}],
+                            "adjclose": [{}]
+                        }
+                        # 'timestamp' is missing here
+                    }
+                ],
+                "error": None
+            }
+        }
+        
+        # Act
+        result = price_provider._transform_yahoo_response(empty_window_payload, "NTLA")
+        
+        # Assert
+        self.assertIsNone(result)
+
+    def test_plan_incremental_never_starts_on_weekend(self):
+        from datetime import date
+        from helper_functions import plan_incremental_price_fetch
+
+        # Simulate cache last bar on Friday
+        cached = [{"formatted_date": "2026-01-23", "close": 100, "open": 100, "high": 101, "low": 99, "volume": 1, "adjclose": 100}]
+
+        plan = plan_incremental_price_fetch(
+            cached_data=cached,
+            req_period=None,
+            req_start=None,
+            today=date(2026, 1, 28),  # Wednesday
+            validate_fn=lambda data, _t: data,
+            covers_fn=lambda _data, _p, _s: True,
+        )
+
+        self.assertEqual(plan["action"], "fetch_incremental")
+        self.assertEqual(plan["start_date"].isoformat(), "2026-01-26")  # Monday, not weekend
+
+    @patch("helper_functions.get_trading_calendar")
+    def test_plan_incremental_holiday_aware_returns_cache_when_last_bar_is_previous_session(self, mock_get_cal):
+        import helper_functions
+        from datetime import date
+        from helper_functions import plan_incremental_price_fetch
+
+        # Ensure helper_functions internal calendar cache does not leak across tests
+        helper_functions._TRADING_CAL = None
+
+        # Mock NYSE calendar: for Tue 2026-01-20, the previous trading day is Fri 2026-01-16
+        mock_calendar = MagicMock()
+        # Add columns to dataframe to ensure .empty is False (pandas checks size=rows*cols)
+        mock_calendar.schedule.return_value = pd.DataFrame(index=pd.to_datetime(["2026-01-16"]), columns=["market_open"])
+        mock_get_cal.return_value = mock_calendar
+
+        cached = [{
+            "formatted_date": "2026-01-16",
+            "close": 100,
+            "open": 100,
+            "high": 101,
+            "low": 99,
+            "volume": 1,
+            "adjclose": 100
+        }]
+
+        plan = plan_incremental_price_fetch(
+            cached_data=cached,
+            req_period=None,
+            req_start=None,
+            today=date(2026, 1, 20),  # Tuesday; Monday is a market holiday (MLK Day)
+            validate_fn=lambda data, _t: data,
+            covers_fn=lambda _data, _p, _s: True,
+        )
+
+        self.assertEqual(plan["action"], "return_cache")
+        self.assertIsNone(plan["start_date"])
+
+    @patch("providers.yfin.price_provider.yahoo_client.execute_request")
+    @patch("helper_functions.get_trading_calendar")
+    def test_get_single_ticker_data_incremental_period2_uses_previous_trading_day(self, mock_get_cal, mock_execute_request):
+        import helper_functions
+
+        helper_functions._TRADING_CAL = None
+
+        mock_calendar = MagicMock()
+        # Add columns to dataframe to ensure .empty is False
+        mock_calendar.schedule.return_value = pd.DataFrame(index=pd.to_datetime(["2026-01-23"]), columns=["market_open"])
+        mock_get_cal.return_value = mock_calendar
+
+        mock_execute_request.return_value = make_chart_payload(include_timestamp=False)
+
+        with patch.dict(os.environ, {"YF_TODAY_OVERRIDE": "2026-01-26"}):
+            out = price_provider._get_single_ticker_data(
+                "NTLA",
+                start_date=dt.date(2026, 1, 22),  # Thursday
+                interval="1d",
+            )
+
+        self.assertIsNone(out)
+
+        params = mock_execute_request.call_args.kwargs["params"]
+        p1 = dt.datetime.fromtimestamp(int(params["period1"])).date().isoformat()
+        p2 = dt.datetime.fromtimestamp(int(params["period2"])).date().isoformat()
+
+        self.assertEqual(p1, "2026-01-22")
+        self.assertEqual(p2, "2026-01-23")  # Friday, previous trading day
+
+    @patch("providers.yfin.price_provider.yahoo_client.execute_request")
+    @patch("helper_functions.get_trading_calendar")
+    def test_get_single_ticker_data_weekend_window_clamps_to_previous_trading_day(self, mock_get_cal, mock_execute_request):
+        import helper_functions
+
+        helper_functions._TRADING_CAL = None
+
+        mock_calendar = MagicMock()
+        # Add columns to dataframe to ensure .empty is False
+        mock_calendar.schedule.return_value = pd.DataFrame(index=pd.to_datetime(["2026-01-23"]), columns=["market_open"])
+        mock_get_cal.return_value = mock_calendar
+
+        mock_execute_request.return_value = make_chart_payload(include_timestamp=False)
+
+        with patch.dict(os.environ, {"YF_TODAY_OVERRIDE": "2026-01-26"}):
+            out = price_provider._get_single_ticker_data(
+                "NTLA",
+                start_date=dt.date(2026, 1, 24),  # Saturday
+                interval="1d",
+            )
+
+        self.assertIsNone(out)
+
+        params = mock_execute_request.call_args.kwargs["params"]
+        p1 = dt.datetime.fromtimestamp(int(params["period1"])).date().isoformat()
+        p2 = dt.datetime.fromtimestamp(int(params["period2"])).date().isoformat()
+
+        # start_date is clamped to last completed session (Friday)
+        self.assertEqual(p1, "2026-01-23")
+        self.assertEqual(p2, "2026-01-23")
+
+    @patch("pandas_market_calendars.get_calendar")
+    @patch("helper_functions.previous_trading_day")
+    def test_cache_covers_request_uses_previous_trading_day_as_anchor_end(self, mock_prev_trading_day, mock_get_calendar):
+        from datetime import date
+        from helper_functions import cache_covers_request
+
+        # Force anchor_end to be previous_trading_day(today), not calendar yesterday
+        mock_prev_trading_day.return_value = date(2026, 1, 16)
+
+        mock_nyse = MagicMock()
+
+        # Must not be "empty" in pandas; include a column to avoid rows*cols == 0
+        mock_nyse.schedule.return_value = pd.DataFrame(
+            index=pd.to_datetime(["2025-01-01"]),
+            columns=["market_open"]
+        )
+
+        mock_get_calendar.return_value = mock_nyse
+
+        # Use <252 unique dates so we do NOT take the row-count fast path.
+        # Also make cache_end_dt later than 2026-01-16 so anchor_end should be 2026-01-16.
+        cached_data = [
+            {"formatted_date": "2025-01-01"},
+            {"formatted_date": "2026-01-20"},
+        ]
+
+        result = cache_covers_request(cached_data, "1y", None)
+
+        # Assert that calendar schedule was built using anchor_end = previous trading day
+        self.assertTrue(mock_get_calendar.called)
+
+        _, kwargs = mock_nyse.schedule.call_args
+        self.assertEqual(kwargs["end_date"], date(2026, 1, 16))
+
+        # Optional: keep assertion on return value stable (with our mock schedule, should be True)
+        self.assertTrue(result)
+
+    def test_transform_yahoo_response_timestamp_exists_but_values_contain_none(self):
+        """
+        Messy-but-valid Yahoo payload:
+        - timestamp exists
+        - OHLC/adjclose arrays contain None values
+        Expected: transform does not crash; returns list with N items; None values preserved.
+        """
+        payload = {
+            "chart": {
+                "result": [{
+                    "timestamp": [1672531200, 1672617600, 1672704000],  # 2023-01-01, 02, 03
+                    "indicators": {
+                        "quote": [{
+                            "open":   [100, None, 102],
+                            "high":   [105, 106, None],
+                            "low":    [99,  None, 101],
+                            "close":  [102, None, 105],
+                            "volume": [10000, None, 12000],
+                        }],
+                        "adjclose": [{
+                            "adjclose": [101, None, 104]
+                        }]
+                    }
+                }],
+                "error": None
+            }
+        }
+
+        out = price_provider._transform_yahoo_response(payload, "MESSY")
+        self.assertIsNotNone(out)
+        self.assertEqual(len(out), 3)
+
+        # Spot-check the "None bar" survives transformation
+        self.assertEqual(out[1]["formatted_date"], "2023-01-02")
+        self.assertIsNone(out[1]["open"])
+        self.assertIsNone(out[1]["close"])
+        self.assertIsNone(out[1]["adjclose"])
+        self.assertIsNone(out[1]["volume"])
+
+    def test_transform_yahoo_response_timestamp_exists_but_arrays_mismatched_lengths_returns_none(self):
+        """
+        Messy-but-valid structure but inconsistent lengths:
+        - timestamp has 3 items
+        - OHLC arrays have only 2 items
+        Expected: IndexError is caught and transform returns None.
+        """
+        payload = {
+            "chart": {
+                "result": [{
+                    "timestamp": [1672531200, 1672617600, 1672704000],
+                    "indicators": {
+                        "quote": [{
+                            "open":   [100, 101],          # shorter than timestamps
+                            "high":   [105, 106],
+                            "low":    [99, 100],
+                            "close":  [102, 103],
+                            "volume": [10000, 11000],
+                        }],
+                        "adjclose": [{
+                            "adjclose": [101, 102]         # shorter than timestamps
+                        }]
+                    }
+                }],
+                "error": None
+            }
+        }
+
+        out = price_provider._transform_yahoo_response(payload, "MISMATCH")
         self.assertIsNone(out)

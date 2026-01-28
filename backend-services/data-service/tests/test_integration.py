@@ -176,7 +176,7 @@ class TestPriceEndpoints(test_app.BaseDataServiceTest):
         expected_combined_data = cached_data + new_data_from_provider
         self.assertEqual(response.json, expected_combined_data)
         
-        expected_start_date = last_cached_date_obj + timedelta(days=1)
+        expected_start_date = self._next_weekday(last_cached_date_obj + timedelta(days=1))
         mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=expected_start_date, period=None)
         
         self.mock_cache.set.assert_called_once_with(f"price_yfinance_{ticker}", expected_combined_data, timeout=ANY)

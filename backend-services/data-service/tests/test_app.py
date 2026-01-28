@@ -32,11 +32,11 @@ class BaseDataServiceTest(unittest.TestCase):
         self.mock_cache = self.cache_patcher.start()
         # The app uses `cache.cache._write_client`, so we must mock that specific path.
         self.mock_redis_client = self.mock_cache.cache._write_client = MagicMock()
-
-
+    
     def tearDown(self):
         self.db_patcher.stop()
         self.cache_patcher.stop()
+
     # Helper method to create valid mock price data  
     def _create_valid_price_data(self, overrides=None, day_offset=0):
         """Creates a single, valid PriceDataItem dictionary."""
@@ -90,10 +90,66 @@ class BaseDataServiceTest(unittest.TestCase):
                 "low_52_week": 3800.0,
             }
 
+    # helper to advance a date by one trading day
+    def _next_weekday(self, d):
+        # weekend-only (Sat/Sun) adjustment; no holiday awareness
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        return d
+
 # =====================================================================
 # ==                BATCH PRICE LOGIC & EDGE CASES                   ==
 # =====================================================================
 class TestBatchPriceLogic(BaseDataServiceTest):
+    @patch('app.yf_price_provider.get_stock_data')
+    def test_batch_price_incremental_merge_is_sorted_and_provider_wins_on_overlap(self, mock_get_stock_data):
+        """
+        POST /price/batch:
+        - Cache exists but stale -> incremental fetch path
+        - Provider returns overlapping dates (same formatted_date as cache)
+        Expected:
+        - Final merged list is sorted by formatted_date ascending
+        - No duplicate formatted_date
+        - Provider value overwrites cache on overlapping formatted_date
+        """
+        ticker = "MSFT"
+
+        # Cache with unsorted order + duplicate date in cache
+        cached_data = [
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-10", "close": 110.0}),
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-08", "close": 108.0}),
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-09", "close": 109.0}),
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-10", "close": 999.0}),  # duplicate in cache
+        ]
+        self.mock_cache.get.return_value = cached_data
+
+        # Provider returns unsorted data + overlap on 2026-01-10 with a different close
+        provider_data = [
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-13", "close": 113.0}),
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-10", "close": 555.0}),  # overlap (provider should win)
+            self._create_valid_price_data(overrides={"formatted_date": "2026-01-12", "close": 112.0}),
+        ]
+        mock_get_stock_data.return_value = provider_data
+
+        resp = self.client.post('/price/batch', json={'tickers': [ticker], 'source': 'yfinance'})
+        self.assertEqual(resp.status_code, 200)
+
+        out = resp.json['success'][ticker]
+
+        # 1) Deduped by formatted_date
+        dates = [row["formatted_date"] for row in out]
+        self.assertEqual(len(dates), len(set(dates)))
+
+        # 2) Sorted ascending
+        self.assertEqual(dates, sorted(dates))
+
+        # 3) Provider wins on overlap (2026-01-10 should have close=555.0)
+        row_0110 = next(r for r in out if r["formatted_date"] == "2026-01-10")
+        self.assertEqual(row_0110["close"], 555.0)
+
+        # 4) Cache updated with the final merged list
+        self.mock_cache.set.assert_called_once() 
+
     @patch('app.yf_price_provider.get_stock_data')
     def test_batch_price_explicit_start_date_precedence(self, mock_get_stock_data):
         """POST /price/batch: Tests that `start_date` overrides any existing cache."""
@@ -146,8 +202,8 @@ class TestBatchPriceLogic(BaseDataServiceTest):
 
         # --- Assert ---
         self.assertEqual(response.status_code, 200)
-        # Provider should be called starting from the day after the last cached date
-        expected_start_date = last_cached_date + timedelta(days=1)
+        # Provider should be called starting from the trade day after the last cached date 
+        expected_start_date = self._next_weekday(last_cached_date + timedelta(days=1))
         mock_get_stock_data.assert_called_once_with(ticker, ANY, start_date=expected_start_date, period=None)
         
         # Response should contain the merged and de-duplicated data

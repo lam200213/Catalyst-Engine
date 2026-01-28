@@ -5,12 +5,17 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-28
-docs(scheduler): align schema and architecture with week 10 async implementation
+fix(data-service): harden yfinance incremental windows and stabilize calendar-driven tests
 
-- Flatten `screening_jobs` progress fields in DATABASE_SCHEMA.md to match DB storage.
-- Update API_REFERENCE.md to match exact JSON responses in `app.py` (removed monitor_url, fixed messages).
-- Update ARCHITECTURE.md to reflect DB Polling strategy for SSE instead of Redis Pub/Sub.
-- Ensure Split Persistence structure is consistent across all definitions.
+- Return None on malformed Yahoo chart payloads, including missing timestamp, instead of raising
+
+- Clamp incremental fetch windows to last completed trading session
+
+- Anchor cache coverage calculations to previous trading day rather than calendar-yesterday
+
+- Fix pandas calendar schedule mocks to avoid empty DataFrame edge cases
+
+- Add regression test asserting cache_covers_request uses previous_trading_day as end_date anchor
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
