@@ -278,8 +278,9 @@ def run_full_pipeline(self, job_id: Optional[str] = None, options: Optional[Dict
 
         job_service.complete_job(
             job_id=job_id,
-            results=results_payload,
-            summary=summary.model_dump()
+            results=results_payload,       # Lightweight lists for Job History UI
+            summary=summary.model_dump(),  # Stats
+            final_candidates_objs=final_candidates_objs # Full data for screening_results collection
         )
         
         emit_progress(

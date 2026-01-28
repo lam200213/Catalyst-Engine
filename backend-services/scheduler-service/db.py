@@ -5,7 +5,7 @@ import logging
 import time
 from urllib.parse import urlparse
 
-from pymongo import MongoClient, errors
+from pymongo import MongoClient, errors, ASCENDING, DESCENDING
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,33 @@ class DatabaseManager:
             "ticker_status": None,
         }
 
+    def _ensure_indexes(self):
+        """
+        Creates indexes to support specific query patterns.
+        This is idempotent (safe to run multiple times).
+        """
+        if self.collections["results"] is not None:
+            # 1. "Show me the history of NVDA"
+            # Background=True ensures building index doesn't lock the DB
+            self.collections["results"].create_index(
+                [("ticker", ASCENDING)], 
+                background=True
+            )
+            
+            # 2. "Show me all stocks that passed on Nov 12th"
+            # Compound index might be useful here: job_id + processed_at
+            self.collections["results"].create_index(
+                [("processed_at", DESCENDING)], 
+                background=True
+            )
+            
+            # 3. "Show me results for this specific job run"
+            self.collections["results"].create_index(
+                [("job_id", ASCENDING)], 
+                background=True
+            )
+            logger.info("Ensured indexes for screening_results.")
+
     def connect(self) -> bool:
         if self.client is not None and all(coll is not None for coll in self.collections.values()):
             return True
@@ -71,6 +98,7 @@ class DatabaseManager:
                 self.collections["ticker_status"] = self.db["ticker_status"]
 
                 logger.info("MongoDB connection successful.")
+                self._ensure_indexes()
                 return True
             except errors.ConnectionFailure as e:
                 logger.error(f"MongoDB connection attempt {attempt + 1}/{max_retries} failed: {e}")

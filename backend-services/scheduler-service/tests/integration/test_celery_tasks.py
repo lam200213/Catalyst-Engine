@@ -9,7 +9,8 @@ from shared.contracts import (
     JobProgressEvent,
     JobStatus,
     VCPAnalysisBatchItem,
-    LeadershipProfileBatch
+    LeadershipProfileBatch,
+    FinalCandidate
 )
 
 # --- Local Helper (Specific to this test file) ---
@@ -392,3 +393,80 @@ def test_refresh_watchlist_task_failure_propagates_to_parent(
         if c.kwargs.get('job_id') == parent_id
     ]
     assert len(complete_calls_for_parent) == 0, "Parent job was marked COMPLETE after failure!"
+
+def test_run_full_pipeline_passes_detailed_objects_to_complete_job(
+    mock_requests, 
+    mock_db_session, 
+    mock_job_service, 
+    mock_emit_progress,
+    assert_requests_have_timeouts
+):
+    """
+    Verifies that run_full_pipeline constructs valid FinalCandidate objects 
+    (containing VCP footprint + Leadership results) and passes them to 
+    job_service.complete_job for fan-out persistence.
+    """
+    from tasks import run_full_pipeline
+    
+    job_id = "job-split-persistence-check"
+    
+    # 1. Mock External Service Responses (Condensed for brevity)
+    mock_requests.get.return_value.json.return_value = ["AAPL"] # Ticker Service
+    
+    def post_side_effect(url, **kwargs):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        
+        if "screening-service" in url:
+            mock_resp.json.return_value = {"passing_tickers": ["AAPL"]}
+        elif "analysis-service" in url:
+            # VCP Result
+            mock_resp.json.return_value = [
+                {"ticker": "AAPL", "vcp_pass": True, "vcpFootprint": "10D 5%"}
+            ]
+        elif "leadership-service" in url:
+            # Leadership Result
+            resp_data = {
+                "passing_candidates": [{
+                    "ticker": "AAPL", 
+                    "passes": True, 
+                    "leadership_summary": {"qualified_profiles": ["Leader"], "message": "OK"}, 
+                    "profile_details": {"explosive_grower": {"pass": True, "passed_checks": 1, "total_checks": 1}},
+                    "industry": "Tech"
+                }],
+                "unique_industries_count": 1,
+                "metadata": {"total_processed": 1, "total_passed": 1, "execution_time": 0.1}
+            }
+            mock_resp.json.return_value = resp_data
+            mock_resp.content = json.dumps(resp_data).encode('utf-8')
+        elif "batch/add" in url:
+            mock_resp.status_code = 201
+            
+        return mock_resp
+
+    mock_requests.post.side_effect = post_side_effect
+
+    # 2. Execute
+    run_full_pipeline(job_id=job_id, options={})
+
+    # 3. Assertions
+    mock_job_service.complete_job.assert_called_once()
+    _, kwargs = mock_job_service.complete_job.call_args
+    
+    # A. Check Lightweight Results (Strings)
+    assert "final_candidates" in kwargs['results']
+    assert kwargs['results']['final_candidates'] == ["AAPL"]
+    
+    # B. Check Detailed Objects (Fan-Out Data)
+    assert "final_candidates_objs" in kwargs
+    detailed_objs = kwargs['final_candidates_objs']
+    
+    assert len(detailed_objs) == 1
+    candidate = detailed_objs[0]
+    
+    # Verify Object Structure (Must be FinalCandidate model or compatible)
+    assert isinstance(candidate, FinalCandidate)
+    assert candidate.ticker == "AAPL"
+    assert candidate.vcpFootprint == "10D 5%" # Came from Analysis
+    assert candidate.leadership_results["ticker"] == "AAPL" # Came from Leadership

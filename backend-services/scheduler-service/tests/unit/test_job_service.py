@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pymongo.errors import PyMongoError
-
+from pymongo import InsertOne
 from shared.contracts import JobProgressEvent, JobStatus, JobType, ScreeningJobRunRecord
 
 # In true TDD Red phase, these imports should fail loudly (do not skip).
@@ -358,3 +358,130 @@ class TestJobService:
         assert "$set" in update_doc
         assert "$push" in update_doc
         assert len(update_doc.keys()) == 2
+
+    def test_complete_job_performs_fan_out_persistence_to_screening_results(
+        self, mock_db_collections, mock_jobs_collection
+    ):
+        """
+        Week 10 Split Persistence Requirement:
+        - Summary/Metrics -> 'screening_jobs' collection (Update)
+        - Detailed Candidates -> 'screening_results' collection (Bulk Insert)
+        
+        This test verifies that complete_job takes the 'final_candidates_objs',
+        wraps them in the correct schema (job_id, processed_at, data),
+        and performs a bulk_write to the results collection.
+        """
+        job_id = str(uuid.uuid4())
+        
+        # Mock the results collection (index 0 in get_db_collections tuple)
+        mock_results_collection = MagicMock()
+        mock_db_collections = (
+            mock_results_collection, 
+            mock_jobs_collection, 
+            None, None, None, None
+        )
+
+        # Mock Data: 2 detailed candidate objects (Simulating Pydantic models)
+        candidate_1 = MagicMock()
+        candidate_1.model_dump.return_value = {"ticker": "AAPL", "score": 99}
+        candidate_1.ticker = "AAPL" # validation fallback
+        
+        candidate_2 = MagicMock()
+        candidate_2.model_dump.return_value = {"ticker": "NVDA", "score": 100}
+        candidate_2.ticker = "NVDA"
+
+        final_candidates_objs = [candidate_1, candidate_2]
+        
+        # Inputs for the Job Record (Lightweight)
+        results_payload = {"final_candidates": ["AAPL", "NVDA"]} # Strings only
+        summary_payload = {"final_candidates_count": 2}
+
+        with patch("services.job_service.get_db_collections", return_value=mock_db_collections):
+             complete_job(
+                job_id=job_id, 
+                results=results_payload, 
+                summary=summary_payload,
+                final_candidates_objs=final_candidates_objs
+            )
+
+        # 1. Verify Job Record Update (Process Metadata)
+        mock_jobs_collection.update_one.assert_called_once()
+        _, update_doc = mock_jobs_collection.update_one.call_args[0][0:2]
+        
+        # Assert lightweight data went to jobs collection
+        assert update_doc["$set"]["results"] == results_payload
+        assert update_doc["$set"]["result_summary"] == summary_payload
+        assert "final_candidates_objs" not in update_doc["$set"] # Should NOT store heavy objects here
+
+        # 2. Verify Result Collection Fan-Out (Domain Data)
+        mock_results_collection.bulk_write.assert_called_once()
+        bulk_ops = mock_results_collection.bulk_write.call_args[0][0]
+        
+        assert len(bulk_ops) == 2
+        assert isinstance(bulk_ops[0], InsertOne)
+        
+        # Inspect the first document inserted
+        doc_1 = bulk_ops[0]._doc
+        assert doc_1["job_id"] == job_id
+        assert "processed_at" in doc_1
+        assert doc_1["ticker"] == "AAPL"
+        assert doc_1["data"] == {"ticker": "AAPL", "score": 99} # Nested detailed data
+
+    def test_complete_job_handles_missing_candidates_gracefully(
+        self, mock_db_collections, mock_jobs_collection
+    ):
+        """
+        Verifies that if no detailed objects are passed, no bulk_write is attempted,
+        preventing empty errors.
+        """
+        job_id = str(uuid.uuid4())
+        mock_results_collection = MagicMock()
+        mock_db_collections = (mock_results_collection, mock_jobs_collection, None, None, None, None)
+
+        with patch("services.job_service.get_db_collections", return_value=mock_db_collections):
+             complete_job(
+                job_id=job_id, 
+                results={"trend_survivors": []}, 
+                summary={},
+                final_candidates_objs=[] # Empty list
+            )
+
+        # Should update job status
+        mock_jobs_collection.update_one.assert_called_once()
+        # Should NOT touch results collection
+        mock_results_collection.bulk_write.assert_not_called()
+
+    def test_complete_job_logs_error_on_fan_out_failure_but_succeeds_job(
+        self, mock_db_collections, mock_jobs_collection
+    ):
+        """
+        Verifies that a failure in the secondary persistence (screening_results)
+        does NOT crash the main job completion logic (screening_jobs).
+        The job should still be marked SUCCESS.
+        """
+        job_id = str(uuid.uuid4())
+        mock_results_collection = MagicMock()
+        # Simulate DB Error on bulk_write
+        mock_results_collection.bulk_write.side_effect = Exception("Disk Full")
+        
+        mock_db_collections = (mock_results_collection, mock_jobs_collection, None, None, None, None)
+        
+        candidate = MagicMock()
+        candidate.model_dump.return_value = {"ticker": "AAPL"}
+
+        with patch("services.job_service.get_db_collections", return_value=mock_db_collections):
+             complete_job(
+                job_id=job_id, 
+                results={}, 
+                summary={},
+                final_candidates_objs=[candidate]
+            )
+
+        # Verification:
+        # 1. Bulk write was attempted
+        mock_results_collection.bulk_write.assert_called_once()
+        
+        # 2. Job was still marked SUCCESS in the main collection (Critical Path Integrity)
+        mock_jobs_collection.update_one.assert_called_once()
+        update_doc = mock_jobs_collection.update_one.call_args[0][1]
+        assert update_doc["$set"]["status"] == JobStatus.SUCCESS.value

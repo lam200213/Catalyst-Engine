@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
-from pymongo import DESCENDING
+from pymongo import DESCENDING, InsertOne
 from pymongo.errors import PyMongoError
 from pydantic import ValidationError
 import logging
@@ -131,15 +131,17 @@ def update_job_progress(
 def complete_job(
     job_id: str, 
     results: Optional[Dict[str, Any]] = None, 
-    summary: Optional[Dict[str, Any]] = None
+    summary: Optional[Dict[str, Any]] = None,
+    final_candidates_objs: Optional[List[Any]] = None  # Latest Add: specific arg for detailed objects
 ) -> None:
     """
-    Transitions job to SUCCESS, calculates duration, and persists results.
-    Implements Split Persistence: 
-    - 'results' stores heavy lists (survivors)
-    - 'result_summary' stores lightweight metrics
+    Transitions job to SUCCESS, persists results, and performs fan-out persistence.
+    
+    Refactored for Week 10:
+    1. 'results' (in job doc): Stores lightweight lists of tickers (strings) for debugging.
+    2. 'screening_results' (collection): Stores detailed FinalCandidate objects for analytics.
     """
-    _, jobs_col, _, _, _, _ = get_db_collections()
+    results_col, jobs_col, _, _, _, _ = get_db_collections()
     
     # Fetch started_at to calculate total duration
     job = jobs_col.find_one({"job_id": job_id}, {"started_at": 1})
@@ -149,17 +151,40 @@ def complete_job(
     
     total_time = 0.0
     if started_at:
-        # Ensure aware datetime comparison
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
         total_time = (now_utc - started_at).total_seconds()
+
+    # Fan-out Persistence to screening_results ---
+    if final_candidates_objs and results_col is not None:
+        try:
+            bulk_ops = []
+            for candidate in final_candidates_objs:
+                # Ensure the object is a dict (handle Pydantic models)
+                candidate_dict = candidate.model_dump() if hasattr(candidate, 'model_dump') else candidate
+                
+                # Enrich with Metadata for Indexing
+                doc = {
+                    "job_id": job_id,
+                    "processed_at": now_utc,
+                    "ticker": candidate_dict.get("ticker"),
+                    "data": candidate_dict # Nest the detailed metrics
+                }
+                bulk_ops.append(InsertOne(doc))
+            
+            if bulk_ops:
+                results_col.bulk_write(bulk_ops)
+                logger.info(f"Persisted {len(bulk_ops)} final candidates to screening_results.")
+        except Exception as e:
+            logger.error(f"Failed to fan-out persistence for job {job_id}: {e}")
+            # We do NOT fail the job here; the data is in the summary backup if needed.
 
     update_fields = {
         "status": JobStatus.SUCCESS.value,
         "completed_at": now_utc,
         "total_process_time": total_time,
         "result_summary": summary,
-        "results": results
+        "results": results  # Lightweight strings only
     }
 
     jobs_col.update_one(

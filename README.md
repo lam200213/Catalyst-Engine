@@ -5,17 +5,18 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-28
-fix(data-service): harden yfinance incremental windows and stabilize calendar-driven tests
+feat(scheduler): implement split persistence for screening results
 
-- Return None on malformed Yahoo chart payloads, including missing timestamp, instead of raising
+Refactors the pipeline persistence layer to separate process metadata from domain data, addressing MongoDB 16MB document limit risks and enabling downstream analytics.
 
-- Clamp incremental fetch windows to last completed trading session
-
-- Anchor cache coverage calculations to previous trading day rather than calendar-yesterday
-
-- Fix pandas calendar schedule mocks to avoid empty DataFrame edge cases
-
-- Add regression test asserting cache_covers_request uses previous_trading_day as end_date anchor
+Changes:
+- Refactor `job_service.complete_job` to perform fan-out persistence:
+  - `screening_jobs` now stores lightweight ticker lists (audit log).
+  - `screening_results` now stores full `FinalCandidate` objects (analytics).
+- Update `tasks.py` to pass detailed candidate objects to the service layer.
+- Add `InsertOne` import to `job_service.py` to fix runtime NameError.
+- Update `db.py` to include `screening_results` collection and ensure indexes on `ticker`, `processed_at`, and `job_id`.
+- Add unit tests verifying the split write logic and error handling.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
