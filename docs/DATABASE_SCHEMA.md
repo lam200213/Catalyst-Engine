@@ -8,10 +8,10 @@ This document outlines the schema for each collection used in the MongoDB `stock
 - **Caching**: The `data-service` utilizes Redis for application-level caching of API responses (prices, financials, news). MongoDB is used for persistent storage only.
 
 ## 1. screening_jobs
-Stores the full lifecycle record for screening and maintenance jobs. This collection uses a "Split Persistence" pattern where high-level metrics are stored in `result_summary` for quick listing, while heavy datasets (survivor lists) are stored in `results`.
+Stores the full lifecycle record for screening and maintenance jobs. Uses a **Split Persistence** pattern: high-level metrics and lightweight lists are stored here, while detailed analysis data is offloaded.
 
 - **Primary Service**: `scheduler-service`
-- **Schema**: Maps to `ScreeningJobRunRecord` (application layer) but stores progress flatly.
+- **Schema**: Maps to `ScreeningJobRunRecord`.
 
 ```json
 {
@@ -22,41 +22,48 @@ Stores the full lifecycle record for screening and maintenance jobs. This collec
   "created_at": "ISODate",
   "started_at": "ISODate",
   "completed_at": "ISODate",
-  
+  "updated_at": "ISODate",  // Timestamp of the last progress update
+
   // Configuration
   "options": {
-    "mode": "string" // e.g., "full", "fast"
+    "mode": "string", // e.g., "full", "fast"
+    "use_vcp_freshness_check": "boolean"
   },
 
   // Error tracking
   "error_message": "string",
   "error_step": "string",
 
-  // Progress Tracking (Flattened)
-  "step_current": "integer",
-  "step_total": "integer",
-  "step_name": "string",
-  "message": "string",
-  "percent_complete": "float",
-  "updated_at": "ISODate",
+  // Progress Snapshot (Latest State)
+  "progress_snapshot": {
+    "job_id": "string",
+    "status": "string",
+    "step_current": "integer",
+    "step_total": "integer",
+    "step_name": "string",
+    "message": "string",
+    "updated_at": "ISODate"
+    // "percent_complete" : The frontend or API consumer is expected to calculate it using step_current / step_total.
+  },
 
+  // Log History (Capped at last 100 entries)
   "progress_log": [
     {
-      "step": "string",
-      "status": "string",
+      "step": "integer",      // e.g., 1
+      "step_name": "string",  // e.g., "fetch_tickers"
       "timestamp": "ISODate",
       "message": "string"
     }
   ],
 
-  // SPLIT PERSISTENCE: Heavy Data
+  // SPLIT PERSISTENCE: Lightweight Lists
   "results": {
     "trend_survivors": ["string"], 
     "vcp_survivors": ["string"],
     "final_candidates": ["string"]
   },
 
-  // SPLIT PERSISTENCE: Metrics & Summaries
+  // Metrics
   "result_summary": {
     "total_process_time": "float",
     "total_tickers_fetched": "integer",
@@ -71,34 +78,52 @@ Stores the full lifecycle record for screening and maintenance jobs. This collec
 ```
 
 ## 2. screening_results
-Stores the detailed information for each individual stock that passed all stages of a specific screening run.
+Stores the detailed information for each individual stock that passed all stages. Optimized for analytical queries (e.g., "History of NVDA").
 
 - **Primary Service**: `scheduler-service`
-- **Schema**: Based on the `FinalCandidate` Pydantic model.
+- **Schema**: Wraps the `FinalCandidate` model in a `data` field.
 
 ```json
 {
-  "job_id": "string", // Foreign key linking to the `screening_jobs` collection
-  "processed_at": "ISODate", // Timestamp when this specific result was stored
-  "ticker": "string",
-  "vcp_pass": "boolean",
-  "vcpFootprint": "string", // e.g., "10D 8.6% | 5D 5.3%"
-  "leadership_results": {
+  "_id": "ObjectId",
+  "job_id": "string",        // Indexed
+  "processed_at": "ISODate", // Indexed, Timestamp when this specific result was stored
+  "ticker": "string",        // Indexed
+
+  // Domain Data (Nested from Pydantic Model)
+  "data": {
     "ticker": "string",
-    "passes": "boolean",
-    "leadership_summary": {
-      "qualified_profiles": ["string"],
-      "message": "string"
-    },
-    "profile_details": {
-      "explosive_grower": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
-      "high_potential_setup": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
-      "market_favorite": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" }
-    },
-    "industry": "string"
+    "vcp_pass": "boolean",
+    "vcpFootprint": "string", // e.g., "10D 8.6% | 5D 5.3%"
+    
+    // Leadership Data is nested here
+    "leadership_results": {
+      "ticker": "string",
+      "passes": "boolean",
+      "industry": "string",
+      "leadership_summary": {
+        "qualified_profiles": ["string"],
+        "message": "string"
+      },
+      "profile_details": {
+        "explosive_grower": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
+        "high_potential_setup": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
+        "market_favorite": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" }
+      }
+    }
   }
 }
 ```
+
+### Indexes
+The following indexes are enforced to support the Split Persistence query patterns:
+
+1.  **`{"ticker": 1}`** (Background)
+    * *Intent:* Support "Show me the history of [Ticker]" queries.
+2.  **`{"processed_at": -1}`** (Background)
+    * *Intent:* Support "Show me all stocks that passed on [Date]" queries.
+3.  **`{"job_id": 1}`** (Background)
+    * *Intent:* Support retrieval of full details for a specific job run.
 
 ## 3. Stage Survivor Collections
 These collections are primarily for logging and debugging, storing only the tickers that passed each specific stage of the screening funnel for a given job.

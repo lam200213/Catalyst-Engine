@@ -4,19 +4,8 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2026-1-28
-feat(scheduler): implement split persistence for screening results
-
-Refactors the pipeline persistence layer to separate process metadata from domain data, addressing MongoDB 16MB document limit risks and enabling downstream analytics.
-
-Changes:
-- Refactor `job_service.complete_job` to perform fan-out persistence:
-  - `screening_jobs` now stores lightweight ticker lists (audit log).
-  - `screening_results` now stores full `FinalCandidate` objects (analytics).
-- Update `tasks.py` to pass detailed candidate objects to the service layer.
-- Add `InsertOne` import to `job_service.py` to fix runtime NameError.
-- Update `db.py` to include `screening_results` collection and ensure indexes on `ticker`, `processed_at`, and `job_id`.
-- Add unit tests verifying the split write logic and error handling.
+2026-1-29
+docs(scheduler): Update DATABASE_SCHEMA.md and API_REFERENCE.md to match implementation.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

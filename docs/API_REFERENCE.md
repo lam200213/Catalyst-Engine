@@ -699,6 +699,68 @@ These endpoints are intended for frontend consumption and are accessible via the
 - **Response Headers:** `X-Accel-Buffering: no`, `Cache-Control: no-cache`
 - **Data Contract:** Emits [`JobProgressEvent`](./DATA_CONTRACTS.md#32-async-job-models).
 
+### **GET `/jobs/screening/history`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Retrieves a paginated list of past screening jobs.
+- **Query Parameters**
+  - `limit` (optional, int): Number of records to return. Default: 20.
+  - `skip` (optional, int): Number of records to skip. Default: 0.
+
+- **Success Response**
+  - **Code**: 200 OK
+  - **Content**: Array of job summary objects.
+
+  ```json
+  [
+    {
+      "job_id": "a1b2c3d4-...",
+      "job_type": "SCREENING",
+      "status": "SUCCESS",
+      "created_at": "2023-11-12T10:00:00Z",
+      "completed_at": "2023-11-12T10:05:00Z",
+      "result_summary": {
+        "final_candidates_count": 12,
+        "total_process_time": 300.5
+      }
+    }
+  ]
+  ```
+
+### **GET `/jobs/screening/history/{job_id}`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Retrieves the full details of a specific screening job, including the lightweight results lists and full progress logs.
+- **Success Response**
+  - **Code**: 200 OK
+  - **Content**: Full `ScreeningJobRunRecord`.
+
+  ```json
+  {
+    "job_id": "a1b2c3d4-...",
+    "status": "SUCCESS",
+    "created_at": "2023-11-12T10:00:00Z",
+    "options": { "mode": "full" },
+    "progress_log": [
+      {
+        "step": 1,
+        "step_name": "fetch_tickers",
+        "timestamp": "2023-11-12T10:00:01Z",
+        "message": "Fetched 5000 tickers"
+      }
+    ],
+    "results": {
+      "trend_survivors": ["AAPL", "NVDA"],
+      "final_candidates": ["NVDA"]
+    },
+    "result_summary": {
+      "final_candidates_count": 1
+    }
+  }
+  ```
+
+- **Error Response**
+  - **Code**: 404 Not Found
+  - **Content**: `{ "error": "Job not found" }`
+
 ***
 
 # Internal-Only APIs (Service-to-Service)
