@@ -7,14 +7,18 @@
 ├── backend-services/
 │   ├── analysis-service/    # Python/Flask - Performs VCP analysis
 │   │   ├── tests/
-│   │   │   ├── test_integration.py
-│   │   │   └── test_unit.py
+│   │   │   ├── unit/
+│   │   │   │   ├── test_vcp_logic.py
+│   │   │   │   └── test_unit.py                
+│   │   │   └── integration/
+│   │   │       └── test_integration.py         # App routes & data-service interaction
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── api-gateway/         # Python/Flask - Routes requests to other services
 │   │   ├── tests/
-│   │   │   └── test_gateway.py
+│   │   │   └── integration/
+│   │   │       └── test_gateway.py             # Route forwarding & CORS
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
@@ -31,22 +35,33 @@
 │   │   │       └── financials_provider.py
 │   │   │       └── market_data__provider.py
 │   │   ├── tests/
-│   │   │   ├── __init__.py
-│   │   │   ├── test_app.py 
-│   │   │   ├── test_integration.py
-│   │   │   ├── test_finnhub_provider.py
-│   │   │   ├── test_marketaux_provider.py
-│   │   │   └── test_market_data_provider.py
+│   │   │   ├── conftest.py
+│   │   │   ├── test_fixture.py
+│   │   │   ├── unit/
+│   │   │   │   ├── test_yahoo_client.py    
+│   │   │   │   ├── test_price_provider.py 
+│   │   │   │   ├── test_financials_provider.py    
+│   │   │   │   ├── test_finnhub_provider.py    # Mocked API parsing
+│   │   │   │   ├── test_marketaux_provider.py  # Mocked API parsing
+│   │   │   │   └── test_market_data_provider.py
+│   │   │   └── integration/
+│   │   │       ├── test_app.py                 # Endpoint validation
+│   │   │       └── test_integration.py         # MongoDB/Redis caching logic
 │   │   ├── app.py
 │   │   ├── helper_functions.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── leadership-service/  # Python/Flask - Applies leadership criteria
 │   │   ├── tests/
-│   │   │   ├── test_integration.py
-│   │   │   ├── test_financial_health_checks.py
-│   │   │   ├── test_market_relative_checks.py
-│   │   │   └── test_industry_peer_checks.py
+│   │   │   ├── conftest.py
+│   │   │   ├── mock_data_helpers.py
+│   │   │   ├── unit/
+│   │   │   │   ├── test_helper_functions
+│   │   │   │   ├── test_financial_health_checks.py
+│   │   │   │   ├── test_market_relative_checks.py
+│   │   │   │   └── test_industry_peer_checks.py
+│   │   │   └── integration/
+│   │   │       └── test_integration.py         # End-to-end service profiling
 │   │   ├── app.py
 │   │   ├── checks/          # Business logic for each leadership check
 │   │   │   ├── financial_health_checks.py
@@ -83,51 +98,48 @@
 │   ├── monitoring-service/
 │   │   ├── tests/
 │   │   │   ├── conftest.py     
-│   │   │   ├── routes/
-│   │   │   │   ├── test_health.py
-│   │   │   │   ├── test_method_constraints.py
-│   │   │   │   ├── test_response_format.py
-│   │   │   │   ├── test_watchlist_get_basic.py
-│   │   │   │   ├── test_watchlist_get_exclusions.py
-│   │   │   │   ├── test_watchlist_get_exclusions_edges.py
-│   │   │   │   ├── test_watchlist_get_scaling.py
-│   │   │   │   ├── test_watchlist_put_basic.py
-│   │   │   │   ├── test_watchlist_put_format.py
-│   │   │   │   ├── test_watchlist_contract_validation.py
-│   │   │   │   ├── test_watchlist_security.py
-│   │   │   │   ├── test_orchestrator_endpoint.py
-│   │   │   │   └── test_error_handling.py
-│   │   │   ├── services/
-│   │   │   │   ├── test_update_orchestrator.py
-│   │   │   │   ├── test_watchlist_service_add.py
-│   │   │   │   ├── test_watchlist_service_add_edges.py
-│   │   │   │   ├── test_watchlist_service_get_core.py
-│   │   │   │   ├── test_watchlist_service_status_derivation.py
-│   │   │   │   ├── test_watchlist_status_service.py
-│   │   │   │   ├── test_watchlist_service_scaling.py
-│   │   │   │   └── test_watchlist_service_security.py
-│   │   │   ├── db/
-│   │   │   │   ├── test_mongo_connect.py
-│   │   │   │   ├── test_mongo_indexes.py
-│   │   │   │   ├── test_mongo_watchlist_crud.py
-│   │   │   │   ├── test_mongo_watchlist_security.py
-│   │   │   │   ├── test_mongo_watchlist_list.py
-│   │   │   │   ├── test_mongo_toggle_favourite.py
-│   │   │   │   ├── test_mongo_archive_crud.py
-│   │   │   │   ├── test_mongo_bulk_ops.py
-│   │   │   │   └── test_mongo_types_and_assertions.py
-│   │   │   ├── integration/
-│   │   │   │   ├── test_integration_market_health.py
-│   │   │   │   ├── test_integration_leaders.py
-│   │   │   │   ├── test_integration_watchlist_put_format.py
-│   │   │   │   └── test_mongo_client_integration.py
-│   │   │   ├── contracts/
-│   │   │   │   ├── test_api_contract_compliance.py
-│   │   │   │   ├── test_market_leaders_contract_validation.py
-│   │   │   │   └── test_watchlist_contract_validation.py
 │   │   │   ├── unit/
 │   │   │   │   ├── test_market_leaders_logic.py
-│   │   │   │   └── test_market_health_unit.py
+│   │   │   │   ├── test_market_health_unit.py
+│   │   │   │   └── test_watchlist_status_service.py # Pure status derivation
+│   │   │   ├── integration/
+│   │   │   │   ├── routes/
+│   │   │   │   │   ├── test_health.py
+│   │   │   │   │   ├── test_method_constraints.py
+│   │   │   │   │   ├── test_response_format.py
+│   │   │   │   │   ├── test_watchlist_get_basic.py
+│   │   │   │   │   ├── test_watchlist_get_exclusions.py
+│   │   │   │   │   ├── test_watchlist_get_exclusions_edges.py
+│   │   │   │   │   ├── test_watchlist_get_scaling.py
+│   │   │   │   │   ├── test_watchlist_put_basic.py
+│   │   │   │   │   ├── test_watchlist_put_format.py
+│   │   │   │   │   ├── test_watchlist_contract_validation.py
+│   │   │   │   │   ├── test_watchlist_security.py
+│   │   │   │   │   ├── test_orchestrator_endpoint.py
+│   │   │   │   │   └── test_error_handling.py
+│   │   │   │   ├── services/
+│   │   │   │   │   ├── test_update_orchestrator.py
+│   │   │   │   │   ├── test_watchlist_service_add.py
+│   │   │   │   │   ├── test_watchlist_service_add_edges.py
+│   │   │   │   │   ├── test_watchlist_service_get_core.py
+│   │   │   │   │   ├── test_watchlist_service_status_derivation.py
+│   │   │   │   │   ├── test_watchlist_service_scaling.py
+│   │   │   │   │   └── test_watchlist_service_security.py
+│   │   │   │   ├── db/
+│   │   │   │   │   ├── test_mongo_connect.py
+│   │   │   │   │   ├── test_mongo_indexes.py
+│   │   │   │   │   ├── test_mongo_watchlist_crud.py
+│   │   │   │   │   ├── test_mongo_watchlist_security.py
+│   │   │   │   │   ├── test_mongo_watchlist_list.py
+│   │   │   │   │   ├── test_mongo_toggle_favourite.py
+│   │   │   │   │   ├── test_mongo_archive_crud.py
+│   │   │   │   │   ├── test_mongo_bulk_ops.py
+│   │   │   │   │   └── test_mongo_types_and_assertions.py
+│   │   │   │   └── test_mongo_client_integration.py
+│   │   │   └── contracts/
+│   │   │       ├── test_api_contract_compliance.py
+│   │   │       ├── test_market_leaders_contract_validation.py
+│   │   │       └── test_watchlist_contract_validation.py
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── watchlist_service.py # Business logic for watchlist CRUD operations & contract mapping
@@ -147,13 +159,16 @@
 │   │   ├── requirements.txt
 │   ├── screening-service/   # Python/Flask - Applies the 8 SEPA screening criteria
 │   │   ├── tests/
-│   │   │   └── test_screening_logic.py
+│   │   │   └── unit/
+│   │   │       ├── test_app.py       
+│   │   │       └── test_screening_logic.py      # SEPA Criteria validation
 │   │   ├── app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
 │   ├── ticker-service/      # Python/Flask - Fetches all US stock tickers
 │   │   ├── tests/
-│   │   │   └── test_app.py
+│   │   │   └── integration/
+│   │   │       └── test_app.py                 # Ticker fetching/parsing
 │   │   ├──  app.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
@@ -162,10 +177,10 @@
 │       ├── contracts.py
 ├── frontend-app/            # React/Vite - User Interface
 │   ├── src/                 # See FRONTEND_ARCHITECTURE.md for detailed structure
-│   │   ├── components/      # 8 UI components + 7 tests
-│   │   ├── hooks/           # 5 custom hooks + 4 tests
-│   │   ├── pages/           # 4 page components
-│   │   ├── services/        # 5 API clients + 2 test files
+│   │   ├── components/      # UI components + tests
+│   │   ├── hooks/           # custom hooks + tests
+│   │   ├── pages/           # page components
+│   │   ├── services/        # API clients + test files
 │   │   └── types/           # TypeScript contract definitions
 │   ├── Dockerfile
 │   ├── Dockerfile.dev

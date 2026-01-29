@@ -5,7 +5,16 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-29
-feat(ci): Create ci.yml, modify requirements.txt to suit the ci needs, edit scripts for running local tests.
+refactor(testing): reorganize test suite into CI-optimized structure
+
+Reorganize test files into nested unit and integration directories across
+all backend services. This transition improves CI pipeline efficiency and 
+logical separation of test concerns.
+
+- Move unit and integration tests into dedicated subdirectories.
+- Extract shared test utilities to `tests/shared/` to resolve import conflicts.
+- Implement `conftest.py` in test roots for dynamic sys.path resolution.
+- Add `__init__.py` markers to establish proper Python package boundaries.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

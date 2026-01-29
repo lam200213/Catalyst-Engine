@@ -1,11 +1,11 @@
-# backend-services/analysis-service/tests/test_unit.py
+# backend-services/analysis-service/tests/unit/test_unit.py
 import unittest
 import os
 import sys
 from unittest.mock import patch
 
 # Add the parent directory to the sys.path to allow imports from the main app
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from app import (
     prepare_historical_data,

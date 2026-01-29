@@ -1,4 +1,4 @@
-# backend-services/analysis-service/tests/test_integration.py
+# backend-services/analysis-service/tests/integration/test_integration.py
 import unittest
 import numpy as np
 import requests
@@ -7,7 +7,7 @@ import sys
 import json
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from app import app
 
 # --- Test Data Helpers ---

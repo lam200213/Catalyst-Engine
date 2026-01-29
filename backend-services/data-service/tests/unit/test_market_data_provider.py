@@ -1,4 +1,4 @@
-# backend-services/data-service/tests/test_market_data_provider.py
+# backend-services/data-service/tests/unit/test_market_data_provider.py
 
 import unittest
 from unittest.mock import patch, MagicMock
@@ -10,12 +10,12 @@ import json
 
 # Reuse the same base test setup patterns as existing tests
 # to maintain consistency in mocking cache and db.
-from . import test_app
+from tests.shared import base_test_case
 
 # Tests for market sector/industry and day_gainers endpoints, and 1m return batch.
 # Also includes provider-level unit tests that mock raw inputs to validate parsing and thresholds.
 
-class TestSectorIndustryEndpoint(test_app.BaseDataServiceTest):
+class TestSectorIndustryEndpoint(base_test_case.BaseDataServiceTest):
     # Correct patch path
     @patch('app.YahooSectorIndustrySource')
     def test_sectors_industries_success_200(self, mock_source_cls):
@@ -79,7 +79,7 @@ class TestSectorIndustryEndpoint(test_app.BaseDataServiceTest):
         self.assertEqual(resp.json["error"], "Internal server error")
 
 
-class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
+class TestDayGainersEndpoint(base_test_case.BaseDataServiceTest):
     # Correct patch path
     @patch('app.DayGainersSource')
     def test_day_gainers_success_200(self, mock_source_cls):
@@ -132,7 +132,7 @@ class TestDayGainersEndpoint(test_app.BaseDataServiceTest):
         self.assertIn("error", resp.json)
         self.assertEqual(resp.json["error"], "Internal server error")
 
-class TestReturnBatchEndpoint(test_app.BaseDataServiceTest):
+class TestReturnBatchEndpoint(base_test_case.BaseDataServiceTest):
     # patch ReturnCalculator.percent_change at source
     @patch('providers.yfin.market_data_provider.ReturnCalculator.percent_change')
     def test_return_1m_batch_success_mix(self, mock_pc):
@@ -182,7 +182,7 @@ class TestReturnBatchEndpoint(test_app.BaseDataServiceTest):
         self.assertEqual(resp.status_code, 405)  # Method Not Allowed
 
 
-class TestReturnSingleRouteDiscrepancy(test_app.BaseDataServiceTest):
+class TestReturnSingleRouteDiscrepancy(base_test_case.BaseDataServiceTest):
     def test_single_return_route_misconfigured(self):
         """
         GET /data/return/1m/<ticker> is not registered in app.py.
@@ -198,7 +198,7 @@ class TestReturnSingleRouteDiscrepancy(test_app.BaseDataServiceTest):
 # - Threshold tests: history length < 2 returns None; length == 2 computes a float.
 
 
-class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
+class TestProviderParsingAndThresholds(base_test_case.BaseDataServiceTest):
     @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
     def test_day_gainers_parsing_raw_json_and_limit(self, mock_execute_request):
         """DayGainersSource: mock raw screener JSON and enforce per-industry limit."""
@@ -296,7 +296,7 @@ class TestProviderParsingAndThresholds(test_app.BaseDataServiceTest):
         result = calc.one_month_change("NVDA")
         self.assertIsNone(result)
 
-class TestProviderLogic(test_app.BaseDataServiceTest):
+class TestProviderLogic(base_test_case.BaseDataServiceTest):
     """Unit tests for provider-level business logic, independent of Flask routes."""
 
     @patch('providers.yfin.market_data_provider.yf.Industry')
@@ -378,7 +378,7 @@ class TestProviderLogic(test_app.BaseDataServiceTest):
         ]
         self.assertEqual(calc.one_month_change("TICK5"), 10.0)
 
-class TestNewHighsScreenerSource(test_app.BaseDataServiceTest):
+class TestNewHighsScreenerSource(base_test_case.BaseDataServiceTest):
 
     @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
     def test_new_highs_pagination_exits_on_empty_when_total_not_reached(self, mock_exec):
@@ -552,7 +552,7 @@ class TestNewHighsScreenerSourceBugDetection(unittest.TestCase):
         
         self.assertEqual(quotes, [])
 
-class TestMarketBreadthFetcher(test_app.BaseDataServiceTest):
+class TestMarketBreadthFetcher(base_test_case.BaseDataServiceTest):
     @patch('providers.yfin.market_data_provider.yahoo_client.execute_request')
     def test_breadth_ratio_edges(self, mock_exec):
         """
@@ -816,7 +816,7 @@ class TestMarketBreadthProviderFallbacks(TestMarketBreadthFetcher):
         # Fixed key names
         self.assertEqual(result1['new_highs'], 80)
         self.assertEqual(result1['new_lows'], 40)
-class TestNewHighsResultListShape(test_app.BaseDataServiceTest):
+class TestNewHighsResultListShape(base_test_case.BaseDataServiceTest):
     @patch("providers.yfin.market_data_provider.yahoo_client.execute_request")
     def test_52w_highs_result_is_list_and_paginates(self, mock_exec):
         """

@@ -1,4 +1,4 @@
-# backend-services/data-service/tests/test_finnhub_provider.py
+# backend-services/data-service/tests/unit/test_finnhub_provider.py
 
 import unittest
 from unittest.mock import patch, MagicMock

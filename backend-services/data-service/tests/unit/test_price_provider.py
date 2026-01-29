@@ -1,4 +1,4 @@
-# backend-services/data-service/tests/test_price_provider.py
+# backend-services/data-service/tests/unit/test_price_provider.py
 import unittest
 from unittest.mock import patch, MagicMock
 import datetime as dt
@@ -8,11 +8,8 @@ from curl_cffi.requests import errors as cffi_errors
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
-# Add the project root to the path to allow absolute imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from providers.yfin import price_provider
-from .test_fixtures import make_chart_payload
+from tests.shared.test_fixtures import make_chart_payload
 
 class TestYFinancePriceProvider(unittest.TestCase):
     """Tests for the yfinance price data provider."""

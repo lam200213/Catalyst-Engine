@@ -1,4 +1,4 @@
-# backend-services/analysis-service/tests/test_vcp_logic.py
+# backend-services/analysis-service/tests/unit/test_vcp_logic.py
 import unittest
 import numpy as np
 from unittest.mock import patch
@@ -8,7 +8,7 @@ from vcp_logic import check_pivot_freshness, PIVOT_FRESHNESS_DAYS, PIVOT_BREAKOU
 # This will be resolved by the execution environment (e.g., pytest)
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 # Import the functions to be tested from the new vcp_logic module
 from vcp_logic import (

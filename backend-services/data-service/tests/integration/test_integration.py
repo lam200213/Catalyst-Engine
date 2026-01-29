@@ -1,4 +1,4 @@
-# backend-services/data-service/tests/test_integration.py
+# backend-services/data-service/tests/integration/test_integration.py
 # Integration test for GET /market/breadth with failure handling and caching
 import unittest
 from unittest.mock import patch, MagicMock, ANY
@@ -17,7 +17,7 @@ import json
 
 # Reuse the same base test setup patterns as existing tests
 # to maintain consistency in mocking cache and db.
-from . import test_app
+from tests.shared import base_test_case
 
 class BaseIntegrationTest(unittest.TestCase):
     """Base class for integration tests with Flask app context."""
@@ -41,7 +41,7 @@ class BaseIntegrationTest(unittest.TestCase):
 # =====================================================================
 # ==                      PRICE DATA ENDPOINTS                       ==
 # =====================================================================
-class TestPriceEndpoints(test_app.BaseDataServiceTest):
+class TestPriceEndpoints(base_test_case.BaseDataServiceTest):
     @patch('app.yf_price_provider.get_stock_data')
     def test_get_price_output_conforms_to_contract(self, mock_get_stock_data):
         """GET /price/<ticker>: Tests that the endpoint's JSON output strictly conforms to the PriceDataItem contract."""
@@ -269,7 +269,7 @@ class TestPriceEndpoints(test_app.BaseDataServiceTest):
 # ==                  INDUSTRY & PEERS ENDPOINTS                     ==
 # =====================================================================
 
-class TestIndustryPeersEndpoint(test_app.BaseDataServiceTest):
+class TestIndustryPeersEndpoint(base_test_case.BaseDataServiceTest):
 
     @patch('app.finnhub_provider.get_company_peers_and_industry')
     def test_industry_peers_endpoint_with_real_cache(self, mock_get_peers):
@@ -352,7 +352,7 @@ class TestIndustryPeersEndpoint(test_app.BaseDataServiceTest):
 # =====================================================================
 # ==                  MARKET TREND ENDPOINTS (DB)                    ==
 # =====================================================================
-class TestMarketTrendEndpoints(test_app.BaseDataServiceTest):
+class TestMarketTrendEndpoints(base_test_case.BaseDataServiceTest):
 
     def _generate_mock_price_data(self, base_date_str, num_days, trend='up'):
         base_date = date.fromisoformat(base_date_str)
@@ -449,7 +449,7 @@ class TestMarketTrendEndpoints(test_app.BaseDataServiceTest):
 # =====================================================================
 
 # Route-level integration test for caching behavior
-class TestMarketBreadthRouteCaching(test_app.BaseDataServiceTest):
+class TestMarketBreadthRouteCaching(base_test_case.BaseDataServiceTest):
     """
     Route-level integration tests specifically for caching behavior of /market/breadth.
     
@@ -799,7 +799,7 @@ class TestMarketBreadthIntegration(BaseIntegrationTest):
 # ==                        NEWS ENDPOINTS                           ==
 # =====================================================================
 
-class TestNewsEndpoint(test_app.BaseDataServiceTest):
+class TestNewsEndpoint(base_test_case.BaseDataServiceTest):
     
     @patch('app.get_news_cached')
     def test_get_news_success_cache_miss(self, mock_get_news):
