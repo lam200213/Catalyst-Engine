@@ -2,6 +2,8 @@ Flask
 pandas
 requests
 pytest
+pytest-mock
+pytest-asyncio
 pydantic
 pymongo
 PyMongo[srv]

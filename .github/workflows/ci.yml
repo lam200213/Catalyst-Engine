@@ -1,0 +1,121 @@
+name: SEPA CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  # ------------------------------------------------------------------
+  # JOB 1: FRONTEND INTEGRITY
+  # Enforces FRONTEND_TESTING_STANDARD.md
+  # ------------------------------------------------------------------
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend-app/package.json
+
+      - name: Install Dependencies
+        working-directory: ./frontend-app
+        run: npm ci
+
+      - name: Run Vitest
+        working-directory: ./frontend-app
+        # Assumes "test": "vitest run" is in package.json
+        run: npm test
+
+  # ------------------------------------------------------------------
+  # JOB 2: BACKEND UNIT & CONTRACTS (Matrix Strategy)
+  # Runs pytest in isolation for every service found in the matrix.
+  # Fails fast if a specific service breaks logic or contracts.
+  # ------------------------------------------------------------------
+  backend-unit-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: 
+          - analysis-service
+          - data-service
+          - leadership-service
+          - monitoring-service
+          - ranking-service
+          - scheduler-service
+          - screening-service
+          - ticker-service
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        working-directory: ./backend-services/${{ matrix.service }}
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # Install test dependencies (pytest, pytest-mock) if not in requirements
+          pip install pytest pytest-mock pytest-asyncio
+
+      - name: Run Tests
+        working-directory: ./backend-services/${{ matrix.service }}
+        # Only run pytest if a tests folder exists. 
+        # This prevents failure for services that haven't implemented tests yet.
+        run: |
+          if [ -d "tests" ]; then
+            echo "Running tests for ${{ matrix.service }}..."
+            export PYTHONPATH=$PYTHONPATH:.
+            pytest tests
+          else
+            echo "No tests found for ${{ matrix.service }} - Skipping."
+          fi
+
+  # ------------------------------------------------------------------
+  # JOB 3: FULL SYSTEM E2E (Docker Compose)
+  # Boots the entire stack and runs the Scheduler E2E test.
+  # ------------------------------------------------------------------
+  system-e2e-test:
+    needs: [backend-unit-test, frontend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Setup Docker environment
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 2. Create minimal .env file from example for the build to succeed
+      - name: Create .env
+        run: |
+          cp .env.example .env
+          # In a real scenario, you would inject secrets here via ${{ secrets.MONGO_URI }}, etc.
+
+      # 3. Boot the stack using the specific Production pattern requested
+      - name: Boot System
+        run: |
+          docker-compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+
+      # 4. Wait for Health (Simple Sleep + Check Strategy)
+      # We wait for the scheduler-service API to be ready
+      - name: Wait for Services
+        run: |
+          echo "Waiting for services to stabilize..."
+          sleep 30  # Give Mongo/Redis time to initialize
+          docker ps -a
+
+      # 5. Run E2E Test via Scheduler Container
+      # This executes the Week 10 E2E pipeline test INSIDE the container network
+      - name: Run Scheduler E2E Pipeline
+        run: |
+          docker-compose -f docker-compose.yml -f docker-compose.prod.yml exec -T scheduler-service pytest tests/e2e/test_screening_pipeline.py

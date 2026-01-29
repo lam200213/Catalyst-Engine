@@ -5,7 +5,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-29
-docs(scheduler): Update DATABASE_SCHEMA.md and API_REFERENCE.md to match implementation.
+feat(ci): Create ci.yml, modify requirements.txt to suit the ci needs, edit scripts for running local tests.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -113,11 +113,11 @@ Follow these steps to set up and run the application locally:
    cp docker-compose.prod.yml docker-compose.override.yml
 
    # Later on: Simply run this command for all future builds
-   docker compose up --build -d
+   docker-compose up --build -d
 
    # Method 2: Explicit File Selection
    # Use this if you prefer not to create an override file
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
    ```
 
    - **Development Mode (Default)**:
@@ -128,11 +128,11 @@ Follow these steps to set up and run the application locally:
    cp docker-compose.dev.yml docker-compose.override.yml
 
    # Later on: Simply run this command for all future builds
-   docker compose up --build -d
+   docker-compose up --build -d
 
    # Method 2: Explicit File Selection
    # Use this if you prefer not to create an override file
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
    ```
    This command builds Docker images for each service and starts all containers.
 
@@ -144,16 +144,16 @@ Follow these steps to set up and run the application locally:
    To shut down the containers safely, use the command corresponding to your startup method:
    - **Method 1: Automatic Override**: 
    ```bash
-   docker compose down
+   docker-compose down
    ```
    - **Method 2: Explicit File Selection**: 
    If running in Development:
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+   docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
    ```
    If running in Production:
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+   docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
    ```
 ## Learn More
 - [🔗 Detailed Architecture & Tech Stack](./docs/ARCHITECTURE.md)

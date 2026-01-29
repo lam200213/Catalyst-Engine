@@ -71,17 +71,17 @@ For a comprehensive health check of all services' business logic, you can run th
 **Command**:
 Run the following command to give the script execution permissions for the first time.
    ```Bash  
-   chmod +x scripts/run_all_tests.sh
+   chmod +x scripts/run_backend_tests.sh
    ```
 
 Run all pytest suites with one command
    ```Bash  
-   ./scripts/run_all_tests.sh
+   ./scripts/run_backend_tests.sh
    ```
 
 Run all pytest suites in fail-fast mode
    ```Bash  
-   ./scripts/run_all_tests.sh --fail-fast
+   ./scripts/run_backend_tests.sh --fail-fast
    ```
 
 ### **2.  Checking Inter-Service Network Connectivity**

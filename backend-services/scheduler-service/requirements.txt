@@ -3,6 +3,7 @@ requests
 pymongo
 pytest
 pytest-mock
+pytest-asyncio
 shortuuid
 pydantic
 celery
