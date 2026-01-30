@@ -8,61 +8,122 @@ This document outlines the schema for each collection used in the MongoDB `stock
 - **Caching**: The `data-service` utilizes Redis for application-level caching of API responses (prices, financials, news). MongoDB is used for persistent storage only.
 
 ## 1. screening_jobs
-
-Stores a summary document for each completed screening pipeline run, providing a high-level overview of the job's outcome.
+Stores the full lifecycle record for screening and maintenance jobs. Uses a **Split Persistence** pattern: high-level metrics and lightweight lists are stored here, while detailed analysis data is offloaded.
 
 - **Primary Service**: `scheduler-service`
-- **Schema**: Based on the `ScreeningJobResult` Pydantic model.
+- **Schema**: Maps to `ScreeningJobRunRecord`.
 
 ```json
 {
-  "job_id": "string", // Unique identifier for the job (e.g., "20251015-123000-ABC123DE")
-  "processed_at": "ISODate", // Timestamp when the job was completed
-  "total_process_time": "float", // Total execution time in seconds
-  "total_tickers_fetched": "integer", // Total tickers from ticker-service
-  "trend_screen_survivors_count": "integer",
-  "vcp_survivors_count": "integer",
-  "final_candidates_count": "integer",
-  "industry_diversity": {
-    "unique_industries_count": "integer"
+  "_id": "ObjectId",
+  "job_id": "string",       // Unique identifier (UUID)
+  "job_type": "string",     // Enum: "SCREENING", "WATCHLIST_REFRESH"
+  "status": "string",       // Enum: "PENDING", "RUNNING", "SUCCESS", "FAILED"
+  "created_at": "ISODate",
+  "started_at": "ISODate",
+  "completed_at": "ISODate",
+  "updated_at": "ISODate",  // Timestamp of the last progress update
+
+  // Configuration
+  "options": {
+    "mode": "string", // e.g., "full", "fast"
+    "use_vcp_freshness_check": "boolean"
   },
-  "final_candidates": [
-    // This array is stored in the document but is often large.
-    // Individual candidates are also stored in the `screening_results` collection for easier querying.
-    // See the schema for 'screening_results' for the structure of each item.
-  ]
+
+  // Error tracking
+  "error_message": "string",
+  "error_step": "string",
+
+  // Progress Snapshot (Latest State)
+  "progress_snapshot": {
+    "job_id": "string",
+    "status": "string",
+    "step_current": "integer",
+    "step_total": "integer",
+    "step_name": "string",
+    "message": "string",
+    "updated_at": "ISODate"
+    // "percent_complete" : The frontend or API consumer is expected to calculate it using step_current / step_total.
+  },
+
+  // Log History (Capped at last 100 entries)
+  "progress_log": [
+    {
+      "step": "integer",      // e.g., 1
+      "step_name": "string",  // e.g., "fetch_tickers"
+      "timestamp": "ISODate",
+      "message": "string"
+    }
+  ],
+
+  // SPLIT PERSISTENCE: Lightweight Lists
+  "results": {
+    "trend_survivors": ["string"], 
+    "vcp_survivors": ["string"],
+    "final_candidates": ["string"]
+  },
+
+  // Metrics
+  "result_summary": {
+    "total_process_time": "float",
+    "total_tickers_fetched": "integer",
+    "trend_screen_survivors_count": "integer",
+    "vcp_survivors_count": "integer",
+    "final_candidates_count": "integer",
+    "industry_diversity": {
+      "unique_industries_count": "integer"
+    }
+  }
 }
 ```
 
 ## 2. screening_results
-Stores the detailed information for each individual stock that passed all stages of a specific screening run.
+Stores the detailed information for each individual stock that passed all stages. Optimized for analytical queries (e.g., "History of NVDA").
 
 - **Primary Service**: `scheduler-service`
-- **Schema**: Based on the `FinalCandidate` Pydantic model.
+- **Schema**: Wraps the `FinalCandidate` model in a `data` field.
 
 ```json
 {
-  "job_id": "string", // Foreign key linking to the `screening_jobs` collection
-  "processed_at": "ISODate", // Timestamp when this specific result was stored
-  "ticker": "string",
-  "vcp_pass": "boolean",
-  "vcpFootprint": "string", // e.g., "10D 8.6% | 5D 5.3%"
-  "leadership_results": {
+  "_id": "ObjectId",
+  "job_id": "string",        // Indexed
+  "processed_at": "ISODate", // Indexed, Timestamp when this specific result was stored
+  "ticker": "string",        // Indexed
+
+  // Domain Data (Nested from Pydantic Model)
+  "data": {
     "ticker": "string",
-    "passes": "boolean",
-    "leadership_summary": {
-      "qualified_profiles": ["string"],
-      "message": "string"
-    },
-    "profile_details": {
-      "explosive_grower": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
-      "high_potential_setup": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
-      "market_favorite": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" }
-    },
-    "industry": "string"
+    "vcp_pass": "boolean",
+    "vcpFootprint": "string", // e.g., "10D 8.6% | 5D 5.3%"
+    
+    // Leadership Data is nested here
+    "leadership_results": {
+      "ticker": "string",
+      "passes": "boolean",
+      "industry": "string",
+      "leadership_summary": {
+        "qualified_profiles": ["string"],
+        "message": "string"
+      },
+      "profile_details": {
+        "explosive_grower": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
+        "high_potential_setup": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" },
+        "market_favorite": { "pass": "boolean", "passed_checks": "integer", "total_checks": "integer" }
+      }
+    }
   }
 }
 ```
+
+### Indexes
+The following indexes are enforced to support the Split Persistence query patterns:
+
+1.  **`{"ticker": 1}`** (Background)
+    * *Intent:* Support "Show me the history of [Ticker]" queries.
+2.  **`{"processed_at": -1}`** (Background)
+    * *Intent:* Support "Show me all stocks that passed on [Date]" queries.
+3.  **`{"job_id": 1}`** (Background)
+    * *Intent:* Support retrieval of full details for a specific job run.
 
 ## 3. Stage Survivor Collections
 These collections are primarily for logging and debugging, storing only the tickers that passed each specific stage of the screening funnel for a given job.
@@ -115,7 +176,7 @@ Stores the calculated market trend context for specific dates, preventing recalc
     "^DJI": "string",  // Trend for Dow Jones
     "^IXIC": "string"  // Trend for NASDAQ
   },
-  "createdAt": "ISODate"
+  "created_at": "ISODate"
 }
 ```
 
@@ -139,12 +200,12 @@ Stores the stock positions for the user's portfolio. In the current phase, it op
 }
 ```
 
-## 7. watchlist_items
+## 7. watchlistitems
 
 Stores the user's active watchlist. Tickers in this collection are actively monitored and periodically re-validated by scheduled health checks.
 
 - **Primary Service**: `monitoring-service`
-- **Collection Name**: `watchlist_items`
+- **Collection Name**: `watchlistitems`
 - **Indexes**: 
   - Unique compound index on `(user_id, ticker)` to prevent duplicates per user.
   - Index on `user_id` for efficient user-scoped queries.

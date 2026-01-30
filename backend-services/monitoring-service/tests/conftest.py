@@ -10,11 +10,47 @@ from typing import Tuple, Dict, Any, List
 from unittest.mock import MagicMock
 from urllib.parse import quote
 from datetime import datetime, timedelta
-
 import pytest
 
-# Ensure local imports resolve when running from repo root
+# This adds the service root (one level up from tests/) to the path globally for all tests
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Dynamically find the service root (the folder containing 'tests/')
+# This works whether the test is in tests/, tests/unit/, or tests/integration/
+service_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if service_root not in sys.path:
+    sys.path.insert(0, service_root)
+
+# Also add the shared directory for contracts.py access
+shared_path = os.path.abspath(os.path.join(service_root, '..', 'shared'))
+if shared_path not in sys.path:
+    sys.path.insert(0, shared_path)
+
+# --- Environment Configuration ---
+def pytest_configure(config):
+    """Register custom markers to avoid warnings."""
+    config.addinivalue_line("markers", "unit: Unit tests (fast, isolated, no containers).")
+    config.addinivalue_line(
+        "markers",
+        "integration: Integration tests (service integration; may use DB/network mocks).",
+    )
+    config.addinivalue_line(
+        "markers",
+        "contracts: Contracts tests (verify the shape of the data).",
+    )
+
+def pytest_collection_modifyitems(config, items):
+    # auto-tag tests by folder so `-m unit|integration|e2e|contracts` works consistently
+    for item in items:
+        path = str(item.fspath)
+        if f"{os.sep}e2e{os.sep}" in path:
+            item.add_marker(pytest.mark.e2e)
+        elif f"{os.sep}integration{os.sep}" in path:
+            item.add_marker(pytest.mark.integration)
+        elif f"{os.sep}contracts{os.sep}" in path:
+            item.add_marker(pytest.mark.contracts)
+        elif (f"{os.sep}unit{os.sep}" in path) or (f"{os.sep}unittest{os.sep}" in path):
+            item.add_marker(pytest.mark.unit)
 
 # -------------------------------------------------------------------
 # Constants shared across tests
@@ -450,12 +486,8 @@ def make_archive_doc(test_constants):
 # Utility fixture exposing DEFAULT_USER_ID directly
 @pytest.fixture(scope="session")
 def default_user_id(test_constants):
-    return test_constants["DEFAULT_USER_ID"]
-
-@pytest.fixture
-def default_user_id():
     """Default single-user mode user id used across archive tests"""
-    return "single_user_mode"
+    return test_constants["DEFAULT_USER_ID"]
 
 @pytest.fixture(scope="session")
 def make_large_ticker_list():
@@ -463,3 +495,25 @@ def make_large_ticker_list():
     def _factory(n: int = 500) -> List[str]:
         return [f"T{i:04d}" for i in range(n)]
     return _factory
+
+@pytest.fixture(autouse=True)
+def stub_downstream_clients_for_unit_tests(request, monkeypatch):
+    # Only apply to unit tests (your conftest already auto-marks by folder)
+    if request.node.get_closest_marker("unit") is None:
+        return
+
+    from services import downstream_clients as dc
+
+    # Make the funnel deterministic and network-free
+    monkeypatch.setattr(dc, "screen_batch", lambda tickers: {"passed": list(tickers)})
+    monkeypatch.setattr(
+        dc,
+        "analyze_batch",
+        lambda tickers, mode="fast": [{"ticker": t, "vcp_pass": True} for t in tickers],
+    )
+    monkeypatch.setattr(
+        dc,
+        "analyze_freshness_batch",
+        lambda tickers: [{"ticker": t, "passes_freshness_check": True} for t in tickers],
+    )
+    monkeypatch.setattr(dc, "watchlist_metrics_batch", lambda tickers: {t: {} for t in tickers})

@@ -7,9 +7,9 @@ These models ensure data consistency, provide automatic validation, and act as
 living documentation for the data structures exchanged between microservices.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TypeAlias, Literal, Annotated
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, StrictBool, StrictInt, field_serializer
 from enum import Enum
 
 # --- Enums: Watchlist/Archive/Freshness ---
@@ -63,6 +63,22 @@ class WatchlistStatus(str, Enum):
     WATCH = "Watch"
     BUY_ALERT = "Buy Alert"
     BUY_READY = "Buy Ready"
+
+class JobStatus(str, Enum):
+    """
+    Lifecycle status for asynchronous jobs.
+    """
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+
+class JobType(str, Enum):
+    """
+    Types of background jobs orchestrated by the scheduler.
+    """
+    SCREENING = "SCREENING"
+    WATCHLIST_REFRESH = "WATCHLIST_REFRESH"
 # --- Contract 1: TickerList ---
 TickerList: TypeAlias = List[str]
 """A simple list of stock ticker symbols (e.g., ["AAPL", "MSFT"])."""
@@ -352,11 +368,6 @@ ScreenerQuoteList: TypeAlias = List[ScreenerQuote]
 
 # --- Contract 14: Requests: Watchlist/Archive ---
 
-class FavouriteToggleRequest(BaseModel):
-    ticker: str
-    is_favourite: bool = Field(..., alias="is_favourite")
-    model_config = ConfigDict(populate_by_name=True)
-
 class BatchRemoveRequest(BaseModel):
     tickers: List[str]
 
@@ -371,108 +382,6 @@ class WatchlistBatchRemoveRequest(BatchRemoveRequest):
 class InternalBatchAddRequest(BaseModel):
     tickers: List[str]
 
-class InternalBatchUpdateStatusItem(BaseModel):
-    """
-    [DEPRECATED] Part of the legacy granular update flow.
-    """    
-    ticker: str
-    status: LastRefreshStatus
-    failed_stage: Optional[str] = None
-    # VCP and pivot fields for Buy Ready / Buy Alert logic
-    current_price: Optional[float] = None
-    pivot_price: Optional[float] = None
-    pivot_proximity_percent: Optional[float] = None
-    
-    # VCP freshness and pattern health
-    vcp_pass: Optional[bool] = None
-    is_pivot_good: Optional[bool] = None
-    pattern_age_days: Optional[int] = None
-    
-    # Pivot and pullback setup flags
-    has_pivot: Optional[bool] = None
-    is_at_pivot: Optional[bool] = None
-    has_pullback_setup: Optional[bool] = None
-    
-    # Volume behaviour for accumulation/distribution detection
-    vol_last: Optional[int] = None
-    vol_50d_avg: Optional[int] = None
-    vol_vs_50d_ratio: Optional[float] = None
-    day_change_pct: Optional[float] = None
-    
-    # Leadership flag
-    is_leader: Optional[bool] = None
-
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "example": {
-                "ticker": "NVDA",
-                "status": "PASS",
-                "failed_stage": None,
-                "current_price": 850.0,
-                "pivot_price": 855.0,
-                "pivot_proximity_percent": -0.58,
-                "vcp_pass": True,
-                "is_pivot_good": True,
-                "pattern_age_days": 15,
-                "has_pivot": True,
-                "is_at_pivot": True,
-                "has_pullback_setup": False,
-                "vol_last": 12000000,
-                "vol_50d_avg": 10000000,
-                "vol_vs_50d_ratio": 1.2,
-                "day_change_pct": 2.5,
-                "is_leader": True
-            }
-        }
-    )
-class InternalBatchUpdateStatusRequest(BaseModel):
-    """
-    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
-    Legacy request model for batch updating watchlist status.
-    """    
-    items: List[InternalBatchUpdateStatusItem]
-
-class InternalBatchUpdateStatusResponse(BaseModel):
-    """
-    [DEPRECATED] Legacy response model.
-    """
-    message: str = Field(
-        ...,
-        description="Summary message including updated count and sample tickers",
-    )
-    updated: StrictInt = Field(
-        ...,
-        description="Number of watchlist items whose status was updated",
-    )
-    tickers: List[str] = Field(
-        ...,
-        description="List of tickers included in this batch (normalized, unique)",
-    )
-
-    model_config = ConfigDict(
-        extra="forbid",
-        json_schema_extra={
-            "example": {
-                "message": "Batch status update completed for 3 watchlist items. Sample: AAPL, MSFT",
-                "updated": 3,
-                "tickers": ["AAPL", "MSFT", "CRM"],
-            }
-        },
-    )
-
-class InternalBatchArchiveFailedItem(BaseModel):
-    """
-    [DEPRECATED] Use WatchlistRefreshStatusResponse with /monitor/internal/watchlist/refresh-status instead.
-    Legacy request model for batch archiving failed items.
-    """
-    ticker: str
-    failed_stage: str
-
-class InternalBatchArchiveFailedRequest(BaseModel):
-    items: List[InternalBatchArchiveFailedItem]
-
-# --- Contract 15: Responses: Watchlist/Archive ---
 class WatchlistItem(BaseModel):
     """
     Represents a single watchlist item in GET /monitor/watchlist response
@@ -802,3 +711,131 @@ class WatchlistMetricsBatchResponse(BaseModel):
     Mapping of ticker -> metrics.
     """
     metrics: Dict[str, WatchlistMetricsItem]
+
+# --- Contract 22: Async Job Models (Week 10) ---
+
+class JobProgressEvent(BaseModel):
+    """
+    Canonical SSE event payload for job progress streaming.
+    Strictly adheres to snake_case and ISO 8601 UTC ('Z') formatting.
+    """
+    job_id: str
+    job_type: str  # String to allow flexibility, typically matches JobType enum
+    status: str    # String, typically matches JobStatus enum
+    step_current: int
+    step_total: int
+    step_name: str
+    message: str
+    updated_at: datetime
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        json_schema_extra={
+            "example": {
+                "job_id": "job-123-uuid",
+                "job_type": "SCREENING",
+                "status": "RUNNING",
+                "step_current": 2,
+                "step_total": 5,
+                "step_name": "vcp_analysis",
+                "message": "Processed 50/100 tickers",
+                "updated_at": "2026-01-18T12:00:00Z"
+            }
+        }
+    )
+
+    @field_serializer('updated_at')
+    def serialize_dt(self, dt: datetime, _info):
+        """
+        Enforce 'Z' suffix for UTC datetimes instead of +00:00.
+        Essential for strict SSE client compatibility.
+        """
+        if dt.tzinfo is None:
+            # Assume UTC if naive, though tests should provide aware datetimes
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+class ScreeningJobRunRecord(BaseModel):
+    """
+    Persistence model for the lifecycle of a screening or maintenance job.
+    Stored in the 'screening_jobs' MongoDB collection.
+    
+    Supports 'Split Persistence':
+    - Lifecycle fields (status, timestamps) are top-level.
+    - Result metrics are nested in 'result_summary'.
+    - Large survivor lists are nested in 'results'.
+    """
+    job_id: str
+    job_type: str = "SCREENING"
+    status: str = "PENDING"
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    
+    # Configuration inputs
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    
+    # Error tracking
+    error_message: Optional[str] = None
+    error_step: Optional[str] = None
+    
+    # Progress snapshot (subset of JobProgressEvent for quick DB lookups)
+    progress_snapshot: Optional[Dict[str, Any]] = None
+    progress_log: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+
+    # Week 10: Nested Results (Split Persistence)
+    # detailed survivor lists
+    results: Optional[Dict[str, List[str]]] = None
+    # ScreeningJobResult dump (metrics)
+    result_summary: Optional[Dict[str, Any]] = None
+
+    # Legacy / Compatibility fields (Top-level metrics duplication)
+    # These may be populated for backward compatibility with existing dashboards
+    total_tickers_fetched: Optional[int] = None
+    trend_screen_survivors_count: Optional[int] = None
+    vcp_survivors_count: Optional[int] = None
+    final_candidates_count: Optional[int] = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="ignore" # Allow schema evolution without breaking readers
+    )
+
+class JobCompleteEvent(BaseModel):
+    """
+    SSE event payload emitted when a job finishes successfully.
+    """
+    job_id: str
+    job_type: str
+    status: Literal["SUCCESS"] = "SUCCESS"
+    completed_at: datetime
+    summary_counts: Optional[Dict[str, int]] = None
+
+    @field_serializer('completed_at')
+    def serialize_dt(self, dt: datetime, _info):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+class JobErrorEvent(BaseModel):
+    """
+    SSE event payload emitted when a job fails.
+    """
+    job_id: str
+    job_type: str
+    status: Literal["FAILED"] = "FAILED"
+    error_message: str
+    completed_at: datetime
+
+    @field_serializer('completed_at')
+    def serialize_dt(self, dt: datetime, _info):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')

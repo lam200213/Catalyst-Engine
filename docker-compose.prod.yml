@@ -20,6 +20,9 @@ services:
   scheduler-worker:
     restart: unless-stopped
 
+  scheduler-beat: 
+    restart: unless-stopped
+
   leadership-service:
     restart: unless-stopped
 

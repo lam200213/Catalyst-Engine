@@ -90,3 +90,5 @@ yfin-temp.py
 # Task files
 # tasks.json
 # tasks/ 
+
+backend-services/scheduler-service/celerybeat-schedule

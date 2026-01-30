@@ -2,9 +2,13 @@ Flask
 requests
 pymongo
 pytest
+pytest-mock
+pytest-asyncio
 shortuuid
-apscheduler
 pydantic
 celery
 redis
-sse-starlette
+watchdog
+# WSGI server + cooperative concurrency for SSE streaming in Docker
+gunicorn
+gevent

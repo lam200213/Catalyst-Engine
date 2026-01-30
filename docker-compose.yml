@@ -18,6 +18,13 @@ services:
       - redis-data:/data
     networks:
       - app-network
+    # healthcheck so Celery + services can reliably depend_on "healthy"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   data-service:
     build:
@@ -90,6 +97,11 @@ services:
     environment:
       MONGO_URI: ${MONGO_URI}
       CACHE_REDIS_URL: ${CACHE_REDIS_URL}
+      # Celery config (mirror CACHE_REDIS_URL via .env)
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      # runtime mode for Dockerfile CMD switch
+      SCHEDULER_MODE: api
       PORT: 3004
       TICKER_SERVICE_URL: http://ticker-service:5001
       SCREENING_SERVICE_URL: http://screening-service:3002
@@ -97,12 +109,18 @@ services:
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
       LOG_LEVEL: INFO
     depends_on:
-      - mongodb
-      - redis
-      - ticker-service
-      - screening-service
-      - analysis-service
-      - leadership-service
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      ticker-service:
+        condition: service_started
+      screening-service:
+        condition: service_started
+      analysis-service:
+        condition: service_started
+      leadership-service:
+        condition: service_started
     networks:
       - app-network
 
@@ -111,18 +129,51 @@ services:
       context: ./backend-services
       dockerfile: scheduler-service/Dockerfile
     container_name: scheduler-worker
-    command: celery -A app.celery worker --loglevel=info
     environment:
       MONGO_URI: ${MONGO_URI}
       CACHE_REDIS_URL: ${CACHE_REDIS_URL}
+      # Celery config (mirror CACHE_REDIS_URL via .env)
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      # runtime mode for Dockerfile CMD switch
+      SCHEDULER_MODE: worker
       PORT: 3004
       TICKER_SERVICE_URL: http://ticker-service:5001
       SCREENING_SERVICE_URL: http://screening-service:3002
       ANALYSIS_SERVICE_URL: http://analysis-service:3003
       LEADERSHIP_SERVICE_URL: http://leadership-service:3005
     depends_on:
-      - scheduler-service
-      - redis
+      scheduler-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+    networks:
+      - app-network
+
+  # Celery Beat container (unified scheduling)
+  scheduler-beat:
+    build:
+      context: ./backend-services
+      dockerfile: scheduler-service/Dockerfile
+    container_name: scheduler-beat
+    environment:
+      MONGO_URI: ${MONGO_URI}
+      CACHE_REDIS_URL: ${CACHE_REDIS_URL}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      SCHEDULER_MODE: beat
+      PORT: 3004
+      TICKER_SERVICE_URL: http://ticker-service:5001
+      SCREENING_SERVICE_URL: http://screening-service:3002
+      ANALYSIS_SERVICE_URL: http://analysis-service:3003
+      LEADERSHIP_SERVICE_URL: http://leadership-service:3005
+      LOG_LEVEL: INFO
+    depends_on:
+      scheduler-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - app-network
 
@@ -199,14 +250,22 @@ services:
       TICKER_SERVICE_URL: http://ticker-service:5001
       LOG_LEVEL: INFO
     depends_on:
-      - data-service
-      - screening-service
-      - analysis-service
-      - leadership-service
-      - scheduler-service
-      - ticker-service
-      - monitoring-service
-      - redis
+      data-service:
+        condition: service_started
+      screening-service:
+        condition: service_started
+      analysis-service:
+        condition: service_started
+      leadership-service:
+        condition: service_started
+      scheduler-service:
+        condition: service_started
+      ticker-service:
+        condition: service_started
+      monitoring-service:
+        condition: service_started
+      redis:
+        condition: service_healthy
     networks:
       - app-network
 

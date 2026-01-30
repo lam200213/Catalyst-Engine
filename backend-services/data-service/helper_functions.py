@@ -265,10 +265,9 @@ def cache_covers_request(cached_data: list, req_period: str | None, req_start: s
                 logger.info(f"coverage:row_count path: row_count={len(dates)}, needed={count}, decision=True")
                 return True
 
-            # Keep anchor vars for completeness (they may be helpful if you want to revert to a stricter mode later)
-            yesterday = date.today() - timedelta(days=1)
-            anchor_end = min(yesterday, cache_end_dt)
-
+            # use the previous completed trading day instead of calendar yesterday
+            last_completed_session = previous_trading_day(date.today())
+            anchor_end = min(last_completed_session, cache_end_dt)
             nyse = mcal.get_calendar("NYSE")
             approx_back = max(365, int(count * 3))
             approx_start = anchor_end - timedelta(days=approx_back)
@@ -325,6 +324,24 @@ def get_trading_calendar():
         # NYSE symbol stays consistent with existing codebase imports
         _TRADING_CAL = mcal.get_calendar('NYSE')
     return _TRADING_CAL
+
+# Compute previous trading day before d (skip weekends/holidays)
+def previous_trading_day(d: date) -> date:
+    cal = get_trading_calendar()
+
+    # Look back a small window for the most recent session strictly before d
+    start = d - timedelta(days=10)
+    end = d
+
+    sched = cal.schedule(start_date=start, end_date=end)
+    if not sched.empty:
+        sessions = [ts.date() for ts in sched.index]
+        prior = [s for s in sessions if s < d]
+        if prior:
+            return prior[-1]
+
+    # Fallback: if calendar returns nothing, move 1 day backward
+    return d - timedelta(days=1)
 
 # Compute next trading day after d (skip weekends/holidays)
 def next_trading_day(d: date) -> date:
@@ -387,7 +404,8 @@ def plan_incremental_price_fetch(
             # Also ensure recency; if recent, return cache, else incremental from last+1
             # Do not assume cached data is sorted. Find the actual maximum date
             last_date = date.fromisoformat(max(item['formatted_date'] for item in validated if item.get('formatted_date')))
-            if last_date >= (today - timedelta(days=1)):
+            last_completed_session = previous_trading_day(today)
+            if last_date >= last_completed_session:
                 return {
                     'action': 'return_cache',
                     'start_date': None,
@@ -400,7 +418,7 @@ def plan_incremental_price_fetch(
             # Use next trading day for incremental start
             return {
                 'action': 'fetch_incremental',
-                'start_date': last_date + timedelta(days=1),
+                'start_date': next_trading_day(last_date),
                 'period': None,
                 'cached': validated,
                 'reason': 'cache_covers_but_stale',
@@ -421,7 +439,8 @@ def plan_incremental_price_fetch(
     # 3) No explicit constraints: decide by recency (or invalid period was ignored)
     if validated:
         last_date = date.fromisoformat(max(item['formatted_date'] for item in validated if item.get('formatted_date')))
-        if last_date >= (today - timedelta(days=1)):
+        last_completed_session = previous_trading_day(today)
+        if last_date >= last_completed_session:
             return {
                 'action': 'return_cache',
                 'start_date': None,
@@ -433,7 +452,7 @@ def plan_incremental_price_fetch(
             }
         return {
             'action': 'fetch_incremental',
-            'start_date': last_date + timedelta(days=1),
+            'start_date': next_trading_day(last_date),
             'period': None,
             'cached': validated,
             'reason': 'no_constraints_cache_stale',

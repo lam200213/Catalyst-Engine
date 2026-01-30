@@ -1,0 +1,125 @@
+name: SEPA Backend CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+# Global environment variables
+env:
+  COMPOSE_FILE: docker-compose.yml:docker-compose.prod.yml
+
+jobs:
+  # 1. Discovery Phase
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.set-matrix.outputs.services }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          # 1. Get list of actual services
+          COMPOSE_SERVICES=$(docker compose config --services)
+          
+          # 2. Find directories with Dockerfiles and intersect with Compose service list
+          VALID_SERVICES=()
+          DOCKERFILES=$(find backend-services -maxdepth 2 -name "Dockerfile")
+          
+          for file in $DOCKERFILES; do
+            DIR_PATH=$(dirname "$file")
+            DIR_NAME=$(basename "$DIR_PATH")
+            
+            # Check if this directory name exists in the docker-compose services list
+            if echo "$COMPOSE_SERVICES" | grep -qxw "$DIR_NAME"; then
+               VALID_SERVICES+=("$DIR_NAME")
+            fi
+          done
+          
+          # 3. Build JSON array using jq with -c (Compact) flag
+          # We use -c to ensure the output is a single line, preventing GITHUB_OUTPUT errors
+          JSON_OUTPUT=$(jq -n -c --arg services "${VALID_SERVICES[*]}" '$services | split(" ") | map(select(length > 0))')
+          
+          echo "services=$JSON_OUTPUT" >> "$GITHUB_OUTPUT"
+
+  # 2. Unit & Contract Phase
+  unit-and-contract-tests:
+    needs: setup-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.setup-matrix.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare CI Environment
+        run: cp .env.example .env 
+      - name: Build Service
+        run: docker compose build ${{ matrix.service }}
+      - name: Run Unit Tests
+        run: |
+          if [ -d "backend-services/${{ matrix.service }}/tests/unit" ]; then
+            docker compose run --rm --no-deps \
+              -e PYTHONPATH=/app \
+              --entrypoint python ${{ matrix.service }} -m pytest tests/unit
+          fi
+      - name: Run Contract Tests
+        run: |
+          if [ -d "backend-services/${{ matrix.service }}/tests/contracts" ]; then
+            docker compose run --rm --no-deps \
+              -e PYTHONPATH=/app \
+              --entrypoint python ${{ matrix.service }} -m pytest tests/contracts
+          fi
+
+  # 3. Full Integration Phase
+  integration-tests:
+    needs: [setup-matrix, unit-and-contract-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare CI Environment
+        run: |
+          cp .env.example .env
+          echo "MONGO_URI=mongodb://mongodb:27017/stock_analysis" >> .env
+          echo "CACHE_REDIS_URL=redis://redis:6379/0" >> .env
+          echo "VITE_API_BASE_URL=http://api-gateway:3000" >> .env
+
+      - name: Boot Backend
+        run: |
+          BACKEND_SERVICES=$(docker compose config --services | grep -v "frontend-app")
+          
+          # NOTE: If running 'act', ensure ports 27017/6379 are free on your host
+          docker compose up -d $BACKEND_SERVICES
+          
+      - name: Wait for Healthchecks
+        run: |
+          echo "Waiting for core services to reach healthy state..."
+          for i in {1..30}; do
+            REDIS_UP=$(docker compose ps redis --filter "status=running" -q)
+            DATA_UP=$(docker compose ps data-service --filter "status=running" -q)
+            API_UP=$(docker compose ps api-gateway --filter "status=running" -q)
+            
+            if [ ! -z "$REDIS_UP" ] && [ ! -z "$DATA_UP" ] && [ ! -z "$API_UP" ]; then
+              echo "Core infrastructure is running."
+              exit 0
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+          echo "Timeout reached!"
+          docker compose ps
+          exit 1
+
+      - name: Run Integration Tests
+        run: |
+          for service in ${{ join(fromJson(needs.setup-matrix.outputs.services), ' ') }}; do
+            if [ -d "backend-services/$service/tests/integration" ]; then
+              echo "Running Integration Tests for: $service"
+              docker compose run --rm -e PYTHONPATH=/app --entrypoint python $service -m pytest tests/integration
+            fi
+          done
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v

@@ -5,5 +5,7 @@ pandas
 pandas_market_calendars
 requests
 pytest
+pytest-mock
+pytest-asyncio
 pytest-benchmark
 pydantic

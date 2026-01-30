@@ -10,6 +10,8 @@ PyMongo[srv]
 yfinance
 finnhub-python
 pytest
+pytest-mock
+pytest-asyncio
 curl-cffi
 pydantic
 statistics

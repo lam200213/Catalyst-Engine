@@ -2,4 +2,6 @@ Flask
 requests
 numpy
 pytest
+pytest-mock
+pytest-asyncio
 pydantic

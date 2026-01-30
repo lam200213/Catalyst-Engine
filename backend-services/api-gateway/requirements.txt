@@ -1,6 +1,8 @@
 Flask
 requests
 pytest
+pytest-mock
+pytest-asyncio
 requests-mock
 Flask-Cors
 pydantic

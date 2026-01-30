@@ -8,7 +8,7 @@ import random # for throttling
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from . import yahoo_client # Use relative import
-from helper_functions import is_ticker_delisted, mark_ticker_as_delisted
+from helper_functions import is_ticker_delisted, mark_ticker_as_delisted, previous_trading_day
 import os
 import json
 
@@ -95,17 +95,27 @@ def _get_single_ticker_data(ticker: str, start_date: dt.date = None, period: str
     # param builder honoring start_date vs period
     def _build_chart_params(period: str | None, start_date: str | None, interval: str) -> dict:
         params = {"includePrePost": "false", "interval": interval}
+
         if start_date:
-            start_ts = int(dt.datetime.combine(start_date, dt.time.min).timestamp())
-            # Set end_ts to the end of yesterday to avoid fetching partial, real-time data.
-            yesterday = dt.date.today() - dt.timedelta(days=1)
-            end_ts = int(dt.datetime.combine(yesterday, dt.time.max).timestamp())
-            
+            base_today = dt.date.today()
+
+            # use previous completed trading session (not calendar yesterday)
+            last_completed_session = previous_trading_day(base_today)
+
+            # clamp start_date so period1 never exceeds period2
+            effective_start = start_date
+            if effective_start > last_completed_session:
+                effective_start = last_completed_session
+
+            start_ts = int(dt.datetime.combine(effective_start, dt.time.min).timestamp())
+            end_ts = int(dt.datetime.combine(last_completed_session, dt.time.max).timestamp())
+
             params["period1"] = start_ts
             params["period2"] = end_ts
         else:
             params["range"] = period or "1y"
-        return params 
+
+        return params
 
     # --- Date Range Logic ---
     # This section determines the appropriate Yahoo Finance API URL based on whether

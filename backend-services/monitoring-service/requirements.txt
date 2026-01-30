@@ -8,5 +8,7 @@ PyMongo[srv]
 pydantic
 redis
 pytest
+pytest-mock
+pytest-asyncio
 celery
 redis

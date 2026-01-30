@@ -155,7 +155,7 @@ describe('useWatchlistArchiveQuery', () => {
           {
             ticker: 'CRM',
             archived_at: '2025-09-21T10:00:00Z',
-            reason: 'FAILEDHEALTHCHECK',
+            reason: 'FAILED_HEALTH_CHECK',
             failed_stage: 'vcp',
           },
         ],

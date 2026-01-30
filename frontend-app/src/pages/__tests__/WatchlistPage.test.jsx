@@ -10,7 +10,7 @@ import WatchlistPage from '../WatchlistPage';
 import {
   baseWatchlistItem,
   baseArchivedWatchlistItem,
-} from '../../components/__tests__/fixtures/watchlistFixtures';
+} from '../../testing/fixtures/watchlistFixtures';
 
 // Import the hook modules so Vitest can transform the TS files.
 import { useWatchlistQuery } from '../../hooks/useWatchlistQuery';

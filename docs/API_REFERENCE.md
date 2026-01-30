@@ -1,54 +1,97 @@
-# API Gateway Endpoints
-The frontend communicates exclusively with the API Gateway, which proxies requests to the appropriate backend services.
+# API Gateway Endpoints Reference
 
-- **GET `/tickers`** 
-  - Purpose: Retrieves a list of all US stock tickers from the ticker-service.  
-  - **Data Contract:** Produces [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/tickers
-    ```
+This document catalogs all API endpoints exposed by the SEPA Stock Screener platform. Public-facing endpoints are accessible via the API Gateway for frontend consumption. Internal-only endpoints are used for service-to-service communication within the backend architecture.
 
-* **GET `/price/:ticker`**
-  - Proxies to: `data-service`
-  - Purpose: Retrieves historical price data for a ticker, with caching.
-  - **Query Parameters**:
-        - `source` (optional): The data source, e.g., 'yfinance'. Defaults to 'yfinance'.
-        - `period` (optional): The period of data to fetch (e.g., "1y", "6mo", "max"). Overridden by `start_date`. Defaults to "1y".
-        - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
-      * **Data Contract:** Produces [`PriceData`](./DATA_CONTRACTS.md#2-pricedata).
-    - **Example Usage:**
-      ```bash
-      curl http://localhost:3000/price/AAPL?source=yfinance&period=6mo
-      curl http://localhost:3000/price/AAPL?start_date=2023-01-01
-      ```
+**Gateway URL:** `http://localhost:3000`
 
-* **GET `/news/:ticker`**
-  - Proxies to: `data-service`
-  - Purpose: Retrieves recent news articles for a ticker, with caching.
-  - **Data Contract:** Produces [`NewsData`](./DATA_CONTRACTS.md#4-newsdata).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/news/AAPL
-    ```
+***
 
-- **POST `/price/batch`**
-  - Proxies to: `data-service`
-  - Purpose: Retrieves historical price data for a batch of tickers. This is more efficient than making individual requests for each ticker.
-  - **Request Body (JSON):**
-      - `tickers` (required): A list of stock ticker strings.
-      - `source` (required): The data source, e.g., 'yfinance'.
-      - `period` (optional): The period of data to fetch (e.g., "1y", "6mo"). Overridden by `start_date`. Defaults to "1y".
-      - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
-    - **Example Usage:**
-      ```bash
-      curl -X POST http://localhost:3000/price/batch \
-        -H "Content-Type: application/json" \
-        -d '{"tickers": ["AAPL", "GOOGL"], "source": "yfinance", "period": "6mo"}'
-      ```
-  - **Response Body (JSON):**
-    - Returns two lists: `success` for tickers where data was retrieved, and `failed` for tickers that could not be processed.
-    ```json
+## Table of Contents
+
+1. [How the API Gateway Works](#how-the-api-gateway-works)
+2. [Public-Facing APIs (Consumed by Frontend)](#public-facing-apis-consumed-by-frontend)
+   - [Ticker Service Routes](#ticker-service-routes)
+   - [Data Service Routes](#data-service-routes)
+   - [Screening Service Routes](#screening-service-routes)
+   - [Analysis Service Routes](#analysis-service-routes)
+   - [Leadership Service Routes](#leadership-service-routes)
+   - [Monitoring Service Routes](#monitoring-service-routes)
+   - [Scheduler Service Routes](#scheduler-service-routes)
+3. [Internal-Only APIs (Service-to-Service)](#internal-only-apis-service-to-service)
+   - [Internal Data Service Routes](#internal-data-service-routes)
+   - [Internal Screening Service Routes](#internal-screening-service-routes)
+   - [Internal Analysis Service Routes](#internal-analysis-service-routes)
+   - [Internal Leadership Service Routes](#internal-leadership-service-routes)
+   - [Internal Monitoring Service Routes](#internal-monitoring-service-routes)
+
+***
+
+## How the API Gateway Works
+
+The API Gateway uses a simple routing pattern based on the first path segment:
+
+- **Route Pattern:** `/<service_key>/<path>`
+- **Backend Forwarding:** Requests are forwarded to the appropriate backend service based on the service key
+- **Service Keys:**
+  - `tickers` → ticker-service (port 5001)
+  - `price`, `news`, `financials`, `industry`, `cache` → data-service (port 3001)
+  - `screen` → screening-service (port 3002)
+  - `analyze` → analysis-service (port 3003)
+  - `leadership` → leadership-service (port 3005)
+  - `monitor` → monitoring-service (port 3006)
+  - `jobs` → scheduler-service (port 3004)
+
+***
+
+# Public-Facing APIs (Consumed by Frontend)
+
+These endpoints are intended for frontend consumption and are accessible via the API Gateway at `http://localhost:3000`.
+
+## Ticker Service Routes
+
+### **GET `/tickers`**
+- **Proxies to:** ticker-service (port 5001)
+- **Purpose:** Retrieves a list of all US stock tickers from the ticker-service.
+- **Data Contract:** Produces [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/tickers
+  ```
+
+***
+
+## Data Service Routes
+
+### **GET `/price/:ticker`**
+- **Proxies to:** data-service (port 3001)
+- **Purpose:** Retrieves historical price data for a ticker, with caching.
+- **Query Parameters:**
+  - `source` (optional): The data source, e.g., 'yfinance'. Defaults to 'yfinance'.
+  - `period` (optional): The period of data to fetch (e.g., "1y", "6mo", "max"). Overridden by `start_date`. Defaults to "1y".
+  - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
+- **Data Contract:** Produces [`PriceData`](./DATA_CONTRACTS.md#2-pricedata).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/price/AAPL?source=yfinance&period=6mo
+  curl http://localhost:3000/price/AAPL?start_date=2023-01-01
+  ```
+
+### **POST `/price/batch`**
+- **Proxies to:** data-service (port 3001)
+- **Purpose:** Retrieves historical price data for a batch of tickers. More efficient than individual requests.
+- **Request Body (JSON):**
+  - `tickers` (required): A list of stock ticker strings.
+  - `source` (required): The data source, e.g., 'yfinance'.
+  - `period` (optional): The period of data to fetch (e.g., "1y", "6mo"). Overridden by `start_date`. Defaults to "1y".
+  - `start_date` (optional): The start date for fetching data in YYYY-MM-DD format. Takes precedence over `period`.
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/price/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["AAPL", "GOOGL"], "source": "yfinance", "period": "6mo"}'
+  ```
+- **Response Body (JSON):**
+  ```json
     {
       "success": {
         "AAPL": [
@@ -65,205 +108,24 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     }
     ```
 
-- **POST `/cache/clear`**  
-  - Proxies to: data-service
-  - Purpose: Manually clears cached data from Redis. This is a developer utility to force a refresh of data from source APIs. It can clear all caches or a specific type of cache.
-  - **Data Contract:** N/A
-  - **Request Body (JSON, optional):**
-    - Specify a `type` to clear a specific cache. If the body is omitted or `type` is `"all"`, all caches are cleared.
-    - Valid types: `"price"`, `"news"`, `"financials"`, `"industry"`.
-  - **Example Usage:**
-      ```Bash
-        curl -X POST http://localhost:3000/cache/clear
-      ```
-  - **Example Success Response:**
-      ```JSON
-      {
-        "message": "All data service caches have been cleared."
-      }
-  - **Example Usage (Clear only price cache):**
-      ```bash
-      curl -X POST http://localhost:3000/cache/clear \
-        -H "Content-Type: application/json" \
-        -d '{"type": "price"}'
-      ```
-  - **Example Success Response (Specific):**
-      ```json
-      {
-        "keys_deleted": 1542,
-        "message": "Cleared 1542 entries from the 'price' cache.",
-      }
-      ```
-  - **Example Error Response (Invalid Type):**
-      ```json
-      {
-        "error": "Invalid cache type 'invalid_type'. Valid types are: ['price', 'news', 'financials', 'industry'] or 'all'."
-      }
-      ```
-
-- **GET `/screen/:ticker`**
-  - Proxies to the Screening Service.
-  - Purpose: Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
-  - **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
-  - **Data Contract:** Produces [`ScreeningResultSingle`](./DATA_CONTRACTS.md#6-screeningresult).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/screen/AAPL
-    ```
-  - **Example Success Response:**
-    ```json
-    {
-      "ticker": "AAPL",
-      "passes": true,
-      "details": {
-        "current_price_above_ma150_ma200": true,
-        "ma150_above_ma200": true,
-        "ma200_trending_up": true,
-        "ma50_above_ma150_ma200": true,
-        "current_price_above_ma50": true,
-        "price_30_percent_above_52_week_low": true,
-        "price_within_25_percent_of_52_week_high": true
-      },
-      "values": {
-        "current_price": 170.00,
-        "ma_50": 165.00,
-        "ma_150": 155.00,
-        "ma_200": 150.00,
-        "low_52_week": 120.00,
-        "high_52_week": 180.00
-      }
-    }
-    ```
-  - **Example Error Response (for invalid ticker):**
-    ```json
-    {
-      "error": "Invalid or non-existent ticker: FAKETICKERXYZ",
-      "details": "Could not retrieve price data for FAKETICKERXYZ from yfinance."
-    }
-    ```
-
-- **GET `/analyze/:ticker`**  
-  - Proxies to the Analysis Service.  
-  - Purpose: Performs VCP analysis on historical data and returns a pass/fail boolean, a VCP footprint string, and detailed data for charting.
-  - **Query Parameters**:
-    - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
-  - **Error Handling**: Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
-  - **Data Contract:** Produces [`VCPAnalysisSingle`](./DATA_CONTRACTS.md#7-vcpanalysis).
-
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/analyze/AAPL?mode=fast
-    ```
-  - **Example Success Response (`full` mode):**
-    ```json
-    {
-      "ticker": "AAPL",
-      "vcp_pass": true,
-      "vcpFootprint": "10D 8.6% | 5D 5.3%",
-      "vcp_details": {
-          "is_pivot_good": true,
-          "is_correction_deep": true,
-          "is_demand_dry": true
-      },
-      "chart_data": {
-        "detected": true,
-        "message": "VCP analysis complete.",
-        "vcpLines": [{"time": "2024-06-10", "value": 195.0}, ...],
-        "buyPoints": [{"value": 196.95}],
-        "sellPoints": [{"value": 188.10}],
-        "ma20": [{"time": "2024-07-01", "value": 192.5}, ...],
-        "ma50": [{"time": "2024-07-01", "value": 190.0}, ...],
-        "ma150": [{"time": "2024-07-01", "value": 185.0}, ...],
-        "ma200": [{"time": "2024-07-01", "value": 180.0}, ...],
-        "lowVolumePivotDate": "2024-06-25",
-        "volumeTrendLine": [
-            {"time": "2024-06-10", "value": 5500000},
-            {"time": "2024-06-25", "value": 2500000}
-        ],
-        "historicalData": [...]
-      }
-    }
-    ```
-
-- **POST `/analyze/batch`**  
-  - Proxies to the Analysis Service.  
-  - Purpose: Analyzes a batch of tickers (typically those that have passed the trend screen) against the Volatility Contraction Pattern (VCP) criteria. This is a critical internal endpoint called by the scheduler-service to efficiently process candidates in the screening funnel.
-  - **Data Contract:** Produces a list of [`VCPAnalysisBatchItem`](./DATA_CONTRACTS.md#7-vcpanalysis).
-  - **Request Body**:
-    ```json
-    {
-      "tickers": ["AAPL", "GOOGL", "TSLA"],
-      "mode": "fast"
-    }
-    ```
-  - **Query Parameters**:
-    - `mode` (optional): Set to `full` to return a detailed breakdown of all checks. If omitted, defaults to `fast` evaluation, which enables a fail-fast evaluation for batch processing.
-  - **Example Usage:**
-    ```bash
-    curl -X POST http://localhost:3000/analyze/batch \
-    -H "Content-Type: application/json" \
-    -d '{"tickers": ["CRWD", "NET"], "mode": "fast"}'
-    ```
-  - **Example Success Response:**
-    ```json
-    [
-      {
-        "ticker": "CRWD",
-        "vcp_pass": true,
-        "vcp_footprint": "8D 6.5% | 4D 7.1% | 2D 10.1% | 4D 6.5% | 4D 6.8% | 2D 2.9% | 5D 16.6% | 8D 21.7% | 8D 16.4% | 3D 7.7% | 4D 7.4% | 1D 5.8% | 13D 10.2% | 9D 10.1% | 7D 5.0% | 4D 6.7%",
-      },
-      {
-        "ticker": "NET",
-        "vcp_pass": true,
-        "vcp_footprint": "9D 6.6% | 9D 5.0% | 2D 3.0% | 26D 18.9% | 2D 6.1% | 20D 33.4% | 10D 21.3% | 7D 8.7% | 5D 4.5% | 5D 11.5% | 13D 17.4% | 4D 6.5% | 6D 4.4%",
-      }
-    ]
-    ```
-
-- **POST /analyze/freshness/batch**
-  - Proxies to the Analysis Service. 
-  - Purpose: Checks the "freshness" of the analysis data for a list of specified tickers. This is used by the scheduler-service to determine which tickers need to be re-analyzed.
-  - **Data Contract**: 
-    - Data Contract (Request): AnalysisFreshnessRequest (see shared/contracts.py)
-    - Data Contract (Response): AnalysisFreshnessResponse (see shared/contracts.py)
-  - **Request Body (Example)**:
-  ```json
-  {
-    "tickers": ["AAPL", "MSFT", "GOOG"]
-  }
+### **GET `/news/:ticker`**
+- **Proxies to:** data-service (port 3001)
+- **Purpose:** Retrieves recent news articles for a ticker, with caching.
+- **Data Contract:** Produces [`NewsData`](./DATA_CONTRACTS.md#4-newsdata).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/news/AAPL
   ```
 
-  - **Response Body (Success Example)**:
-```json
-{
-  "freshness_data": [
-    {
-      "ticker": "AAPL",
-      "last_updated_utc": "2025-11-06T18:00:00Z",
-      "is_fresh": true
-    },
-    {
-      "ticker": "MSFT",
-      "last_updated_utc": "2025-10-01T12:00:00Z",
-      "is_fresh": false
-    },
-    {
-      "ticker": "GOOG",
-      "last_updated_utc": null,
-      "is_fresh": false
-    }
-  ]
-}
-```
-
-- **GET `/financials/core/:ticker`**  
-  - Purpose: Retrieves core fundamental data required for the Leadership Profile screening. Data is cached to improve performance.
-  - **Data Contract:** Produces [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/financials/core/AAPL
-    ```
-  - **Example Response (`GET /financials/core/AAPL`):**
+### **GET `/financials/core/:ticker`**
+- **Proxies to:** data-service (port 3001)
+- **Purpose:** Retrieves core fundamental data required for the Leadership Profile screening. Data is cached.
+- **Data Contract:** Produces [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/financials/core/AAPL
+  ```
+- **Example Response:**
   ```json
   {
     "ticker": "AAPL",
@@ -272,1154 +134,1144 @@ The frontend communicates exclusively with the API Gateway, which proxies reques
     "floatShares": 15400000000,
     "ipoDate": "1980-12-12",
     "annual_earnings": [
-        { "Revenue": 383285000000, "Earnings": 6.13, "Net Income": 96995000000 }
+      {"Revenue": 383285000000, "Earnings": 6.13, "Net Income": 96995000000}
     ],
     "quarterly_earnings": [
-        { "Revenue": 90753000000, "Earnings": 1.53, "Net Income": 23636000000 }
+      {"Revenue": 90753000000, "Earnings": 1.53, "Net Income": 23636000000}
     ],
     "quarterly_financials": [
-        { "Net Income": 23636000000, "Total Revenue": 90753000000 }
+      {"Net Income": 23636000000, "Total Revenue": 90753000000}
     ]
   }
+  ```
 
-- **GET `/leadership/<path:ticker>`**  
-  - Proxies to: `leadership-service`
-  - Purpose: Applies the 9 leadership criteria, grouped into 3 distinct profiles, to the specified ticker. 
-  - **Data Contract:** Produces [`LeadershipProfileSingle`](./DATA_CONTRACTS.md#8-leadershipprofile).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/leadership/AAPL
-    ```
-   - **Example Success Response:**
-    ```json
-    {
-      "ticker": "NVDA",
-      "passes": true,
-      "leadership_summary": {
-        "qualified_profiles": [
-          "Explosive Grower",
-          "Market Favorite"
-        ],
-        "message": "Qualifies as a Explosive Grower, Market Favorite with supporting characteristics in other profiles."
-      },
-      "profile_details": {
-        "explosive_grower": {
-          "pass": true,
-          "passed_checks": 4,
-          "total_checks": 4
-        },
-        "high_potential_setup": {
-          "pass": false,
-          "passed_checks": 1,
-          "total_checks": 3
-        },
-        "market_favorite": {
-          "pass": true,
-          "passed_checks": 2,
-          "total_checks": 2
-        }
-      },
-      "details": {
-        "is_small_to_mid_cap": {
-          "pass": false,
-          "message": "Market cap $2,220,000,000,000 is outside the required range."
-        },
-        "is_industry_leader": {
-          "pass": true,
-          "message": "Passes. Ticker ranks #1 out of 15 in its industry."
-        }
-      },
-      "industry": "Semiconductors",
-      "metadata": {
-        "execution_time": 0.458
-      }
-    }
-    ```
-
-- **GET `/industry/peers/:ticker`**
-  - Proxies to: data-service
-  - Purpose: Retrieves industry classification and a list of peer tickers. Used by the leadership-service.
-  - **Data Contract:** Produces [`IndustryPeers`](./DATA_CONTRACTS.md#5-industrypeers).
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/industry/peers/NVDA
-    ```
-  - **Example Usage (from another service):**
-    ```python
-    import requests
-    data_service_url = "http://data-service:3001"
-    response = requests.get(f"{data_service_url}/industry/peers/NVDA")
-    ```
-  - **Example Success Response:**
-    ```json
-    {
-      "industry": "Semiconductors",
-      "peers": ["AVGO", "QCOM", "AMD", "INTC"]
-    }
-    ```
-
-- **GET `/leadership/industry_rank/:ticker`**  
-  - Proxies to: `leadership-service`
-  - Purpose: Ranks the specified ticker against its industry peers based on revenue, market cap, and net income.
-  - **Data Contract:** N/A (Custom Response Structure)
-  - **Example Usage:**
-    ```bash
-    curl http://localhost:3000/leadership/industry_rank/NVDA
-    ```
-    - **Example Success Response:**
-    ```json
-    {
-      "ticker": "NVDA",
-      "industry": "Semiconductors",
-      "rank": 1,
-      "total_peers_ranked": 15,
-      "ranked_peers_data": [
-        {
-          "ticker": "NVDA",
-          "revenue": 60931000000,
-          "marketCap": 2220000000000,
-          "netIncome": 29760000000,
-          "revenue_rank": 1.0,
-          "market_cap_rank": 1.0,
-          "earnings_rank": 1.0,
-          "combined_rank": 3
-        },
-        {
-          "ticker": "AVGO",
-          "revenue": 35824000000,
-          "marketCap": 605000000000,
-          "netIncome": 11500000000,
-          "revenue_rank": 2.0,
-          "market_cap_rank": 2.0,
-          "earnings_rank": 2.0,
-          "combined_rank": 6
-        }
-      ]
-    }
-
-- **GET `/health`**  
-  - Proxies to: data-service, leadership-service
-  - Purpose: A standard health check endpoint used for service monitoring to confirm that the service is running and responsive.
-
-  - **Data Contract:** N/A
-  - **Example Usage (from a monitoring tool or another service)**
-      ```bash
-      curl http://localhost:3005/health
-      ```
-
-      ```bash
-      curl http://localhost:3001/health
-      ```
-
-  - **Example Success Response for data-service:**
-      ```JSON
-      {
-        "mongo": true,
-        "ok": true,
-        "redis": true,
-        "yf_pool_ready": true
-      }
-      ```
-
-  - **Example Success Response for leadership-service:**
-      ```JSON
-      {
-        "status": "healthy"
-      }
-      ```
-
-- **POST `/jobs/screening/start`**
-  - Proxies to: `scheduler-service`
-  - Purpose: Triggers a new, full screening pipeline job. The scheduler fetches all tickers, runs them through the trend and VCP screens, and persists the final candidates and a job summary to the database.
-  - Purpose: Triggers a new, full screening pipeline job.
-  - **Example Usage:**
-    ```bash
-    curl -X POST http://localhost:3000/jobs/screening/start
-    ```
-   - **Example Success Response:**
-    ```json
-    {
-      "message": "Screening job completed successfully.",
-      "job_id": "20250720-064530-AbcDE123",
-      "processed_at": "2025-07-20T06:45:30.123456Z",
-      "total_tickers_fetched": 8123,
-      "trend_screen_survivors_count": 157,
-      "final_candidates_count": 12
-    }
-    ```
-
-- **POST `/jobs/watchlist/refresh`**
-  - Proxies to: `scheduler-service`
-  - Purpose: Triggers a new watchlist health check job. The scheduler enqueues a Celery task (`refresh_watchlist_task`) which calls monitoring-service's **internal orchestrator endpoint** `POST /monitor/internal/watchlist/refresh-status` to perform the full refresh pipeline.
-  - **Example Usage:**
-    ```bash
-    curl -X POST http://localhost:3000/jobs/watchlist/refresh
-    ```
-  - **Example Success Response:**
-    ```json
-    {
-      "message": "Watchlist refresh job completed",
-      "job_id": "20251120-123456-AbcDE123",
-      "updated_items": 32,
-      "archived_items": 5,
-      "failed_items": 0
-    }
-    ```
-
-- **GET `/monitor/market-health`**
-- Proxies to: `monitoring-service`
-  - Purpose: Orchestrates calls to internal services to build the complete data payload for the frontend's market health page. It calls the `data-service` to get market breadth (new highs/lows) and identify leading industries.
-  - **Data Contract**: Produces [`MarketHealthResponse`](./DATA_CONTRACTS.md#10-markethealth).
-  - **Example Usage**:
-    ```bash
-    curl http://localhost:3000/monitor/market-health
-    ```
-  - **Example Success Response**:
-    ```json
-    {
-      "market_overview": {
-        "market_stage": "Bullish",
-        "correction_depth_percent": -5.2,
-        "high_low_ratio": 2.0,
-        "new_highs": 150,
-        "new_lows": 75
-      },
-      "leaders_by_industry": {
-        "leading_industries": [
-          {
-            "industry": "Semiconductors",
-            "stocks": [
-              { "ticker": "NVDA", "percent_change_3m": 15.5 },
-              { "ticker": "AVGO", "percent_change_3m": 11.2 }
-            ]
-          },
-          {
-            "industry": "Software - Infrastructure",
-            "stocks": [
-              { "ticker": "CRWD", "percent_change_3m": 12.1 }
-            ]
-          }
-        ]
-      }
-    }
-    ```
-
-- **GET `/monitor/watchlist`**
-  - Proxies to: monitoring-service
-  - Purpose: Retrieves all stocks from the user's watchlist, excluding any tickers currently in the portfolio (mutual exclusivity).
-  - **Query Parameters:**
-    - `exclude` (optional): Comma-separated list of tickers to exclude (typically portfolio tickers)
-      - Example: `?exclude=CRWD,NET,DDOG`
-  - **Example Success Response:**
-    - 200 OK
-      ```JSON
-      {
-        "items": [
-          {
-          "ticker": "NET",
-          "status": "Buy Ready",
-          "date_added": "2025-09-20T10:00:00Z",
-          "is_favourite": false,
-          "last_refresh_status": "PASS",
-          "last_refresh_at": "2025-11-01T12:00:00Z",
-          "failed_stage": null,
-          "current_price": 85.10,
-          "pivot_price": 86.00,
-          "pivot_proximity_percent": -1.05,
-          "is_leader": true
-          }
-        ],
-        "metadata": {"count": 2}
-      }
-      ```
-  - **Example Error Response:**
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-    - 500 Internal Server Error
-      ```json
-      { "error": "Invalid response format from service" }
-      ```
-  - **Notes**:
-    - ticker: Stock symbol (uppercase)
-    - status: UI status derived from last_refresh_status and pivot proximity
-    - date_added: When added to watchlist (may be null until populated)
-    - is_favourite: User toggle to prevent auto-archiving
-    - last_refresh_status: One of PENDING | PASS | FAIL | UNKNOWN
-    - last_refresh_at: Last refresh timestamp (nullable)
-    - failed_stage: Stage name if FAIL occurred (nullable)
-    - current_price, pivot_price, pivot_proximity_percent, is_leader: Nullable until populated by refresh jobs
-
-  - **Status Derivation Logic:**
-    - `"Pending"`: `last_refresh_status == "PENDING"` or `UNKNOWN` (not yet analyzed).
-    - `"Failed"`: `last_refresh_status == "FAIL"` (failed health check)
-    - `"Buy Ready"`: `PASS` with a valid pivot, proximity within the buy band (e.g., 0% to 5%), and positive VCP/volume signals.
-    - `"Buy Alert"`: `PASS` with a valid VCP base (either a maturing pivot with contraction OR a controlled pullback setup) and volume contraction.
-    - `"Watch"`: `PASS` but no actionable VCP/volume setup, or stale/guardrailed pattern.
-    - **Note:** Missing pivot data in rich mode defaults to "Watch" rather than "Buy Alert".
-
-  - **Field Descriptions:**
-    - `ticker`: Stock symbol
-    - `status`: Derived status for UI display (see logic above)
-    - `date_added`: When ticker was added to watchlist
-    - `is_favourite`: User-controlled flag; prevents auto-archiving
-    - `last_refresh_status`: Health check result enum (PENDING, PASS, FAIL, UNKNOWN)
-    - `last_refresh_at`: Timestamp of last health check
-    - `failed_stage`: Stage where health check failed (screening, vcp, freshness) if status=FAIL
-    - `current_price`: Latest price from refresh job (null until populated)
-    - `pivot_price`: VCP pivot price if identified (null if not found)
-    - `pivot_proximity_percent`: % distance from pivot (negative=below, positive=above)
-    - `is_leader`: Whether stock passed leadership profile criteria
-
-  - **Mutual Exclusivity:**
-    - The endpoint automatically excludes tickers present in `exclude` query param
-    - Frontend should pass portfolio tickers via this param to maintain separation
-
-  - **Error Responses:**
-    - `503 Service Unavailable`: Database connection failure
-    - `500 Internal Server Error`: Pydantic validation error or unexpected failure
-
-- **PUT `/monitor/watchlist/:ticker`** 
-  - Proxies to: `monitoring-service`
-  - Purpose: Adds a ticker to the user's watchlist in an idempotent manner, handling re-introduction from archive automatically.
-  - **Path parameter**:
-    - ticker (required): Stock symbol. Allowed characters: [A-Z0-9.-], length 1–10. Case-insensitive in request; normalized to uppercase in processing.
-  - **Behavior**:
-    - Validates ticker format; returns 400 on invalid input.
-    - Normalizes to uppercase before processing.
-    - Inserts the ticker if not present, returning 201 Created.
-    - If the ticker already exists in the watchlist, returns 200 OK (idempotent).
-    - If the ticker previously existed in archive, removes it from archive and adds to watchlist (re-introduction).
-  - **Example Usage**:
-    ```bash
-    curl -X PUT http://localhost:3000/monitor/watchlist/AAPL
-    ```
-  - **Example Success Response:**
-    - 201 Created (first insert)
-      ```json
-      {
-        "message": "Added to watchlist: AAPL",
-        "item": {
-          "ticker": "AAPL",
-          "status": "Watch",
-          "date_added": null,
-          "is_favourite": false,
-          "last_refresh_status": "PENDING",
-          "last_refresh_at": null,
-          "failed_stage": null,
-          "current_price": null,
-          "pivot_price": null,
-          "pivot_proximity_percent": null,
-          "is_leader": false
-        }
-      }
-      ```
-    - 200 OK (idempotent re-add)
-      ```json
-      {
-        "message": "Already in watchlist: AAPL",
-        "item": {
-          "ticker": "AAPL",
-          "status": "Watch",
-          "date_added": null,
-          "is_favourite": false,
-          "last_refresh_status": "PENDING",
-          "last_refresh_at": null,
-          "failed_stage": null,
-          "current_price": null,
-          "pivot_price": null,
-          "pivot_proximity_percent": null,
-          "is_leader": false
-        }
-      }
-      ```
-  - **Example Error Response:**
-    - 400 Bad Request
-      ```json
-      { "error": "Invalid ticker format: <value>" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-    - 500 Internal Server Error
-      ```json
-      { "error": "Internal server error" }
-      ```
-  - **Notes**:
-    - Dots and hyphens are valid (e.g., BRK.B, SHOP.TO, CRWD-N). URL encoding is supported; both BRK.B and BRK%2EB are accepted.
-    - Request body is ignored; only the path parameter is used.
-
-- **DELETE `/monitor/watchlist/<ticker>`** 
-  - Proxies to: `monitoring-service`
-  - Purpose: Removes a ticker from the active watchlist and moves it to the archive with reason `MANUAL_DELETE`. This is the single-ticker removal endpoint; for bulk operations, use `POST /monitor/watchlist/batch/remove`.
-  - **Path parameter**:
-    - ticker (required): 1–10 chars, letters/digits/dot/hyphen only (no spaces). Validation is case-insensitive; processing normalizes to uppercase.
-  - **Behavior**:
-    - Validates ticker format; returns 400 on invalid input.
-    - Normalizes to uppercase before processing.
-    - Atomically removes the ticker from `watchlistitems` and inserts it into `archived_watchlist_items` with `reason: "MANUAL_DELETE"` and `failed_stage: null`.
-    - Returns 404 if the ticker is not found in the active watchlist.
-    - Does not leak internal DB fields (`_id`, `user_id`, `archived_at`) in the response.
-  - **Example Usage**:
-    ```bash
-    curl -X DELETE http://localhost:3000/monitor/watchlist/AAPL
-    ```
-  - **Example Success Response:**
-    - 200 OK — application/json 
-      ```json
-      { "message": "AAPL moved to archive" }
-      ```
-  - **Example Error Response:**
-    - 400 Bad Request — application/json — ApiError
-      ```json
-      { "error": "Invalid ticker format" }
-      ```
-    - 404 Not Found — application/json — ApiError
-      ```json
-      { "error": "Ticker not found" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-  - **Notes**:
-    - Dots and hyphens are valid (e.g., `BRK.B`, `SHOP.TO`, `CRWD-N`). URL encoding is supported; both `BRK.B` and `BRK%2EB` are accepted.
-    - The archived item can be permanently deleted using `DELETE /monitor/archive/<ticker>`.
-    - User scope is enforced internally via `DEFAULT_USER_ID` (single-user mode).
-    - For batch removal (e.g., "Remove Selected" UI action), use `POST /monitor/watchlist/batch/remove` instead.
-    
-- **DELETE `/monitor/archive/:ticker`** 
-  - Proxies to: `monitoring-service`
-  - Purpose: Deletes an archived ticker permanently for the default user.
-  - **Path parameter**:
-    - ticker (required): 1–10 chars, letters/digits/dot/hyphen only (no spaces). Validation is case-insensitive; processing normalizes to uppercase.
-  - **Example Usage**:
-    ```bash
-    curl -X DELETE http://localhost:3000/monitor/archive/BRK.B
-    ```
-  - **Example Success Response:**
-    - 200 OK — application/json — DeleteArchiveResponse
-      ```json
-      { "message": "Archived ticker AAPL permanently deleted." }
-      ```
-  - **Example Error Response:**
-    - 400 Bad Request — application/json — ApiError
-      ```json
-      { "error": "Invalid ticker format" }
-      ```
-    - 404 Not Found — application/json — ApiError
-      ```json
-      { "error": "Ticker not found" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable" }
-      ```
-  - **Notes**:
-    - Hard delete is immediate and does not depend on collection TTL indices.
-    - User scope is enforced internally; the operation deletes at most one document for DEFAULT_USER_ID and the specified ticker.
-
-- **POST `/monitor/watchlist/:ticker/favourite`**
-  - Proxies to: `monitoring-service`
-  - Purpose: Toggles the `is_favourite` flag for a single watchlist item belonging to the default single-user.
-  - Path parameter:
-    - `ticker` (required): Stock symbol. Allowed characters: A-Z0-9.-, length 1-10. Case-insensitive in request; normalized to uppercase in processing.
-  - Request Body (required): JSON
-    ```
-    { "is_favourite": true }
-    ```
-    - `is_favourite` (required): Boolean. Must be strictly `true` or `false` (no coercion from strings or numbers).
-  - **Data Contract:** Consumes [`WatchlistFavouriteRequest`](./DATA_CONTRACTS.md#19-watchlistfavouriterequest), Produces [`WatchlistFavouriteResponse`](./DATA_CONTRACTS.md#19-watchlistfavouriteresponse).
-  - Example Usage:
-    ```bash
-    curl -X POST http://localhost:3000/monitor/watchlist/AAPL/favourite \
-      -H "Content-Type: application/json" \
-      -d '{"is_favourite": true}'
-    ```
-  - Example Success Response:
-    - **200 OK** (application/json) `WatchlistFavouriteResponse`
-      ```
-      { "message": "Watchlist item 'AAPL' favourite set to true" }
-      ```
-  - Example Error Responses:
-    - **400 Bad Request** (application/json) `ApiError`
-      ```json
-      { "error": "Field 'is_favourite' must be a boolean" }
-      ```
-      ```json
-      { "error": "Invalid ticker format" }
-      ```
-    - **404 Not Found** (application/json) `ApiError`
-      ```json
-      { "error": "Watchlist item 'ZZZZZ' not found" }
-      ```
-    - **503 Service Unavailable** (application/json) `ApiError`
-      ```json
-      { "error": "Database unavailable" }
-      ```
-  - Notes:
-    - URL encoding is supported (e.g., `BRK%2EB` for `BRK.B`).
-    - The route ignores any `X-User-Id` headers and operates under single-user mode.
-    - Internal fields (`_id`, `user_id`, `archived_at`, `reason`, `failed_stage`) are never exposed in the response.
-
-- **POST `/monitor/watchlist/batch/remove`**
-  - Proxies to: `monitoring-service`
-  - Purpose: Removes multiple tickers from the user's watchlist in a single batch operation. Removed items are automatically archived with reason `MANUAL_DELETE`. This endpoint backs the "Remove Selected" UI action.
-  - **Request Body (JSON)**:
-    - `tickers` (required): A list of stock ticker symbols to remove. Maximum 1000 tickers per request.
-  - **Data Contract:**
-    - Request: [`WatchlistBatchRemoveRequest`](./DATA_CONTRACTS.md#14-watchlistbatchremoverequest)
-    - Response: [`WatchlistBatchRemoveResponse`](./DATA_CONTRACTS.md#15-watchlistbatchremoveresponse)
-  - **Example Usage**:
-    ```bash
-    curl -X POST http://localhost:3000/monitor/watchlist/batch/remove \
-      -H "Content-Type: application/json" \
-      -d '{"tickers": ["AAPL", "MSFT", "GOOGL"]}'
-    ```
-  - **Example Success Response**:
-    - 200 OK
-      ```json
-      {
-        "message": "Successfully removed 3 tickers from the watchlist (not found: 0): AAPL, MSFT, GOOGL",
-        "removed": 3,
-        "notfound": 0
-      }
-      ```
-  - **Example Error Response**:
-    - 400 Bad Request
-      ```json
-      { "error": "Invalid request payload for batch remove" }
-      ```
-    - 400 Bad Request (over limit)
-      ```json
-      { "error": "Cannot remove more than 1000 tickers in a single request" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-  - **Notes**:
-    - Tickers are normalized to uppercase before processing.
-    - Duplicate tickers in the request are handled idempotently.
-    - Items not found in the watchlist are reported in the `notfound` count but do not cause an error.
-    - All successfully removed items are moved to `archived_watchlist_items` with `reason: "MANUAL_DELETE"`.
-    - User scope is enforced internally via `DEFAULT_USER_ID`.
-
-# Internal Service Communication
-
-## `scheduler-service` -> `analysis-service`
-
-For efficient batch processing, the **`scheduler-service`** calls the **`analysis-service`** using the `?mode=fast` query parameter. This instructs the `analysis-service` to perform a "fail-fast" evaluation, immediately stopping and returning a fail status for a ticker that does not meet a VCP criterion, thus conserving system resources.
-
-## Internal Data Service Endpoints
-- The following endpoints are used for internal service-to-service communication and are not exposed through the public API Gateway. They are documented here for completeness.
-
-- **POST `/financials/core/batch`**  
-  - Proxies to: data-service
-  - Purpose: Retrieves core financial data for a batch of tickers. This is used by the leadership-service to efficiently gather the necessary data for its industry peer ranking analysis.
-
-  - **Data Contract:** The `success` object contains key-value pairs where each value adheres to the [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials) contract.
-  - **Request Body:**
-      ```JSON
-      {
-        "tickers": ["NVDA", "AVGO", "FAKETICKER"]
-      }
-      ```
-
-  - **Example Usage (from another service)**
-      ```PYTHON
-      import requests
-
-      data_service_url = "http://data-service:3001"
-      payload = {"tickers": ["NVDA", "AVGO", "FAKETICKER"]}
-      response = requests.post(f"{data_service_url}/financials/core/batch", json=payload)
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      {
-        "success": {
-          "NVDA": {
-            "marketCap": 2220000000000,
-            "sharesOutstanding": 2460000000,
-            "ipoDate": "1999-01-22"
-          },
-          "AVGO": {
-            "marketCap": 605000000000,
-            "sharesOutstanding": 463000000,
-            "ipoDate": "2009-08-06"
-          }
-        },
-        "failed": ["FAKETICKER"]
-      }
-      ```
-
-- **POST `/market-trend/calculate`**  
-  - Proxies to: data-service
-  - Purpose: On-demand endpoint to calculate, store, and return market trends for a specific list of dates. This is an internal utility endpoint.
-  - **Data Contract:** N/A (Custom Response Structure)
-  - **Request Body:**
-      ```JSON
-      {
-        "dates": ["2025-08-26", "2025-08-25"]
-      }
-      ```
-
-  - **Example Usage (from another service)**
-      ```PYTHON
-        import requests
-
-        data_service_url = "http://data-service:3001"
-        payload = {"dates": ["2025-08-26"]}
-        response = requests.post(f"{data_service_url}/market-trend/calculate", json=payload)
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      {
-        "trends": [
-          {
-            "date": "2025-08-26",
-            "trend": "Bullish",
-            "pass": true,
-            "details": {
-              "^GSPC": "Bullish",
-              "^DJI": "Bullish",
-              "^IXIC": "Bullish"
-            },
-            "createdAt": "..."
-          }
-        ]
-      }
-      ```
-
-- **POST `/data/watchlist-metrics/batch`**  
-  - Service: `data-service`
-  - Purpose: Computes compact price and volume summary metrics for a batch of tickers to support watchlist status refresh. This is an internal endpoint called exclusively by monitoring-service's refresh orchestrator.
-  - **Access:** Internal only (not exposed via api-gateway)
-  - **Data Contract:** 
-    - Request: `{"tickers": ["HG", "INTC", ...]}`
-    - Response: Produces [`WatchlistMetricsBatchResponse`](./DATA_CONTRACTS.md#31-watchlistmetrics)
-  - **Description:**  
-    For each requested ticker, data-service fetches recent price history (typically 3 months) and computes four summary metrics:
-    - `current_price`: Most recent close price
-    - `vol_last`: Most recent session's volume
-    - `vol_50d_avg`: Average volume over the last 50 trading sessions
-    - `day_change_pct`: Daily percentage change from previous close
-    
-    These metrics enable the monitoring-service orchestrator to derive `vol_vs_50d_ratio` and apply volume-based status logic without transferring full OHLCV time series. Tickers with insufficient or unavailable data return all-null metrics rather than being excluded.
-  
-  - **Request Body:**
-      ```
-      {
-        "tickers": ["HG", "INTC", "PATH"]
-      }
-      ```
-
-  - **Example Usage (from monitoring-service)**
-      ```
-      import requests
-
-      data_service_url = "http://data-service:3001"
-      payload = {"tickers": ["HG", "INTC", "PATH"]}
-      response = requests.post(f"{data_service_url}/data/watchlist-metrics/batch", json=payload)
-      ```
-
-  - **Example Success Response:**
-      ```
-      {
-        "metrics": {
-          "HG": {
-            "current_price": 18.97,
-            "vol_last": 317900.0,
-            "vol_50d_avg": 250000.0,
-            "day_change_pct": -0.35
-          },
-          "INTC": {
-            "current_price": 23.45,
-            "vol_last": 42100000.0,
-            "vol_50d_avg": 38500000.0,
-            "day_change_pct": 1.2
-          },
-          "PATH": {
-            "current_price": null,
-            "vol_last": null,
-            "vol_50d_avg": null,
-            "day_change_pct": null
-          }
-        }
-      }
-      ```
-
-  - **Error Responses:**
-    - `400 Bad Request`: Invalid request payload (missing or malformed `tickers` array)
-      ```
-      { "error": "Invalid request. 'tickers' array is required." }
-      ```
-    - `502 Bad Gateway`: Failed to fetch price history from provider
-      ```
-      { "error": "Failed to fetch price history for watchlist metrics" }
-      ```
-    - `500 Internal Server Error`: Unexpected failure during metric computation
-      ```
-      { "error": "Failed to compute watchlist metrics" }
-      ```
-
-  - **Notes:**
-    - This endpoint is designed specifically for watchlist refresh and should not be confused with `/data/return/batch`, which returns simple percentage returns for the market-health page.
-    - Metrics are computed on-demand from recent price history; no additional caching beyond existing price cache is used.
-    - The endpoint validates price data against the `PriceDataItem` contract before computing metrics to ensure data integrity.
-
-- **GET `/market-trends`**  
-  - Proxies to: data-service
-  - Purpose: Retrieves stored historical market trends. Can be filtered by a date range. Used by the leadership-service to provide historical context for its analysis.
-  - Query Parameters:
-    - start_date (optional): The start date for the filter (e.g., 2025-07-01).
-    - end_date (optional): The end date for the filter (e.g., 2025-08-01).
-  - **Data Contract:** N/A (Custom Response Structure)
-  - **Example Usage (from another service)**
-      ```PYTHON
-      {
-        import requests
-
-        data_service_url = "http://data-service:3001"
-        # Get all trends
-        response = requests.get(f"{data_service_url}/market-trends")
-        trends = response.json()
-
-        # Get trends for a specific range
-        response_filtered = requests.get(f"{data_service_url}/market-trends?start_date=2025-07-01&end_date=2025-07-31")
-        trends_filtered = response_filtered.json()
-      }
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      [
-        {
-          "date": "2025-07-26",
-          "status": "Bullish"
-        },
-        {
-          "date": "2025-07-25",
-          "status": "Bullish"
-        }
-      ]
-      ```
-
-- **POST `/screen/batch`**  
-  - Proxies to: screening-service
-  - Purpose: Processes a list of tickers and returns only those that pass the 8 foundational SEPA trend criteria. It's a critical component of the main screening pipeline, called by the scheduler-service.
-  - **Data Contract:** Produces `{"passing_tickers": TickerList}`. See [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
-  - **Request Body:**
-      ```JSON
-      {
-        "tickers": ["AAPL", "GOOGL", "TSLA"]
-      }
-      ```
-
-  - **Example Usage (from another service)**
-      ```PYTHON
-      import requests
-
-      screening_service_url = "http://screening-service:3002"
-      payload = {"tickers": ["AAPL", "GOOGL", "TSLA"]}
-      response = requests.post(f"{screening_service_url}/screen/batch", json=payload)
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      {
-        "passing_tickers": ["AAPL", "GOOGL"]
-      }
-      ```
-
-- **POST `/leadership/batch`**  
-  - Proxies to: leadership-service
-  - Purpose: Screens a batch of tickers (typically those that have passed the trend and VCP screens) against the 10 "Leadership Profile" criteria. Called by the scheduler-service to efficiently find the top candidates.
-  - **Data Contract:** Produces [`LeadershipProfileBatch`](./DATA_CONTRACTS.md#8-leadershipprofile).
-  - **Request Body:**
-      ```JSON
-      {
-        "tickers": ["AAPL", "GOOGL", "TSLA"]
-      }
-      ```
-
-  - **Example Usage (from another service)**
-      ```PYTHON
-      import requests
-
-      leadership_service_url = "http://leadership-service:3005"
-      payload = {"tickers": ["AAPL", "GOOGL", "TSLA"]}
-      response = requests.post(f"{leadership_service_url}/leadership/batch", json=payload)
-      ```
-
-  - **Example Success Response:**
-      ```JSON
-      {
-        "tickers": ["NVDA", "AAPL", "TSLA"]
-      }
-      ```
-  - **Example Usage (from another service)**
-      ```PYTHON
-      import requests
-
-      leadership_service_url = "http://leadership-service:3005"
-      payload = {"tickers": ["NVDA", "CRWD"]}
-      response = requests.post(f"{leadership_service_url}/leadership/batch", json=payload)
-      ```
-  - **Example Success Response:**
-      ```JSON
-      {
-          "passing_candidates": [
-              {
-                  "ticker": "NVDA",
-                  "passes": true,
-                  "leadership_summary": {
-                      "qualified_profiles": ["Explosive Grower", "Market Favorite"],
-                      "message": "Qualifies as a Explosive Grower, Market Favorite with supporting characteristics in other profiles."
-                  },
-                  "profile_details": {
-                      "explosive_grower": { "pass": true, "passed_checks": 4, "total_checks": 4 },
-                      "high_potential_setup": { "pass": false, "passed_checks": 1, "total_checks": 3 },
-                      "market_favorite": { "pass": true, "passed_checks": 2, "total_checks": 2 }
-                  },
-                  "industry": "Semiconductors"
-              }
-          ],
-          "unique_industries_count": 1,
-          "metadata": {
-              "total_processed": 2,
-              "total_passed": 1,
-              "execution_time": 5.123
-          }
-      }
-      ```
-- **GET `/market/sectors/industries`**
-  - Service: `data-service`
-  - Purpose: Provides a list of potential leader stocks, grouped by industry, sourced from Yahoo Finance sectors. This is a primary data source for the `monitoring-service`.
-  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
-  - **Example Usage (from another service)**:
-      ```python
-      import requests
-      data_service_url = "http://data-service:3001"
-      response = requests.get(f"{data_service_url}/market/sectors/industries")
-      industry_candidates = response.json()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "Semiconductors": ["NVDA", "AVGO", "QCOM", "AMD", "INTC"],
-        "Software - Infrastructure": ["MSFT", "CRWD", "NET", "SNOW"]
-      }
-      ```
-
-- **GET `/market/screener/day_gainers`**
-  - Service: `data-service`
-  - Purpose: Provides a fallback list of potential leader stocks, grouped by industry, sourced from the Yahoo Finance "Day Gainers" screener.
-  - **Data Contract:** N/A (Custom Response: `Dict[str, List[str]]`)
-  - **Example Usage (from another service)**:
-      ```python
-      import requests
-      data_service_url = "http://data-service:3001"
-      response = requests.get(f"{data_service_url}/market/screener/day_gainers")
-      gainer_candidates = response.json()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "Application Software": ["APP", "UIP"],
-        "Internet Content & Information": ["GOOGL", "META"]
-      }
-      ```
-
-- **POST `/data/return/batch`**
-  - Service: `data-service`
-  - Purpose: Batch percent returns over any yfinance-supported period. Used by the `monitoring-service` to efficiently gather performance data for ranking industries. 
-  - **Data Contract:** N/A (Custom Response: `Dict[str, float | None]`)
-  - **Request Body (JSON):**
-      - `tickers` (required): A list of stock ticker strings.
-      - `period` (optional): Allowed examples: "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max". If period is omitted, default is 3mo to emphasize medium-term leadership.
-  - **Example Usage (from another service)**:
-      ```python
-      import requests
-      data_service_url = "http://data-service:3001"
-      payload = {"tickers": ["NVDA", "AAPL", "FAKETICKER"], "period": period}
-      response = requests.post(f"{data_service_url}/data/return/batch", json=payload)
-      returns = response.json()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "NVDA": 15.5,
-        "AAPL": 8.2,
-        "FAKETICKER": null
-      }
-      ```
-
-- **GET `/market/breadth`**
-  - Service: `data-service`
-  - Purpose: Retrieves aggregate market breadth data, specifically the total number of new 52-week highs and lows for a major exchange. This is the primary source for the `monitoring-service`'s market health overview.
-  - **Data Contract:** Produces [`MarketBreadthResponse`](./DATA_CONTRACTS.md#11-marketbreadth).
-  - **Example Usage (from another service)**:
-      ```python
-      import requests
-      data_service_url = "http://data-service:3001"
-      response = requests.get(f"{data_service_url}/market/breadth")
-      breadth_data = response.json()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "new_highs": 150,
-        "new_lows": 75,
-        "high_low_ratio": 2.0
-      }
-      ```
-
-- **GET `/market/screener/52w_highs`**
-  - Service: `data-service`
-  - Purpose: Returns the full quotes list for the Yahoo Finance 52-week highs screener (US by default), used by monitoring-service to derive leading industries and breadth.
-  - **Query Parameters**: region (optional, default: US)
-  - **Data Contract:** [`ScreenerQuoteList`](./DATA_CONTRACTS.md#13-ScreenerQuote).
-    - symbol: string
-    - industry: string | null
-    - shortName: string | null
-    - sector: string | null
-    - regularMarketPrice: number | null
-    - fiftyTwoWeekHigh: number | null
-    - fiftyTwoWeekHighChangePercent: number | null
-    - marketCap: number | null
-  - **Example Usage (from another service)**:
-      ```python
-      import requests
-      data_service_url = "http://data-service:3001"
-      response = requests.get(f"{data_service_url}/market/screener/52w_highs")
-      leading_candidates = response.json()
-      ```
-  - **Example Success Response (truncated)**:
-      ```json
-      [
-        {
-          "symbol": "NVDA",
-          "industry": "Semiconductors",
-          "shortName": "NVIDIA Corporation",
-          "sector": "Technology",
-          "regularMarketPrice": 123.45,
-          "fiftyTwoWeekHigh": 130.00,
-          "fiftyTwoWeekHighChangePercent": -0.05,
-          "marketCap": 2220000000000
-        },
-        {
-          "symbol": "MSFT",
-          "industry": "Software - Infrastructure",
-          "shortName": "Microsoft Corporation",
-          "sector": "Technology",
-          "regularMarketPrice": 410.10,
-          "fiftyTwoWeekHigh": 415.00,
-          "fiftyTwoWeekHighChangePercent": -0.012,
-          "marketCap": 3100000000000
-        }
-      ]
-      ```
-  - **Notes**:
-    - The list is already filtered for US tickers when region=US.
-    - Only the listed fields are returned to minimize payload and avoid leaking upstream fields.
-
-- **GET `/monitor/internal/leaders`**
-  - Service: `monitoring-service`
-  - Purpose: Provides a ranked list of leading stocks grouped by industry, 52-week highs breadth; falls back to avg 1M returns if screener unavailable. This logic is consumed by the main `/monitor/market-health` endpoint.
-  - **Data Contract**: Produces [`MarketLeaders`](./DATA_CONTRACTS.md#10-markethealth).
-  - **Example Usage (from within the monitoring service)**:
-      ```python
-      # This is called internally, not a direct HTTP request from outside.
-      from market_leaders import get_market_leaders
-      leaders_data = get_market_leaders()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "leading_industries": [
-          {
-            "industry": "Semiconductors",
-            "stock_count": 12,
-            "stocks": [
-              { "ticker": "NVDA", "percent_change_3m": 15.5 },
-              { "ticker": "AVGO", "percent_change_3m": 11.2 }
-            ]
-          }
-        ]
-      }
-      ```
-
-- **GET `/monitor/internal/health`**
-  - Service: `monitoring-service`
-  - Purpose: Returns a market health snapshot including market stage and correction depth. It retrieves breadth statistics (new highs/lows) by calling the `data-service`'s `/market/breadth` endpoint. This logic is consumed by the main `/monitor/market-health` endpoint.
-  - **Query Parameters**: None. 
-  - **Data Contract**: Produces [`MarketOverview`](./DATA_CONTRACTS.md#10-markethealth).
-  - **Example Usage (from within the monitoring service)**:
-      ```python
-      # This is called internally, not a direct HTTP request from outside.
-      from market_health_utils import get_market_health
-      health_data = get_market_health()
-      ```
-  - **Example Success Response**:
-      ```json
-      {
-        "market_stage": "Bullish",
-        "correction_depth_percent": -5.2,
-        "high_low_ratio": 2.0,
-        "new_highs": 150,
-        "new_lows": 75
-      }
-      ```
-
-- **POST `/monitor/internal/watchlist/batch/add`**
-  - Service: `monitoring-service`
-  - Purpose: Adds multiple tickers to the watchlist in a single batch operation. Designed for internal automation and bulk import workflows. Normalizes tickers to uppercase, deduplicates, and handles re-introduction from archive automatically.
-  - **Request Body (JSON)**:
-    - `tickers` (required): A list of stock ticker symbols to add.
-  - **Data Contract:**
-    - Request: [`InternalBatchAddRequest`](./DATA_CONTRACTS.md#23-internalbatchaddrequest)
-    - Response: [`InternalBatchAddResponse`](./DATA_CONTRACTS.md#24-internalbatchaddresponse)
-  - **Example Usage**:
-    ```bash
-    curl -X POST http://monitoring-service:3006/monitor/internal/watchlist/batch/add \
-      -H "Content-Type: application/json" \
-      -d '{"tickers": ["AAPL", "MSFT", "GOOGL"]}'
-    ```
-  - **Example Success Response**:
-    - 201 Created (when at least one ticker newly added)
-      ```json
-      {
-        "message": "Batch add completed: added 3, skipped 0. Sample: AAPL, MSFT, GOOGL",
-        "added": 3,
-        "skipped": 0
-      }
-      ```
-    - 200 OK (when all tickers already existed)
-      ```json
-      {
-        "message": "Batch add completed: added 0, skipped 3. Sample: AAPL, MSFT, GOOGL",
-        "added": 0,
-        "skipped": 3
-      }
-      ```
-  - **Example Error Response**:
-    - 400 Bad Request
-      ```json
-      { "error": "Invalid request body for internal batch add" }
-      ```
-    - 400 Bad Request (validation failure)
-      ```json
-      { "error": "Invalid ticker format in tickers array" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-  - **Notes**:
-    - Tickers are normalized to uppercase and deduplicated before processing.
-    - Items previously in `archived_watchlist_items` are automatically removed from archive and added to the active watchlist.
-    - All successfully added items are initialized with `is_favourite: false` and `last_refresh_status: "PENDING"`.
-    - User scope is enforced internally via `DEFAULT_USER_ID`.
-    - This endpoint is internal-only and not exposed through the api-gateway.
-
-- **POST `/monitor/watchlist/batch/remove`**
-  - Service: `monitoring-service`
-  - **Purpose**: Public endpoint to remove multiple tickers from the active watchlist.
-  - **Response (200 OK):**
+### **POST `/cache/clear`**
+- **Proxies to:** data-service (port 3001)
+- **Purpose:** Manually clears cached data from Redis. Developer utility to force a refresh of data from source APIs. Can clear all caches or a specific type of cache.
+- **Data Contract:** N/A
+- **Request Body (JSON, optional):**
+  - Specify a `type` to clear a specific cache. If the body is omitted or `type` is `"all"`, all caches are cleared.
+  - Valid types: `"price"`, `"news"`, `"financials"`, `"industry"`.
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/cache/clear
+  ```
+- **Example Success Response:**
   ```json
   {
-    "message": "Removed 1 watchlist item. Not found: 0. Sample: AAPL",
-    "removed": 1,
+    "message": "All data service caches have been cleared."
+  }
+  ```
+- **Example Usage (Clear only price cache):**
+  ```bash
+  curl -X POST http://localhost:3000/cache/clear \
+    -H "Content-Type: application/json" \
+    -d '{"type": "price"}'
+  ```
+- **Example Success Response (Specific):**
+  ```json
+  {
+    "keys_deleted": 1542,
+    "message": "Cleared 1542 entries from the 'price' cache."
+  }
+  ```
+- **Example Error Response (Invalid Type):**
+  ```json
+  {
+    "error": "Invalid cache type 'invalid_type'. Valid types are: ['price', 'news', 'financials', 'industry'] or 'all'."
+  }
+  ```
+
+***
+
+## Screening Service Routes
+
+### **GET `/screen/:ticker`**
+- **Proxies to:** screening-service (port 3002)
+- **Purpose:** Applies the 7 quantitative screening criteria to the specified ticker and returns a detailed pass/fail result.
+- **Error Handling for Invalid Tickers:** Returns `502 Bad Gateway` with a descriptive error message.
+- **Data Contract:** Produces [`ScreeningResultSingle`](./DATA_CONTRACTS.md#6-screeningresult).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/screen/AAPL
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "ticker": "AAPL",
+    "passes": true,
+    "details": {
+      "current_price_above_ma150_ma200": true,
+      "ma150_above_ma200": true,
+      "ma200_trending_up": true,
+      "ma50_above_ma150_ma200": true,
+      "current_price_above_ma50": true,
+      "price_30_percent_above_52_week_low": true,
+      "price_within_25_percent_of_52_week_high": true
+    },
+    "values": {
+      "current_price": 170.00,
+      "ma_50": 165.00,
+      "ma_150": 155.00,
+      "ma_200": 150.00,
+      "low_52_week": 120.00,
+      "high_52_week": 180.00
+    }
+  }
+  ```
+- **Example Error Response (for invalid ticker):**
+  ```json
+  {
+    "error": "Invalid or non-existent ticker: FAKETICKERXYZ",
+    "details": "Could not retrieve price data for FAKETICKERXYZ from yfinance."
+  }
+  ```
+
+***
+
+## Analysis Service Routes
+
+### **GET `/analyze/:ticker`**
+- **Proxies to:** analysis-service (port 3003)
+- **Purpose:** Performs VCP analysis on historical data and returns a pass/fail boolean, a VCP footprint string, and detailed data for charting.
+- **Query Parameters:**
+  - `mode` (optional): Set to `fast` to enable fail-fast evaluation for batch processing. If omitted, defaults to `full` evaluation, which returns a detailed breakdown of all checks.
+- **Error Handling:** Returns `502 Bad Gateway` if the data-service cannot find the ticker, and `503 Service Unavailable` if the data-service cannot be reached.
+- **Data Contract:** Produces [`VCPAnalysisSingle`](./DATA_CONTRACTS.md#7-vcpanalysis).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/analyze/AAPL?mode=fast
+  ```
+- **Example Success Response (`full` mode):**
+  ```json
+  {
+    "ticker": "AAPL",
+    "vcp_pass": true,
+    "vcpFootprint": "10D 8.6% | 5D 5.3%",
+    "vcp_details": {
+      "pivot_validation": {
+        "passes": true,
+        "message": "Valid pivot detected."
+      },
+      "volume_validation": {
+        "passes": true,
+        "message": "Volume dried up at pivot."
+      }
+    },
+    "chart_data": {
+      "detected": true,
+      "message": "VCP analysis complete.",
+      "vcpLines": [{"time": "2024-06-10", "value": 195.0}, ...],
+      "vcpContractions": [
+        {
+          "start_date": "2024-06-10",
+          "start_price": 195.0,
+          "end_date": "2024-06-20",
+          "end_price": 178.2,
+          "depth_percent": 0.086
+        }
+      ],
+      "pivotPrice": 196.95,
+      "buyPoints": [{"value": 196.95}],
+      "sellPoints": [{"value": 188.10}],
+      "ma20": [{"time": "2024-07-01", "value": 192.5}, ...],
+      "ma50": [{"time": "2024-07-01", "value": 190.0}, ...],
+      "ma150": [{"time": "2024-07-01", "value": 185.0}, ...],
+      "ma200": [{"time": "2024-07-01", "value": 180.0}, ...],
+      "historicalData": [...]
+    }
+  }
+  ```
+
+***
+
+## Leadership Service Routes
+
+### **GET `/leadership/:ticker`**
+- **Proxies to:** leadership-service (port 3005)
+- **Purpose:** Applies the 9 leadership criteria, grouped into 3 distinct profiles, to the specified ticker.
+- **Data Contract:** Produces [`LeadershipProfileSingle`](./DATA_CONTRACTS.md#8-leadershipprofile).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/leadership/AAPL
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "ticker": "NVDA",
+    "passes": true,
+    "leadership_summary": {
+      "qualified_profiles": [
+        "Explosive Grower",
+        "Market Favorite"
+      ],
+      "message": "Qualifies as a Explosive Grower, Market Favorite with supporting characteristics in other profiles."
+    },
+    "profile_details": {
+      "explosive_grower": {
+        "pass": true,
+        "passed_checks": 4,
+        "total_checks": 4
+      },
+      "high_potential_setup": {
+        "pass": false,
+        "passed_checks": 1,
+        "total_checks": 3
+      },
+      "market_favorite": {
+        "pass": true,
+        "passed_checks": 2,
+        "total_checks": 2
+      }
+    },
+    "details": {
+      "is_small_to_mid_cap": {
+        "pass": false,
+        "message": "Market cap $2,220,000,000,000 is outside the required range."
+      },
+      "is_industry_leader": {
+        "pass": true,
+        "message": "Passes. Ticker ranks #1 out of 15 in its industry."
+      }
+    },
+    "industry": "Semiconductors",
+    "metadata": {
+      "execution_time": 0.458
+    }
+  }
+  ```
+
+### **GET `/leadership/industry_rank/:ticker`**
+- **Proxies to:** leadership-service (port 3005)
+- **Purpose:** Ranks the specified ticker against its industry peers based on revenue, market cap, and net income.
+- **Data Contract:** N/A (Custom Response Structure)
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/leadership/industry_rank/NVDA
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "ticker": "NVDA",
+    "industry": "Semiconductors",
+    "rank": 1,
+    "total_peers_ranked": 15,
+    "ranked_peers_data": [
+      {
+        "ticker": "NVDA",
+        "revenue": 60931000000,
+        "marketCap": 2220000000000,
+        "netIncome": 29760000000,
+        "revenue_rank": 1.0,
+        "market_cap_rank": 1.0,
+        "earnings_rank": 1.0,
+        "combined_rank": 3
+      },
+      {
+        "ticker": "AVGO",
+        "revenue": 35824000000,
+        "marketCap": 605000000000,
+        "netIncome": 11500000000,
+        "revenue_rank": 2.0,
+        "market_cap_rank": 2.0,
+        "earnings_rank": 2.0,
+        "combined_rank": 6
+      }
+    ]
+  }
+  ```
+
+***
+
+## Monitoring Service Routes
+
+### **GET `/monitor/market-health`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Orchestrates calls to internal services to build the complete data payload for the frontend's market health page. It calls the `data-service` to get market breadth (new highs/lows) and identify leading industries.
+- **Data Contract:** Produces [`MarketHealthResponse`](./DATA_CONTRACTS.md#10-markethealth).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/monitor/market-health
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "market_overview": {
+      "market_stage": "Bullish",
+      "correction_depth_percent": -5.2,
+      "high_low_ratio": 2.0,
+      "new_highs": 150,
+      "new_lows": 75,
+      "as_of_date": "2025-11-01T12:00:00Z"
+    },
+    "leaders_by_industry": {
+      "leading_industries": [
+        {
+          "industry": "Semiconductors",
+          "stock_count": 2,
+          "stocks": [
+            {"ticker": "NVDA", "percent_change_3m": 15.5},
+            {"ticker": "AVGO", "percent_change_3m": 11.2}
+          ]
+        },
+        {
+          "industry": "Software - Infrastructure",
+          "stock_count": 1,
+          "stocks": [
+            {"ticker": "CRWD", "percent_change_3m": 12.1}
+          ]
+        }
+      ]
+    },
+    "indices_analysis": {
+      "^GSPC": {
+        "ticker": "^GSPC",
+        "vcp_pass": true,
+        "vcpFootprint": "...",
+        "chart_data": {...}
+      }
+    }
+  }
+  ```
+
+### **GET `/monitor/watchlist`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Retrieves all stocks from the user's watchlist, excluding any tickers currently in the portfolio (mutual exclusivity).
+- **Query Parameters:**
+  - `exclude` (optional): Comma-separated list of tickers to exclude (typically portfolio tickers)
+    - Example: `?exclude=CRWD,NET,DDOG`
+- **Data Contract:** Produces [`WatchlistListResponse`](./DATA_CONTRACTS.md#14-watchlist).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/monitor/watchlist
+  curl http://localhost:3000/monitor/watchlist?exclude=CRWD,NET
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "items": [
+      {
+        "ticker": "NVDA",
+        "status": "Buy Ready",
+        "date_added": "2025-09-20T10:00:00Z",
+        "is_favourite": false,
+        "last_refresh_status": "PASS",
+        "last_refresh_at": "2025-11-01T12:00:00Z",
+        "failed_stage": null,
+        "current_price": 850.00,
+        "pivot_price": 855.00,
+        "pivot_proximity_percent": -0.58,
+        "is_leader": true,
+        "vol_last": 317900.0,
+        "vol_50d_avg": 250000.0,
+        "vol_vs_50d_ratio": 1.27,
+        "day_change_pct": -0.35,
+        "vcp_pass": true,
+        "vcpFootprint": "10D 5.2% | 13D 5.0% | 10D 6.2%",
+        "is_pivot_good": true,
+        "pattern_age_days": 15,
+        "has_pivot": true,
+        "is_at_pivot": true,
+        "has_pullback_setup": false,
+        "days_since_pivot": 15,
+        "fresh": true,
+        "message": "Pivot is fresh (formed 15 days ago) and is not extended."
+      }
+    ],
+    "metadata": {"count": 1}
+  }
+  ```
+- **Example Error Response:**
+  - 503 Service Unavailable
+    ```json
+    {"error": "Service unavailable - database connection failed"}
+    ```
+  - 500 Internal Server Error
+    ```json
+    {"error": "Invalid response format from service"}
+    ```
+- **Status Derivation Logic:**
+  - `"Pending"`: `last_refresh_status == "PENDING"` or `UNKNOWN` (not yet analyzed).
+  - `"Failed"`: `last_refresh_status == "FAIL"` (failed health check)
+  - `"Buy Ready"`: `PASS` with a valid pivot, proximity within the buy band (e.g., 0% to 5%), and positive VCP/volume signals.
+  - `"Buy Alert"`: `PASS` with a valid VCP base (either a maturing pivot with contraction OR a controlled pullback setup) and volume contraction.
+  - `"Watch"`: `PASS` but no actionable VCP/volume setup, or stale/guardrailed pattern.
+  - **Note:** Missing pivot data in rich mode defaults to "Watch" rather than "Buy Alert".
+
+### **POST `/monitor/watchlist/batch/remove`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Removes multiple tickers from the watchlist and archives them in a single batch operation.
+- **Data Contract:**
+  - Request: [`WatchlistBatchRemoveRequest`](./DATA_CONTRACTS.md#14-watchlist)
+  - Response: [`WatchlistBatchRemoveResponse`](./DATA_CONTRACTS.md#14-watchlist)
+- **Request Body:**
+  ```json
+  {"tickers": ["AAPL", "MSFT", "NONEXISTENT"]}
+  ```
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/monitor/watchlist/batch/remove \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["AAPL", "MSFT"]}'
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "message": "Removed 2 watchlist items. Not found: 0. Sample: AAPL, MSFT",
+    "removed": 2,
     "notfound": 0,
-    "removed_tickers": ["AAPL"],
+    "removed_tickers": ["AAPL", "MSFT"],
     "not_found_tickers": []
   }
   ```
 
-  - **Field Descriptions:**
-  - `removed`: Count of tickers successfully removed
-  - `notfound`: Count of requested tickers not found in watchlist
-  - `removed_tickers`: List of specific tickers that were removed (for UI detail)
-  - `not_found_tickers`: List of specific tickers that were requested but not present
+### **DELETE `/monitor/watchlist/:ticker`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Removes a single ticker from the watchlist and archives it with a MANUAL_DELETE reason.
+- **Path Parameter:**
+  - `ticker`: Stock ticker symbol to remove
+- **Example Usage:**
+  ```bash
+  curl -X DELETE http://localhost:3000/monitor/watchlist/AAPL
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "message": "Ticker AAPL removed from watchlist and archived."
+  }
+  ```
+- **Example Error Response:**
+  ```json
+  {
+    "error": "Ticker AAPL not found in watchlist"
+  }
+  ```
 
-  - **Use Case:**
-  Frontend can display both summary counts and detailed per-ticker feedback (e.g., "Removed: AAPL. Not found: MSFT, TSLA").
+### **POST `/monitor/watchlist/:ticker/favourite`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Toggles the favourite flag for a watchlist ticker. Favourited tickers are protected from auto-archiving.
+- **Path Parameter:**
+  - `ticker`: Stock ticker symbol
+- **Data Contract:**
+  - Request: [`WatchlistFavouriteRequest`](./DATA_CONTRACTS.md#19-watchlistfavourite)
+  - Response: [`WatchlistFavouriteResponse`](./DATA_CONTRACTS.md#19-watchlistfavourite)
+- **Request Body:**
+  ```json
+  {"is_favourite": true}
+  ```
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/monitor/watchlist/NVDA/favourite \
+    -H "Content-Type: application/json" \
+    -d '{"is_favourite": true}'
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "message": "Favourite status updated for NVDA"
+  }
+  ```
 
-- **POST `/monitor/watchlist/batch/add`**
-  - Service: `monitoring-service`
-  - Purpose: Public endpoint to add multiple tickers to the watchlist in a single batch operation. Useful for "Add All" features (e.g., adding all market leaders).
-  - **Request Body (JSON)**:
-    - `tickers` (required): A list of stock ticker symbols to add.
-  - **Data Contract:**
-    - Request: [`InternalBatchAddRequest`](./DATA_CONTRACTS.md#23-internalbatchaddrequest)
-    - Response: [`InternalBatchAddResponse`](./DATA_CONTRACTS.md#24-internalbatchaddresponse)
-  - **Example Usage**:
-    ```bash
-    curl -X POST http://monitoring-service:3006/monitor/watchlist/batch/add \
-      -H "Content-Type: application/json" \
-      -d '{"tickers": ["AAPL", "MSFT", "GOOGL"]}'
-    ```
-  - **Example Success Response**:
-    - 201 Created (when at least one ticker newly added)
-      ```json
+### **GET `/monitor/archive`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Retrieves all archived watchlist items with their archive metadata.
+- **Data Contract:** Produces [`ArchiveListResponse`](./DATA_CONTRACTS.md#14-watchlist).
+- **Example Usage:**
+  ```bash
+  curl http://localhost:3000/monitor/archive
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "archived_items": [
       {
-        "message": "Batch add completed: added 3, skipped 0. Sample: AAPL, MSFT, GOOGL",
-        "added": 3,
-        "skipped": 0
-      }
-      ```
-    - 200 OK (when all tickers already existed)
-      ```json
+        "ticker": "TSLA",
+        "reason": "FAILED_HEALTH_CHECK",
+        "archived_at": "2025-10-15T08:30:00Z",
+        "failed_stage": "screening"
+      },
       {
-        "message": "Batch add completed: added 0, skipped 3. Sample: AAPL, MSFT, GOOGL",
-        "added": 0,
-        "skipped": 3
+        "ticker": "AAPL",
+        "reason": "MANUAL_DELETE",
+        "archived_at": "2025-10-20T14:22:00Z",
+        "failed_stage": null
       }
-      ```
-  - **Example Error Response**:
-    - 400 Bad Request
-      ```json
-      { "error": "Invalid request body for internal batch add" }
-      ```
-    - 400 Bad Request (validation failure)
-      ```json
-      { "error": "Invalid ticker format in tickers array" }
-      ```
-    - 503 Service Unavailable
-      ```json
-      { "error": "Service unavailable - database connection failed" }
-      ```
-  - **Notes**:
-    - Tickers are normalized to uppercase and deduplicated before processing.
-    - Items previously in `archived_watchlist_items` are automatically removed from archive and added to the active watchlist.
-    - All successfully added items are initialized with `is_favourite: false` and `last_refresh_status: "PENDING"`.
-    - User scope is enforced internally via `DEFAULT_USER_ID`.
+    ],
+    "metadata": {"count": 2}
+  }
+  ```
 
-- **POST `/monitor/internal/watchlist/refresh-status`**
-  - Service: monitoring-service
-  - **Purpose:** Primary internal orchestrator to run the full watchlist refresh pipeline (screen, VCP, freshness, data enrichment, status derivation) and persist updated statuses and archives. Supersedes the deprecated batch update endpoints.
-  - **Access:** Internal only (called by scheduler-service refresh_watchlist_task).
-  - **Data Contract:** Produces [`WatchlistRefreshStatusResponse`](./DATA_CONTRACTS.md#29-watchlistrefreshstatusresponse)
-  - **Description:**  
-    This endpoint encapsulates the full watchlist health-check orchestration:
-    1. Loads active watchlist items from MongoDB
-    2. Calls screening-service (`POST /screen/batch`), analysis-service (`POST /analyze/batch`, `POST /analyze/freshness/batch`), and **data-service (`POST /data/watchlist-metrics/batch`)** to gather screening, VCP, freshness, and price/volume signals
-    3. Computes `last_refresh_status` (PENDING, PASS, FAIL, UNKNOWN) and `failed_stage` for each ticker based on the funnel logic
-    4. Enriches items with VCP, freshness, and data-service metrics, then derives final watchlist UI status (Buy Ready, Watch, etc.)
-    5. Partitions items into Update List (PASS or Favourite) and Archive List (FAIL and Not Favourite)
-    6. Performs bulk updates (List A: active items) and bulk archiving (List B: failed health checks with `ArchiveReason.FAILED_HEALTH_CHECK`)
-    7. Returns aggregate counts (`updated_items`, `archived_items`, `failed_items`)
-  - **Example Usage (internal):**
+### **DELETE `/monitor/archive/:ticker`**
+- **Proxies to:** monitoring-service (port 3006)
+- **Purpose:** Permanently deletes a ticker from the archived_watchlist_items collection (hard delete).
+- **Path Parameter:**
+  - `ticker`: Stock ticker symbol to permanently delete
+- **Data Contract:** Produces [`DeleteArchiveResponse`](./DATA_CONTRACTS.md#19-deletearchive).
+- **Example Usage:**
+  ```bash
+  curl -X DELETE http://localhost:3000/monitor/archive/AAPL
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "message": "Archived ticker AAPL permanently deleted."
+  }
+  ```
+- **Example Error Response:**
+  ```json
+  {
+    "error": "Ticker AAPL not found in archive"
+  }
+  ```
+
+***
+
+## Scheduler Service Routes
+
+**Base Path:** `/jobs`
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/jobs/screening/start` | `POST` | **Async.** Initiates a full market screening pipeline. Returns a Job ID immediately. |
+| `/jobs/screening/stream/:job_id` | `GET` | **Stream.** Connects to a Server-Sent Events (SSE) stream to track job progress in real-time. |
+| `/jobs/screening/history` | `GET` | Retrieves a paginated list of past screening jobs (summary only). |
+| `/jobs/screening/history/:job_id` | `GET` | Retrieves the full details (including survivor lists) for a specific job. |
+| `/jobs/watchlist/refresh` | `POST` | **Async.** Initiates a health check on all watchlist items. Returns a Job ID immediately. |
+| `/jobs/watchlist/stream/:job_id` | `GET` | **Stream.** Connects to an SSE stream to track watchlist refresh progress. |
+
+### **POST `/jobs/screening/start`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Initiates an asynchronous screening pipeline job. Returns immediately with a job ID for tracking.
+- **Data Contract:** Produces [`ScreeningJobResult`](./DATA_CONTRACTS.md#9-screeningjobresult).
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/jobs/screening/start
+  ```
+- **Example Success Response:**
+  ```json
+    {
+      "job_id": "string",
+      "status": "PENDING",
+      "message": "Screening job submitted successfully",
+      "monitor_url": "/jobs/screening/stream/{job_id}"
+    }
     ```
-    curl -X POST http://monitoring-service:3006/monitor/internal/watchlist/refresh-status
-    ```
-  - **Request Body:** None (single-user mode).
-  - **Response (200 OK):**
+
+### **GET `/jobs/screening/stream/:job_id`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Streams real-time progress updates for a specific screening job using Server-Sent Events (SSE).
+- **Content-Type:** `text/event-stream`
+- **Data Contract:** Emits events matching [`JobProgressEvent`](./DATA_CONTRACTS.md#32-async-job-models), [`JobCompleteEvent`](./DATA_CONTRACTS.md#32-async-job-models), or [`JobErrorEvent`](./DATA_CONTRACTS.md#32-async-job-models).
+- **Example Usage:**
+  ```bash
+  curl -N http://localhost:3000/jobs/screening/stream/20251015-123000-ABC123DE
+  ```
+- **Event Stream Example:**
+  ```text
+  data: {"job_id": "...", "status": "RUNNING", "step_current": 1, "step_total": 5, "message": "Fetching tickers...", "updated_at": "2025-10-15T12:30:05Z"}
+  
+  data: {"job_id": "...", "status": "RUNNING", "step_current": 2, "step_total": 5, "message": "Running Trend Scan...", "updated_at": "2025-10-15T12:30:10Z"}
+  
+  event: complete
+  data: {"job_id": "...", "status": "SUCCESS", "summary_counts": {"final_candidates": 12}, "completed_at": "2025-10-15T12:35:00Z"}
+  ```
+
+### **POST `/jobs/watchlist/refresh`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** TInitiates an asynchronous watchlist health check job. Returns immediately with a job ID.
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/jobs/watchlist/refresh
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "job_id": "string",
+    "status": "PENDING",
+    "message": "Watchlist refresh job submitted successfully",
+    "monitor_url": "/jobs/watchlist/stream/{job_id}"
+  }
+  ```
+
+### **GET `/jobs/screening/stream/:job_id`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Streams real-time progress updates via SSE.
+- **Implementation Detail:** Polls database state every 1s; emits heartbeats every 15s.
+- **Response Headers:** `X-Accel-Buffering: no`, `Cache-Control: no-cache`
+- **Data Contract:** Emits [`JobProgressEvent`](./DATA_CONTRACTS.md#32-async-job-models).
+
+### **GET `/jobs/screening/history`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Retrieves a paginated list of past screening jobs.
+- **Query Parameters**
+  - `limit` (optional, int): Number of records to return. Default: 20.
+  - `skip` (optional, int): Number of records to skip. Default: 0.
+
+- **Success Response**
+  - **Code**: 200 OK
+  - **Content**: Array of job summary objects.
+
+  ```json
+  [
+    {
+      "job_id": "a1b2c3d4-...",
+      "job_type": "SCREENING",
+      "status": "SUCCESS",
+      "created_at": "2023-11-12T10:00:00Z",
+      "completed_at": "2023-11-12T10:05:00Z",
+      "result_summary": {
+        "final_candidates_count": 12,
+        "total_process_time": 300.5
+      }
+    }
+  ]
+  ```
+
+### **GET `/jobs/screening/history/{job_id}`**
+- **Proxies to:** scheduler-service (port 3004)
+- **Purpose:** Retrieves the full details of a specific screening job, including the lightweight results lists and full progress logs.
+- **Success Response**
+  - **Code**: 200 OK
+  - **Content**: Full `ScreeningJobRunRecord`.
+
+  ```json
+  {
+    "job_id": "a1b2c3d4-...",
+    "status": "SUCCESS",
+    "created_at": "2023-11-12T10:00:00Z",
+    "options": { "mode": "full" },
+    "progress_log": [
+      {
+        "step": 1,
+        "step_name": "fetch_tickers",
+        "timestamp": "2023-11-12T10:00:01Z",
+        "message": "Fetched 5000 tickers"
+      }
+    ],
+    "results": {
+      "trend_survivors": ["AAPL", "NVDA"],
+      "final_candidates": ["NVDA"]
+    },
+    "result_summary": {
+      "final_candidates_count": 1
+    }
+  }
+  ```
+
+- **Error Response**
+  - **Code**: 404 Not Found
+  - **Content**: `{ "error": "Job not found" }`
+
+***
+
+# Internal-Only APIs (Service-to-Service)
+
+These endpoints are intended for inter-service communication within the backend architecture and are not designed for direct frontend consumption.
+
+**Note on Direct Access:** Endpoints marked as "Served by: [service] (direct)" are NOT routable through the API Gateway. For service-to-service calls inside Docker, use the container DNS name (e.g., `http://data-service:3001`). For local development from the host machine, use `http://localhost:[port]`.
+
+## Internal Data Service Routes
+
+### **POST `/financials/core/batch`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Retrieves core financial data for a batch of tickers. Used by leadership-service for industry peer ranking.
+- **Data Contract:** Success object contains key-value pairs where values adhere to [`CoreFinancials`](./DATA_CONTRACTS.md#3-corefinancials).
+- **Request Body:**
+  ```json
+  {"tickers": ["NVDA", "AVGO", "FAKETICKER"]}
+  ```
+- **Example Usage (via gateway):**
+  ```bash
+  curl -s -X POST "http://localhost:3000/financials/core/batch" \
+    -H "Content-Type: application/json" \
+    -d '{"tickers":["NVDA","AVGO","FAKETICKER"]}' | jq .
+  ```
+- **Example Response:**
+  ```json
+  {
+    "success": {
+      "NVDA": {
+        "ticker": "NVDA",
+        "marketCap": 4580157423616.0,
+        "sharesOutstanding": 24305000000.0,
+        "floatShares": 23330430000.0,
+        "industry": "Semiconductors",
+        "ipoDate": "1999-01-22",
+        "annual_earnings": [
+          {"Revenue": 130497000000.0, "Earnings": 2.97, "Net Income": 72880000000.0}
+        ],
+        "quarterly_earnings": [
+          {"Revenue": 57006000000.0, "Earnings": 1.31, "Net Income": 31910000000.0}
+        ],
+        "quarterly_financials": [
+          {"Total Revenue": 57006000000.0, "Net Income": 31910000000.0}
+        ]
+      },
+      "AVGO": {
+        "ticker": "AVGO",
+        "marketCap": 1669923995648.0,
+        "sharesOutstanding": 4741273799.0,
+        "floatShares": null,
+        "industry": null,
+        "ipoDate": "2009-08-06",
+        "annual_earnings": [
+          {"Revenue": 63887000000.0, "Earnings": 4.91, "Net Income": 23126000000.0}
+        ],
+        "quarterly_earnings": [
+          {"Revenue": 18015000000.0, "Earnings": 1.8, "Net Income": 8518000000.0}
+        ],
+        "quarterly_financials": [
+          {"Total Revenue": 18015000000.0, "Net Income": 8518000000.0}
+        ]
+      }
+    },
+    "failed": ["FAKETICKER"]
+  }
+  ```
+
+### **GET `/industry/peers/:ticker`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Retrieves industry classification and a list of peer tickers. Used by the leadership-service.
+- **Data Contract:** Produces [`IndustryPeers`](./DATA_CONTRACTS.md#5-industrypeers).
+- **Example Usage (via gateway):**
+  ```bash
+  curl http://localhost:3000/industry/peers/NVDA
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "industry": "Semiconductors",
+    "peers": ["AVGO", "QCOM", "AMD", "INTC"]
+  }
+  ```
+
+### **POST `/market-trend/calculate`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** On-demand calculation and storage of market trends for specific dates. Internal utility endpoint.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `market-trend` not registered). Services must call data-service directly at `http://data-service:3001/market-trend/calculate` (inside Docker) or `http://localhost:3001/market-trend/calculate` (from host).
+- **Request Body:**
+  ```json
+  {"dates": ["2025-08-26", "2025-08-25"]}
+  ```
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl -X POST http://localhost:3001/market-trend/calculate \
+    -H "Content-Type: application/json" \
+    -d '{"dates": ["2025-08-26", "2025-08-25"]}'
+  ```
+- **Example Response:**
+  ```json
+  {
+    "trends": [
+      {
+        "date": "2025-08-26",
+        "trend": "Bullish",
+        "pass": true,
+        "details": {"^GSPC": "Bullish", "^DJI": "Bullish"}
+      }
+    ]
+  }
+  ```
+
+### **GET `/market-trends`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Retrieves stored historical market trends with optional date range filtering. Used by leadership-service for historical context.
+- **Note:** This endpoint is NOT accessible via the API Gateway (returns "Service not found"). Services must call data-service directly at `http://data-service:3001/market-trends` (inside Docker) or `http://localhost:3001/market-trends` (from host).
+- **Query Parameters:**
+  - `start_date` (optional): Start date filter (e.g., `2025-07-01`)
+  - `end_date` (optional): End date filter (e.g., `2025-08-01`)
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl -s "http://localhost:3001/market-trends?start_date=2025-07-01&end_date=2025-08-01" | jq .
+  ```
+- **Example Response:**
+  ```json
+  [
+    {"date": "2025-07-26", "trend": "Bullish"},
+    {"date": "2025-07-25", "trend": "Bullish"}
+  ]
+  ```
+
+### **GET `/market/sectors/industries`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Provides potential leader stocks grouped by industry from Yahoo Finance sectors. Primary source for monitoring-service.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `market` not registered). Services must call data-service directly at `http://data-service:3001/market/sectors/industries` (inside Docker) or `http://localhost:3001/market/sectors/industries` (from host).
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl http://localhost:3001/market/sectors/industries
+  ```
+- **Example Response:**
+  ```json
+  {
+    "Semiconductors": ["NVDA", "AVGO", "QCOM"],
+    "Software - Infrastructure": ["MSFT", "CRWD", "NET"]
+  }
+  ```
+
+### **GET `/market/screener/day_gainers`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Fallback list of potential leaders from Yahoo Finance "Day Gainers" screener, grouped by industry.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `market` not registered). Services must call data-service directly at `http://data-service:3001/market/screener/day_gainers` (inside Docker) or `http://localhost:3001/market/screener/day_gainers` (from host).
+- **Query Parameters:**
+  - `limit` (optional): Maximum number of results to return (e.g., `200`)
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl "http://localhost:3001/market/screener/day_gainers?limit=200"
+  ```
+- **Example Response:**
+  ```json
+  {
+    "Application Software": ["APP", "UIP"],
+    "Internet Content & Information": ["GOOGL", "META"]
+  }
+  ```
+
+### **GET `/market/screener/52w_highs`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Returns full quotes list for Yahoo Finance 52-week highs screener. Used by monitoring-service to derive leading industries.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `market` not registered). Services must call data-service directly at `http://data-service:3001/market/screener/52w_highs` (inside Docker) or `http://localhost:3001/market/screener/52w_highs` (from host).
+- **Query Parameters:**
+  - `region` (optional, default: `US`)
+- **Data Contract:** [`ScreenerQuoteList`](./DATA_CONTRACTS.md#13-screenerquote)
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl "http://localhost:3001/market/screener/52w_highs"
+  ```
+- **Example Response (truncated):**
+  ```json
+  [
+    {
+      "symbol": "NVDA",
+      "industry": "Semiconductors",
+      "regularMarketPrice": 123.45,
+      "fiftyTwoWeekHigh": 130.00,
+      "marketCap": 2220000000000
+    }
+  ]
+  ```
+
+### **GET `/market/breadth`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Retrieves aggregate market breadth data (new 52-week highs/lows). Primary source for monitoring-service's market health overview.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `market` not registered). Services must call data-service directly at `http://data-service:3001/market/breadth` (inside Docker) or `http://localhost:3001/market/breadth` (from host).
+- **Data Contract:** Produces [`MarketBreadthResponse`](./DATA_CONTRACTS.md#11-marketbreadth).
+- **Response Format Note:** The data-service may return different key formats. Consumers should handle both variations:
+  - Contract format: `{"new_highs": int, "new_lows": int, "high_low_ratio": float}`
+  - Raw format: `{"newhighs": int, "newlows": int, "ratio": float}`
+  - Monitoring-service normalizes the raw data-service keys to the MarketBreadthResponse contract format before returning `/monitor/market-health`.
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl http://localhost:3001/market/breadth
+  ```
+- **Example Response:**
+  ```json
+  {
+    "new_highs": 150,
+    "new_lows": 75,
+    "high_low_ratio": 2.0
+  }
+  ```
+
+### **POST `/data/return/batch`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Calculates batch percentage returns over yfinance-supported periods. Used by monitoring-service to rank industries.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `data` not registered). Services must call data-service directly at `http://data-service:3001/data/return/batch` (inside Docker) or `http://localhost:3001/data/return/batch` (from host).
+- **Request Body:**
+  - `tickers` (required): List of stock ticker strings
+  - `period` (optional): Examples: `1mo`, `3mo`, `6mo`, `1y`, `ytd`, `max`. Default: `3mo`.
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl -X POST http://localhost:3001/data/return/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["NVDA", "AAPL", "TSLA"], "period": "3mo"}'
+  ```
+- **Example Response:**
+  ```json
+  {
+    "NVDA": 15.5,
+    "AAPL": 8.2,
+    "FAKETICKER": null
+  }
+  ```
+
+### **POST `/data/return/1m/batch`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Calculates batch percentage returns over a 1-month period. Specialized endpoint for monthly performance tracking.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `data` not registered). Services must call data-service directly at `http://data-service:3001/data/return/1m/batch` (inside Docker) or `http://localhost:3001/data/return/1m/batch` (from host).
+- **Request Body:**
+  - `tickers` (required): List of stock ticker strings
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl -X POST http://localhost:3001/data/return/1m/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["NVDA", "AAPL", "TSLA"]}'
+  ```
+- **Example Response:**
+  ```json
+  {
+    "NVDA": 5.2,
+    "AAPL": 3.1,
+    "TSLA": -2.5
+  }
+  ```
+
+### **POST `/data/watchlist-metrics/batch`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only - NOT proxied via gateway
+- **Purpose:** Computes compact price and volume summary metrics for watchlist tickers. Called exclusively by monitoring-service's refresh orchestrator.
+- **Note:** This endpoint is NOT accessible via the API Gateway (service key `data` not registered). Services must call data-service directly at `http://data-service:3001/data/watchlist-metrics/batch` (inside Docker) or `http://localhost:3001/data/watchlist-metrics/batch` (from host).
+- **Data Contract:**
+  - Request: `{"tickers": ["HG", "INTC", ...]}`
+  - Response: [`WatchlistMetricsBatchResponse`](./DATA_CONTRACTS.md#31-watchlistmetrics)
+- **Description:** For each ticker, computes `current_price`, `vol_last`, `vol_50d_avg`, `day_change_pct` from recent price history (typically 3 months).
+- **Request Body:**
+  ```json
+  {"tickers": ["HG", "INTC", "PATH"]}
+  ```
+- **Example Usage (direct to data-service from host):**
+  ```bash
+  curl -X POST http://localhost:3001/data/watchlist-metrics/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["HG", "INTC", "PATH"]}'
+  ```
+- **Example Response:**
+  ```json
+  {
+    "metrics": {
+      "HG": {
+        "current_price": 18.97,
+        "vol_last": 317900.0,
+        "vol_50d_avg": 250000.0,
+        "day_change_pct": -0.35
+      },
+      "PATH": {
+        "current_price": null,
+        "vol_last": null,
+        "vol_50d_avg": null,
+        "day_change_pct": null
+      }
+    }
+  }
+  ```
+
+### **GET `/health`**
+- **Served by:** data-service (direct)
+- **Access:** Internal only
+- **Purpose:** Health check endpoint for data-service monitoring to confirm that the service is running and responsive.
+- **Data Contract:** N/A
+- **Example Usage (from host):**
+  ```bash
+  curl http://localhost:3001/health
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "mongo": true,
+    "ok": true,
+    "redis": true,
+    "yf_pool_ready": true
+  }
+  ```
+
+***
+
+## Internal Screening Service Routes
+
+### **POST `/screen/batch`**
+- **Served by:** screening-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Processes a batch of tickers and returns only those passing the 7 SEPA trend criteria. Critical component of screening pipeline called by scheduler-service.
+- **Data Contract:** Produces `{"passing_tickers": TickerList}`. See [`TickerList`](./DATA_CONTRACTS.md#1-tickerlist).
+- **Request Body:**
+  ```json
+  {"tickers": ["AAPL", "GOOGL", "TSLA"]}
+  ```
+- **Example Response:**
+  ```json
+  {"passing_tickers": ["AAPL", "GOOGL"]}
+  ```
+
+***
+
+## Internal Analysis Service Routes
+
+### **POST `/analyze/batch`**
+- **Served by:** analysis-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Analyzes a batch of tickers (typically those that have passed the trend screen) against the Volatility Contraction Pattern (VCP) criteria. This is a critical internal endpoint called by the scheduler-service to efficiently process candidates in the screening funnel.
+- **Data Contract:** Produces a list of [`VCPAnalysisBatchItem`](./DATA_CONTRACTS.md#7-vcpanalysis).
+- **Request Body:**
+  ```json
+  {
+    "tickers": ["AAPL", "GOOGL", "TSLA"],
+    "mode": "fast"
+  }
+  ```
+- **Query Parameters:**
+  - `mode` (optional): Set to `full` to return a detailed breakdown of all checks. If omitted, defaults to `fast` evaluation, which enables a fail-fast evaluation for batch processing.
+- **Example Usage:**
+  ```bash
+  curl -X POST http://localhost:3000/analyze/batch \
+    -H "Content-Type: application/json" \
+    -d '{"tickers": ["CRWD", "NET"], "mode": "fast"}'
+  ```
+- **Example Success Response:**
+  ```json
+  [
+    {
+      "ticker": "CRWD",
+      "vcp_pass": true,
+      "vcpFootprint": "8D 6.5% | 4D 7.1% | 2D 10.1% | 4D 6.5% | 4D 6.8% | 2D 2.9% | 5D 16.6% | 8D 21.7% | 8D 16.4% | 3D 7.7% | 4D 7.4% | 1D 5.8% | 13D 10.2% | 9D 10.1% | 7D 5.0% | 4D 6.7%"
+    },
+    {
+      "ticker": "NET",
+      "vcp_pass": true,
+      "vcpFootprint": "9D 6.6% | 9D 5.0% | 2D 3.0% | 26D 18.9% | 2D 6.1% | 20D 33.4% | 10D 21.3% | 7D 8.7% | 5D 4.5% | 5D 11.5% | 13D 17.4% | 4D 6.5% | 6D 4.4%"
+    }
+  ]
+  ```
+
+### **POST `/analyze/freshness/batch`**
+- **Served by:** analysis-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Checks the "freshness" of the analysis data for a list of specified tickers. This is used by the scheduler-service to determine which tickers need to be re-analyzed.
+- **Data Contract:**
+  - Request: [`AnalyzeFreshnessBatchRequest`](./DATA_CONTRACTS.md#17-freshness)
+  - Response: List of [`AnalyzeFreshnessBatchItem`](./DATA_CONTRACTS.md#18-freshness)
+- **Request Body (Example):**
+  ```json
+  {
+    "tickers": ["AAPL", "MSFT", "GOOG"]
+  }
+  ```
+- **Response Body (Success Example):**
+  ```json
+  [
+    {
+      "ticker": "AAPL",
+      "passes_freshness_check": true,
+      "vcp_detected": true,
+      "days_since_pivot": 15,
+      "vcpFootprint": "10D 5.2% | 13D 5.0% | 10D 6.2%",
+      "message": "Pivot is fresh (formed 15 days ago) and is not extended."
+    },
+    {
+      "ticker": "MSFT",
+      "passes_freshness_check": false,
+      "vcp_detected": true,
+      "days_since_pivot": 120,
+      "vcpFootprint": "8D 6.5% | 4D 7.1%",
+      "message": "Pivot is stale (formed 120 days ago) and may be extended."
+    },
+    {
+      "ticker": "GOOG",
+      "passes_freshness_check": false,
+      "vcp_detected": null,
+      "days_since_pivot": null,
+      "vcpFootprint": null,
+      "message": "No prior analysis found in database."
+    }
+  ]
+  ```
+
+***
+
+## Internal Leadership Service Routes
+
+### **POST `/leadership/batch`**
+- **Served by:** leadership-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Screens a batch of tickers (typically VCP survivors) against the 9 Leadership Profile criteria. Called by scheduler-service to find top candidates.
+- **Data Contract:** Produces [`LeadershipProfileBatch`](./DATA_CONTRACTS.md#8-leadershipprofile).
+- **Request Body:**
+  ```json
+  {"tickers": ["NVDA", "CRWD"]}
+  ```
+- **Example Response:**
+  ```json
+  {
+    "passing_candidates": [
+      {
+        "ticker": "NVDA",
+        "passes": true,
+        "leadership_summary": {
+          "qualified_profiles": ["Explosive Grower", "Market Favorite"],
+          "message": "Qualifies as a Explosive Grower, Market Favorite..."
+        },
+        "profile_details": {
+          "explosive_grower": {
+            "pass": true,
+            "passed_checks": 4,
+            "total_checks": 4
+          }
+        },
+        "industry": "Semiconductors"
+      }
+    ],
+    "unique_industries_count": 1,
+    "metadata": {
+      "total_processed": 2,
+      "total_passed": 1,
+      "execution_time": 5.123
+    }
+  }
+  ```
+
+### **GET `/health`**
+- **Served by:** leadership-service (direct)
+- **Access:** Internal only
+- **Purpose:** Health check endpoint for leadership-service monitoring to confirm that the service is running and responsive.
+- **Data Contract:** N/A
+- **Example Usage (from host):**
+  ```bash
+  curl http://localhost:3005/health
+  ```
+- **Example Success Response:**
+  ```json
+  {
+    "status": "healthy"
+  }
+  ```
+
+***
+
+## Internal Monitoring Service Routes
+
+### **POST `/monitor/internal/watchlist/batch/add`**
+- **Served by:** monitoring-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Internal orchestrator endpoint for batch-adding tickers to the watchlist. Called by scheduler-service after screening pipeline completion.
+- **Data Contract:**
+  - Request: [`InternalBatchAddRequest`](./DATA_CONTRACTS.md#14-watchlist)
+  - Response: [`InternalBatchAddResponse`](./DATA_CONTRACTS.md#14-watchlist)
+- **Request Body:**
+  ```json
+  {"tickers": ["NVDA", "CRWD", "NET"]}
+  ```
+- **Example Response:**
+  ```json
+  {
+    "message": "Batch add completed: added 2, skipped 1. Sample: NVDA, CRWD",
+    "added": 2,
+    "skipped": 1
+  }
+  ```
+
+### **POST `/monitor/internal/watchlist/refresh-status`**
+- **Served by:** monitoring-service (direct)
+- **Access:** Internal only - Reachable via gateway but intended for service-to-service use
+- **Purpose:** Internal orchestrator endpoint for refreshing watchlist item health statuses. Called by scheduler-service's Celery task to perform multi-stage health checks (screening → VCP → freshness → data metrics) and archive failed items.
+- **Data Contract:** Produces [`WatchlistRefreshStatusResponse`](./DATA_CONTRACTS.md#20-watchlistrefresh).
+- **Example Response:**
   ```json
   {
     "message": "Watchlist status refresh completed successfully.",
@@ -1428,16 +1280,29 @@ For efficient batch processing, the **`scheduler-service`** calls the **`analysi
     "failed_items": 0
   }
   ```
-  - **Response Fields:**
-    - `message` (string): Human-readable summary of the refresh operation.
-    - `updated_items` (integer): Count of active watchlist items whose status was updated.
-    - `archived_items` (integer): Count of items archived due to failed health checks.
-    - `failed_items` (integer): Count of items that could not be processed due to non-fatal downstream errors.
-  - **Error Responses:**
-    - `500 Internal Server Error` with `ApiError` if orchestrator fails.
-    - `503 Service Unavailable` for database connectivity issues.
-  - **Scheduler Integration:** The scheduler-service's `POST /jobs/watchlist/refresh` endpoint triggers a Celery task that calls this internal route and persists the summary response in the job metadata.
-  - **Scheduler Integration:** The scheduler-service's `POST /jobs/watchlist/refresh` endpoint triggers a Celery task that calls this internal route and persists the summary response in the job metadata.  
-  - **Notes:**
-    - Prior to this change, the orchestrator called `/data/return/batch`, which returns simple percentage returns unsuitable for volume-based status logic. The new `/data/watchlist-metrics/batch` endpoint provides the necessary `current_price`, `vol_last`, `vol_50d_avg`, and `day_change_pct` metrics.
-    - The orchestrator computes `vol_vs_50d_ratio` (vol_last / vol_50d_avg) from these metrics and uses it in status derivation rules like volume contraction thresholds.
+
+***
+
+## Notes
+
+- **Timeout Configuration:** The API Gateway uses different timeout values for different services:
+  - Jobs service (screening/watchlist refresh): 6000 seconds
+  - Market health endpoint: 60 seconds
+  - All other endpoints: 45 seconds
+
+- **Error Handling:** The gateway returns standard HTTP error codes:
+  - `400 Bad Request`: Malformed request or path traversal attempt
+  - `404 Not Found`: Service not found in routing table
+  - `502 Bad Gateway`: Error in service communication
+  - `503 Service Unavailable`: Service connection failed
+  - `504 Gateway Timeout`: Request exceeded timeout limit
+
+- **CORS Configuration:** The gateway is configured to accept requests only from `http://localhost:5173` (the frontend development server).
+
+- **Internal vs Public Endpoints:** Endpoints marked as "Internal only" are designed for inter-service communication. Those marked "Reachable via gateway but intended for service-to-service use" can technically be called through the gateway but are not meant for direct frontend consumption. Endpoints marked "NOT proxied via gateway" must be called directly at the service's port.
+
+- **Gateway Service Key Registration:** The API Gateway only proxies requests for registered service keys: `tickers`, `price`, `news`, `financials`, `industry`, `cache`, `screen`, `analyze`, `leadership`, `monitor`, and `jobs`. Endpoints under unregistered prefixes like `/market/*`, `/data/*`, or `/market-trend/*` will return "Service not found" errors when called via the gateway and must be accessed directly at the service port.
+
+- **Direct Access URLs:** When calling direct-access-only endpoints:
+  - From inside Docker (service-to-service): Use container DNS names (e.g., `http://data-service:3001`)
+  - From host machine (local development): Use localhost with mapped ports (e.g., `http://localhost:3001`)
