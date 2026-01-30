@@ -123,3 +123,25 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose down -v
+
+  # Single required check 
+  ci-gate:
+    name: CI Gate
+    needs:
+      - setup-matrix
+      - unit-and-contract-tests
+      - integration-tests
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any upstream job failed
+        run: |
+          echo "setup-matrix result: ${{ needs.setup-matrix.result }}"
+          echo "unit-and-contract-tests result: ${{ needs.unit-and-contract-tests.result }}"
+          echo "integration-tests result: ${{ needs.integration-tests.result }}"
+
+          if [ "${{ needs.setup-matrix.result }}" != "success" ]; then exit 1; fi
+          if [ "${{ needs.unit-and-contract-tests.result }}" != "success" ]; then exit 1; fi
+          if [ "${{ needs.integration-tests.result }}" != "success" ]; then exit 1; fi
+
+          echo "All upstream jobs succeeded."
