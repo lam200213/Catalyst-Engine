@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from providers.yfin import financials_provider
-from tests.shared.test_fixtures import make_quote_summary_payload
+from tests.common.test_fixtures import make_quote_summary_payload
 
 class TestYFinanceFinancialsProvider(unittest.TestCase):
     """Consolidated tests for the yfinance financials data provider."""

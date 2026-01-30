@@ -95,6 +95,7 @@ class TestRefreshWatchlistStatusOrchestrator:
     @patch("services.update_orchestrator.downstream_clients.analyze_freshness_batch")
     @patch("services.update_orchestrator.downstream_clients.analyze_batch")
     @patch("services.update_orchestrator.downstream_clients.screen_batch")
+    @patch("services.update_orchestrator.downstream_clients.watchlist_metrics_batch")
     @patch("services.update_orchestrator.watchlist_status_service.derive_refresh_lists")
     @patch("services.update_orchestrator.mongo_client.bulk_archive_failed")
     @patch("services.update_orchestrator.mongo_client.bulk_update_status")
@@ -107,6 +108,7 @@ class TestRefreshWatchlistStatusOrchestrator:
         mock_bulk_update,
         mock_bulk_archive,
         mock_derive_refresh_lists,
+        mock_metrics,
         mock_screen,
         mock_analyze,
         mock_fresh,
@@ -133,6 +135,7 @@ class TestRefreshWatchlistStatusOrchestrator:
         mock_screen.return_value = {"passed": [item["ticker"] for item in raw_items]}
         mock_analyze.return_value = []
         mock_fresh.return_value = []
+        mock_metrics.return_value = {}
         mock_data.return_value = {}
         summary = orchestrator.refresh_watchlist_status()
 

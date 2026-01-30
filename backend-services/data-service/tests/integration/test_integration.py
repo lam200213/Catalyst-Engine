@@ -17,7 +17,7 @@ import json
 
 # Reuse the same base test setup patterns as existing tests
 # to maintain consistency in mocking cache and db.
-from tests.shared import base_test_case
+from tests.common import base_test_case
 
 class BaseIntegrationTest(unittest.TestCase):
     """Base class for integration tests with Flask app context."""

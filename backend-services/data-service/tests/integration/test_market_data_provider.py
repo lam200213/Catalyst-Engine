@@ -10,7 +10,7 @@ import json
 
 # Reuse the same base test setup patterns as existing tests
 # to maintain consistency in mocking cache and db.
-from tests.shared import base_test_case
+from tests.common import base_test_case
 
 # Tests for market sector/industry and day_gainers endpoints, and 1m return batch.
 # Also includes provider-level unit tests that mock raw inputs to validate parsing and thresholds.

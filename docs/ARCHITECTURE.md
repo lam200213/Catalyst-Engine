@@ -36,16 +36,18 @@
 │   │   │       └── market_data__provider.py
 │   │   ├── tests/
 │   │   │   ├── conftest.py
-│   │   │   ├── test_fixture.py
+│   │   │   ├── common/
+│   │   │   │   ├── base_test_case.py     
+│   │   │   │   └── test_fixture.py
 │   │   │   ├── unit/
-│   │   │   │   ├── test_yahoo_client.py    
-│   │   │   │   ├── test_price_provider.py 
-│   │   │   │   ├── test_financials_provider.py    
+│   │   │   │   ├── test_yahoo_client.py     
 │   │   │   │   ├── test_finnhub_provider.py    # Mocked API parsing
-│   │   │   │   ├── test_marketaux_provider.py  # Mocked API parsing
-│   │   │   │   └── test_market_data_provider.py
+│   │   │   │   └── test_marketaux_provider.py  # Mocked API parsing
 │   │   │   └── integration/
 │   │   │       ├── test_app.py                 # Endpoint validation
+│   │   │       ├── test_price_provider.py 
+│   │   │       ├── test_financials_provider.py  
+│   │   │       ├── test_market_data_provider.py
 │   │   │       └── test_integration.py         # MongoDB/Redis caching logic
 │   │   ├── app.py
 │   │   ├── helper_functions.py
@@ -99,10 +101,15 @@
 │   │   ├── tests/
 │   │   │   ├── conftest.py     
 │   │   │   ├── unit/
-│   │   │   │   ├── test_market_leaders_logic.py
-│   │   │   │   ├── test_market_health_unit.py
-│   │   │   │   └── test_watchlist_status_service.py # Pure status derivation
-│   │   │   ├── integration/
+│   │   │   │   ├── services/
+│   │   │   │   │   ├── test_update_orchestrator.py
+│   │   │   │   │   ├── test_watchlist_service_add.py
+│   │   │   │   │   ├── test_watchlist_service_add_edges.py
+│   │   │   │   │   ├── test_watchlist_service_get_core.py
+│   │   │   │   │   ├── test_watchlist_service_status_derivation.py
+│   │   │   │   │   ├── test_watchlist_status_service.py
+│   │   │   │   │   ├── test_watchlist_service_scaling.py
+│   │   │   │   │   └── test_watchlist_service_security.py
 │   │   │   │   ├── routes/
 │   │   │   │   │   ├── test_health.py
 │   │   │   │   │   ├── test_method_constraints.py
@@ -112,19 +119,15 @@
 │   │   │   │   │   ├── test_watchlist_get_exclusions_edges.py
 │   │   │   │   │   ├── test_watchlist_get_scaling.py
 │   │   │   │   │   ├── test_watchlist_put_basic.py
-│   │   │   │   │   ├── test_watchlist_put_format.py
 │   │   │   │   │   ├── test_watchlist_contract_validation.py
 │   │   │   │   │   ├── test_watchlist_security.py
-│   │   │   │   │   ├── test_orchestrator_endpoint.py
-│   │   │   │   │   └── test_error_handling.py
-│   │   │   │   ├── services/
-│   │   │   │   │   ├── test_update_orchestrator.py
-│   │   │   │   │   ├── test_watchlist_service_add.py
-│   │   │   │   │   ├── test_watchlist_service_add_edges.py
-│   │   │   │   │   ├── test_watchlist_service_get_core.py
-│   │   │   │   │   ├── test_watchlist_service_status_derivation.py
-│   │   │   │   │   ├── test_watchlist_service_scaling.py
-│   │   │   │   │   └── test_watchlist_service_security.py
+│   │   │   │   │   └── test_orchestrator_endpoint.py
+│   │   │   │   ├── test_market_leaders_logic.py
+│   │   │   │   └── test_market_health_unit.py
+│   │   │   ├── integration/
+│   │   │   │   ├── contracts/
+│   │   │   │   │   ├── test_api_contract_compliance.py
+│   │   │   │   │   └── test_market_leaders_contract_validation.py
 │   │   │   │   ├── db/
 │   │   │   │   │   ├── test_mongo_connect.py
 │   │   │   │   │   ├── test_mongo_indexes.py
@@ -135,10 +138,14 @@
 │   │   │   │   │   ├── test_mongo_archive_crud.py
 │   │   │   │   │   ├── test_mongo_bulk_ops.py
 │   │   │   │   │   └── test_mongo_types_and_assertions.py
+│   │   │   │   ├── routes/
+│   │   │   │   │   ├── test_watchlist_put_format.py
+│   │   │   │   │   ├── test_error_handling.py
+│   │   │   │   ├── test_integration_leaders.py
+│   │   │   │   ├── test_integration_market_health.py
+│   │   │   │   ├── test_integration_watchlist_put_format.py
 │   │   │   │   └── test_mongo_client_integration.py
 │   │   │   └── contracts/
-│   │   │       ├── test_api_contract_compliance.py
-│   │   │       ├── test_market_leaders_contract_validation.py
 │   │   │       └── test_watchlist_contract_validation.py
 │   │   ├── services/
 │   │   │   ├── __init__.py

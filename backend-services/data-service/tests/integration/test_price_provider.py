@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 
 from providers.yfin import price_provider
-from tests.shared.test_fixtures import make_chart_payload
+from tests.common.test_fixtures import make_chart_payload
 
 class TestYFinancePriceProvider(unittest.TestCase):
     """Tests for the yfinance price data provider."""

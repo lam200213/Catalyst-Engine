@@ -4,17 +4,15 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2026-1-29
-refactor(testing): reorganize test suite into CI-optimized structure
+2026-1-30
+ci(backend): add backend matrix CI and stabilize monitoring tests
 
-Reorganize test files into nested unit and integration directories across
-all backend services. This transition improves CI pipeline efficiency and 
-logical separation of test concerns.
-
-- Move unit and integration tests into dedicated subdirectories.
-- Extract shared test utilities to `tests/shared/` to resolve import conflicts.
-- Implement `conftest.py` in test roots for dynamic sys.path resolution.
-- Add `__init__.py` markers to establish proper Python package boundaries.
+- Add GitHub Actions workflow that discovers services from docker compose and runs unit, contract, and integration phases
+- Prevent unit tests from making real downstream HTTP calls by stubbing monitoring-service downstream clients in conftest
+- Reorganize monitoring-service tests into correct unit and integration folders
+- Reclassify/move network- and DB-dependent tests into integration folders
+- Harden monitoring-service conftest with unit-only downstream client stubs to prevent accidental HTTP calls
+- Update ARCHITECTURE.md to reflect test layout and CI execution model
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
@@ -122,11 +120,11 @@ Follow these steps to set up and run the application locally:
    cp docker-compose.prod.yml docker-compose.override.yml
 
    # Later on: Simply run this command for all future builds
-   docker-compose up --build -d
+   docker compose up --build -d
 
    # Method 2: Explicit File Selection
    # Use this if you prefer not to create an override file
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
    ```
 
    - **Development Mode (Default)**:
@@ -137,11 +135,11 @@ Follow these steps to set up and run the application locally:
    cp docker-compose.dev.yml docker-compose.override.yml
 
    # Later on: Simply run this command for all future builds
-   docker-compose up --build -d
+   docker compose up --build -d
 
    # Method 2: Explicit File Selection
    # Use this if you prefer not to create an override file
-   docker-compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
    ```
    This command builds Docker images for each service and starts all containers.
 
@@ -158,11 +156,11 @@ Follow these steps to set up and run the application locally:
    - **Method 2: Explicit File Selection**: 
    If running in Development:
    ```bash
-   docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
+   docker compose -f docker-compose.yml -f docker-compose.dev.yml down
    ```
    If running in Production:
    ```bash
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml down
    ```
 ## Learn More
 - [🔗 Detailed Architecture & Tech Stack](./docs/ARCHITECTURE.md)
