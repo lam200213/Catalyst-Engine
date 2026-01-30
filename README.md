@@ -6,7 +6,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-30
-docs(ci): update ARCHITECTURE.md, MAINTENANCE.md to document the specific testing commands that mirror the CI environment.
+chore(ci): add CI Gate job for single required status check
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
