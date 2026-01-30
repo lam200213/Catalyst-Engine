@@ -1,3 +1,4 @@
+[![SEPA Backend CI](https://github.com/lam200213/Catalyst-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/lam200213/Catalyst-Engine/actions/workflows/ci.yml)
 # SEPA Stock Screener & VCP Analyzer
 
 ## Project Objective
@@ -5,14 +6,7 @@ To deliver a locally-runnable, containerized web application that helps users id
 
 ## Last Updated
 2026-1-30
-ci(backend): add backend matrix CI and stabilize monitoring tests
-
-- Add GitHub Actions workflow that discovers services from docker compose and runs unit, contract, and integration phases
-- Prevent unit tests from making real downstream HTTP calls by stubbing monitoring-service downstream clients in conftest
-- Reorganize monitoring-service tests into correct unit and integration folders
-- Reclassify/move network- and DB-dependent tests into integration folders
-- Harden monitoring-service conftest with unit-only downstream client stubs to prevent accidental HTTP calls
-- Update ARCHITECTURE.md to reflect test layout and CI execution model
+docs(ci): update ARCHITECTURE.md, MAINTENANCE.md to document the specific testing commands that mirror the CI environment.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 

@@ -217,6 +217,7 @@
 | **Asynchronous Tasks** | Celery |
 | **Real-time Updates** | Server-Sent Events (SSE) |
 | **Testing** | Pytest, Vitest, React Testing Library |
+| **CI/CD** | GitHub Actions, Docker Compose |
 | **Local Orchestration** | Docker, Docker Compose |
 
 ## Concurrency Burden
