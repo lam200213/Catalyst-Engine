@@ -5,8 +5,13 @@
 To deliver a locally-runnable, containerized web application that helps users identify US stocks meeting Mark Minervini’s key quantitative Specific Entry Point Analysis (SEPA) criteria and visually analyze their Volatility Contraction Pattern (VCP) on an interactive chart.
 
 ## Last Updated
-2026-1-30
-chore(ci): add CI Gate job for single required status check
+2026-2-1
+ci: isolate CI containers to prevent local data loss in act
+
+Set COMPOSE_PROJECT_NAME to 'sepa-ci' in the GitHub Actions workflow.
+This ensures that the 'Cleanup' step (docker compose down -v) only targets
+CI-provisioned volumes and does not wipe persistent local development
+data when running the workflow locally using nektos/act.
 
 ## Key Features
 - **Ticker Universe Generation:** Retrieves a comprehensive list of all US stock tickers (NYSE, NASDAQ, AMEX) via a dedicated Python service. 
