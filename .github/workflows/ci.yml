@@ -9,6 +9,8 @@ on:
 # Global environment variables
 env:
   COMPOSE_FILE: docker-compose.yml:docker-compose.prod.yml
+  # Set explicit project name to isolate CI containers/volumes from local dev environments when running 'act'
+  COMPOSE_PROJECT_NAME: sepa-ci
 
 jobs:
   # 1. Discovery Phase
